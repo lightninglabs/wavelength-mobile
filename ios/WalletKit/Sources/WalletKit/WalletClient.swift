@@ -127,6 +127,49 @@ public actor WalletClient {
         return try await send(quote.sendIntentID)
     }
 
+    /// List a unified wallet view: the merged activity history, the live VTXO
+    /// inventory, or the on-chain transaction history. Read the `ListResult`
+    /// property named by its `view`. `kinds`, `pendingOnly`, `limit`, and
+    /// `offset` apply to the activity view.
+    public func list(
+        view: ListView = .activity,
+        kinds: [String] = [],
+        pendingOnly: Bool = false,
+        limit: Int64 = 0,
+        offset: Int64 = 0
+    ) async throws -> ListResult {
+        let req = ListReq(
+            view: view.rawValue, pendingOnly: pendingOnly,
+            kinds: kinds, limit: limit, offset: offset
+        )
+        let body = try encoder.encode(req)
+        return try decode(await bg { try Bindings.list(body) })
+    }
+
+    /// Exit a VTXO back to the chain. The daemon queues a cooperative leave by
+    /// default, paying out to `destination` (or a fresh backing-wallet address
+    /// when empty). To bypass cooperation and start a unilateral unroll, pass
+    /// `forceUnrollAck` = "I_KNOW_WHAT_I_AM_DOING"; it cannot be combined with
+    /// `destination`. Track progress with `exitStatus` or the activity stream.
+    public func exit(
+        outpoint: String,
+        destination: String = "",
+        forceUnrollAck: String = ""
+    ) async throws -> ExitResult {
+        let req = ExitReq(
+            outpoint: outpoint, destination: destination,
+            forceUnrollAck: forceUnrollAck
+        )
+        let body = try encoder.encode(req)
+        return try decode(await bg { try Bindings.exit(body) })
+    }
+
+    /// Query the phase of an exit job for a VTXO outpoint.
+    public func exitStatus(outpoint: String) async throws -> ExitStatusResult {
+        let body = try encoder.encode(ExitStatusReq(outpoint: outpoint))
+        return try decode(await bg { try Bindings.exitStatus(body) })
+    }
+
     /// Stream only incoming payments (receives and deposits) as they arrive and
     /// settle. A convenience over `activity` filtered to the credit kinds: watch
     /// for an `Entry` whose status becomes "complete".
@@ -265,5 +308,38 @@ private struct SendPreparedReq: Encodable {
     let sendIntentID: String
     enum CodingKeys: String, CodingKey {
         case sendIntentID = "SendIntentID"
+    }
+}
+
+private struct ListReq: Encodable {
+    let view: String
+    let pendingOnly: Bool
+    let kinds: [String]
+    let limit: Int64
+    let offset: Int64
+    enum CodingKeys: String, CodingKey {
+        case view = "View"
+        case pendingOnly = "PendingOnly"
+        case kinds = "Kinds"
+        case limit = "Limit"
+        case offset = "Offset"
+    }
+}
+
+private struct ExitReq: Encodable {
+    let outpoint: String
+    let destination: String
+    let forceUnrollAck: String
+    enum CodingKeys: String, CodingKey {
+        case outpoint = "Outpoint"
+        case destination = "Destination"
+        case forceUnrollAck = "ForceUnrollAck"
+    }
+}
+
+private struct ExitStatusReq: Encodable {
+    let outpoint: String
+    enum CodingKeys: String, CodingKey {
+        case outpoint = "Outpoint"
     }
 }

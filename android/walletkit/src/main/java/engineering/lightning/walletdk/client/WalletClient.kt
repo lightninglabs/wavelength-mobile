@@ -159,6 +159,47 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
   }
 
   /**
+   * List a unified wallet view: the merged activity history, the live VTXO
+   * inventory, or the on-chain transaction history. Read the [ListResult] field
+   * named by its `view`. `kinds`, `pendingOnly`, `limit`, and `offset` apply to
+   * the activity view.
+   */
+  suspend fun list(
+    view: ListView = ListView.ACTIVITY,
+    kinds: List<String> = emptyList(),
+    pendingOnly: Boolean = false,
+    limit: Long = 0,
+    offset: Long = 0,
+  ): ListResult = decode(
+    io {
+      Mobile.list(
+        encode(ListReq.serializer(), ListReq(view.wire, pendingOnly, kinds, limit, offset)),
+      )
+    },
+  )
+
+  /**
+   * Exit a VTXO back to the chain. The daemon queues a cooperative leave by
+   * default, paying out to [destination] (or a fresh backing-wallet address when
+   * empty). To bypass cooperation and start a unilateral unroll, pass
+   * [forceUnrollAck] = "I_KNOW_WHAT_I_AM_DOING"; it cannot be combined with
+   * [destination]. Track progress with [exitStatus] or the activity stream.
+   */
+  suspend fun exit(
+    outpoint: String,
+    destination: String = "",
+    forceUnrollAck: String = "",
+  ): ExitResult = decode(
+    io {
+      Mobile.exit(encode(ExitReq.serializer(), ExitReq(outpoint, destination, forceUnrollAck)))
+    },
+  )
+
+  /** Query the phase of an exit job for a VTXO outpoint. */
+  suspend fun exitStatus(outpoint: String): ExitStatusResult =
+    decode(io { Mobile.exitStatus(encode(ExitStatusReq.serializer(), ExitStatusReq(outpoint))) })
+
+  /**
    * Stream only incoming payments (receives and deposits) as they arrive and
    * settle. A convenience over [activity] filtered to the credit kinds, useful
    * for a "you were paid" notification: watch for an [Entry] whose status
@@ -240,4 +281,25 @@ private data class PrepareSendReq(
 @Serializable
 private data class SendPreparedReq(
   @SerialName("SendIntentID") val sendIntentId: String,
+)
+
+@Serializable
+private data class ListReq(
+  @SerialName("View") val view: String,
+  @SerialName("PendingOnly") val pendingOnly: Boolean = false,
+  @SerialName("Kinds") val kinds: List<String> = emptyList(),
+  @SerialName("Limit") val limit: Long = 0,
+  @SerialName("Offset") val offset: Long = 0,
+)
+
+@Serializable
+private data class ExitReq(
+  @SerialName("Outpoint") val outpoint: String,
+  @SerialName("Destination") val destination: String = "",
+  @SerialName("ForceUnrollAck") val forceUnrollAck: String = "",
+)
+
+@Serializable
+private data class ExitStatusReq(
+  @SerialName("Outpoint") val outpoint: String,
 )

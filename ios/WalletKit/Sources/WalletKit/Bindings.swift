@@ -83,6 +83,21 @@ enum Bindings {
         return try unwrap(MobileSendPrepared(req, &err), err)
     }
 
+    static func list(_ req: Data) throws -> Data {
+        var err: NSError?
+        return try unwrap(MobileList(req, &err), err)
+    }
+
+    static func exit(_ req: Data) throws -> Data {
+        var err: NSError?
+        return try unwrap(MobileExit(req, &err), err)
+    }
+
+    static func exitStatus(_ req: Data) throws -> Data {
+        var err: NSError?
+        return try unwrap(MobileExitStatus(req, &err), err)
+    }
+
     static func subscribe(_ req: Data) throws -> BindingsSubscription {
         var err: NSError?
         let sub = MobileSubscribe(req, &err)
@@ -120,6 +135,9 @@ enum Bindings {
     static func deposit(_ req: Data) throws -> Data { throw missing() }
     static func prepareSend(_ req: Data) throws -> Data { throw missing() }
     static func sendPrepared(_ req: Data) throws -> Data { throw missing() }
+    static func list(_ req: Data) throws -> Data { throw missing() }
+    static func exit(_ req: Data) throws -> Data { throw missing() }
+    static func exitStatus(_ req: Data) throws -> Data { throw missing() }
     static func subscribe(_ req: Data) throws -> BindingsSubscription { throw missing() }
 }
 

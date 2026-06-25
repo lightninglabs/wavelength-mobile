@@ -130,3 +130,95 @@ data class SendResult(
   @SerialName("Entry") val entry: Entry = Entry(),
   @SerialName("ActualAmountSat") val actualAmountSat: Long = 0,
 )
+
+/** Which slice of wallet state [WalletClient.list] returns. */
+enum class ListView(val wire: String) {
+  ACTIVITY("activity"),
+  VTXOS("vtxos"),
+  ONCHAIN("onchain"),
+}
+
+/**
+ * A unified wallet view. It is a tagged union: read the field named by [view]
+ * and treat the others as null.
+ */
+@Serializable
+data class ListResult(
+  @SerialName("View") val view: String = "activity",
+  @SerialName("Activity") val activity: ActivityList? = null,
+  @SerialName("VTXOs") val vtxos: VTXOInventory? = null,
+  @SerialName("Onchain") val onchain: OnchainHistory? = null,
+)
+
+/** The merged activity stream (sends, receives, deposits, exits). */
+@Serializable
+data class ActivityList(
+  @SerialName("Entries") val entries: List<Entry> = emptyList(),
+  @SerialName("Total") val total: Long = 0,
+)
+
+/** The live VTXO inventory. */
+@Serializable
+data class VTXOInventory(
+  @SerialName("VTXOs") val vtxos: List<WalletVTXO> = emptyList(),
+  @SerialName("Total") val total: Long = 0,
+)
+
+/** The wallet-facing view of one VTXO. */
+@Serializable
+data class WalletVTXO(
+  @SerialName("Outpoint") val outpoint: String = "",
+  @SerialName("AmountSat") val amountSat: Long = 0,
+  @SerialName("Status") val status: String = "",
+  @SerialName("BatchExpiry") val batchExpiry: Int = 0,
+  @SerialName("RelativeExpiry") val relativeExpiry: Long = 0,
+  @SerialName("CommitmentTxid") val commitmentTxid: String = "",
+)
+
+/** The on-chain transaction history (boarding, sweeps, leave outputs). */
+@Serializable
+data class OnchainHistory(
+  @SerialName("Txs") val txs: List<OnchainTx> = emptyList(),
+  @SerialName("Total") val total: Long = 0,
+  @SerialName("HasMore") val hasMore: Boolean = false,
+)
+
+/** The wallet-facing view of one on-chain transaction. */
+@Serializable
+data class OnchainTx(
+  @SerialName("Txid") val txid: String = "",
+  @SerialName("Kind") val kind: String = "",
+  @SerialName("AmountSat") val amountSat: Long = 0,
+  @SerialName("FeeSat") val feeSat: Long = 0,
+  @SerialName("Status") val status: String = "",
+  @SerialName("ConfirmationHeight") val confirmationHeight: Int = 0,
+  @SerialName("CreatedAt") val createdAt: String = "",
+  @SerialName("Description") val description: String = "",
+)
+
+/**
+ * The outcome of an exit. [path] is "cooperative" (the operator admitted a
+ * cooperative leave; [queuedOutpoints] echoes the selection) or "unilateral"
+ * (a forced unroll job started; [actorId] owns it).
+ */
+@Serializable
+data class ExitResult(
+  @SerialName("Path") val path: String = "",
+  @SerialName("Cooperative") val cooperative: Boolean = false,
+  @SerialName("QueuedOutpoints") val queuedOutpoints: List<String> = emptyList(),
+  @SerialName("Created") val created: Boolean = false,
+  @SerialName("ActorID") val actorId: String = "",
+)
+
+/**
+ * The phase of an exit job. [found] is false when no job exists for the
+ * outpoint (not an error). [status] is pending / materializing / csv_pending /
+ * sweeping / completed / failed.
+ */
+@Serializable
+data class ExitStatusResult(
+  @SerialName("Found") val found: Boolean = false,
+  @SerialName("Status") val status: String = "",
+  @SerialName("SweepTxid") val sweepTxid: String = "",
+  @SerialName("LastError") val lastError: String = "",
+)

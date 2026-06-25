@@ -177,3 +177,111 @@ public struct SendResult: Decodable, Sendable {
         case actualAmountSat = "ActualAmountSat"
     }
 }
+
+/// Which slice of wallet state `list` returns.
+public enum ListView: String, Sendable {
+    case activity, vtxos, onchain
+}
+
+/// A wallet-facing view of one VTXO.
+public struct WalletVTXO: Decodable, Sendable {
+    public let outpoint: String
+    public let amountSat: Int64
+    public let status: String
+    public let commitmentTxid: String
+
+    enum CodingKeys: String, CodingKey {
+        case outpoint = "Outpoint"
+        case amountSat = "AmountSat"
+        case status = "Status"
+        case commitmentTxid = "CommitmentTxid"
+    }
+}
+
+/// A wallet-facing view of one on-chain transaction.
+public struct OnchainTx: Decodable, Sendable {
+    public let txid: String
+    public let kind: String
+    public let amountSat: Int64
+    public let feeSat: Int64
+    public let status: String
+    public let description: String
+
+    enum CodingKeys: String, CodingKey {
+        case txid = "Txid"
+        case kind = "Kind"
+        case amountSat = "AmountSat"
+        case feeSat = "FeeSat"
+        case status = "Status"
+        case description = "Description"
+    }
+}
+
+public struct ActivityList: Decodable, Sendable {
+    public let entries: [Entry]
+    public let total: Int64
+    enum CodingKeys: String, CodingKey { case entries = "Entries"; case total = "Total" }
+}
+
+public struct VTXOInventory: Decodable, Sendable {
+    public let vtxos: [WalletVTXO]
+    public let total: Int64
+    enum CodingKeys: String, CodingKey { case vtxos = "VTXOs"; case total = "Total" }
+}
+
+public struct OnchainHistory: Decodable, Sendable {
+    public let txs: [OnchainTx]
+    public let total: Int64
+    public let hasMore: Bool
+    enum CodingKeys: String, CodingKey {
+        case txs = "Txs"; case total = "Total"; case hasMore = "HasMore"
+    }
+}
+
+/// A unified wallet view. It is a tagged union: read the property named by
+/// `view` and treat the others as nil.
+public struct ListResult: Decodable, Sendable {
+    public let view: String
+    public let activity: ActivityList?
+    public let vtxos: VTXOInventory?
+    public let onchain: OnchainHistory?
+
+    enum CodingKeys: String, CodingKey {
+        case view = "View"
+        case activity = "Activity"
+        case vtxos = "VTXOs"
+        case onchain = "Onchain"
+    }
+}
+
+/// The outcome of an exit. `path` is "cooperative" or "unilateral".
+public struct ExitResult: Decodable, Sendable {
+    public let path: String
+    public let cooperative: Bool
+    public let queuedOutpoints: [String]
+    public let created: Bool
+    public let actorID: String
+
+    enum CodingKeys: String, CodingKey {
+        case path = "Path"
+        case cooperative = "Cooperative"
+        case queuedOutpoints = "QueuedOutpoints"
+        case created = "Created"
+        case actorID = "ActorID"
+    }
+}
+
+/// The phase of an exit job. `found` is false when no job exists (not an error).
+public struct ExitStatusResult: Decodable, Sendable {
+    public let found: Bool
+    public let status: String
+    public let sweepTxid: String
+    public let lastError: String
+
+    enum CodingKeys: String, CodingKey {
+        case found = "Found"
+        case status = "Status"
+        case sweepTxid = "SweepTxid"
+        case lastError = "LastError"
+    }
+}

@@ -15,9 +15,10 @@ method list see darepo-client's
 
 A `WalletClient` owns the embedded daemon. You `start` it once, `createWallet`
 or `unlockWallet`, then read state (`getInfo`, `status`, `balance`), receive and
-send payments, and collect the activity stream. One daemon runs per process, so
-a single client serves the whole app. Every call either returns a typed value or
-throws, and a blocking call runs off the main thread for you.
+send payments, `exit` funds back on-chain, `list` history, and collect the
+activity stream. One daemon runs per process, so a single client serves the
+whole app. Every call either returns a typed value or throws, and a blocking
+call runs off the main thread for you.
 
 ## 1. Create a client
 
@@ -290,7 +291,66 @@ Task {
 }
 ```
 
-## 11. Shut down
+## 11. Exit to the chain
+
+Exit moves a VTXO out of Ark and back on-chain. By default the daemon queues a
+cooperative leave, where the operator folds your exit into a round and pays out
+to the address you give (or a fresh backing-wallet address when you omit one).
+Track it with `exitStatus` or the activity stream.
+
+```kotlin
+// Kotlin: cooperative leave, then poll its status
+val res = client.exit(outpoint = "txid:0", destination = myAddress)
+println("exit path: ${res.path}")        // "cooperative"
+val s = client.exitStatus(outpoint = "txid:0")
+println("${s.status} ${s.sweepTxid}")
+```
+
+```swift
+// Swift: cooperative leave, then poll its status
+let res = try await client.exit(outpoint: "txid:0", destination: myAddress)
+print("exit path: \(res.path)")          // "cooperative"
+let s = try await client.exitStatus(outpoint: "txid:0")
+print("\(s.status) \(s.sweepTxid)")
+```
+
+To force a unilateral unroll that bypasses the operator, pass the
+acknowledgement string. It cannot be combined with a destination, and it starts
+a long-running on-chain job, so reserve it for when the operator is unavailable.
+
+```kotlin
+client.exit(outpoint = "txid:0", forceUnrollAck = "I_KNOW_WHAT_I_AM_DOING")   // Kotlin
+```
+
+```swift
+try await client.exit(outpoint: "txid:0", forceUnrollAck: "I_KNOW_WHAT_I_AM_DOING")  // Swift
+```
+
+## 12. List VTXOs and history
+
+`list` returns one of three views as a tagged union: read the field named by the
+result's `view`. The `activity` view is the merged payment history; `vtxos` is
+the live balance set; `onchain` is boarding, sweep, and leave transactions.
+
+```kotlin
+// Kotlin: recent activity, then the live VTXO set
+val r = client.list(view = ListView.ACTIVITY, limit = 50)
+r.activity?.entries?.forEach { println("${it.kind} ${it.amountSat}") }
+
+val v = client.list(view = ListView.VTXOS)
+v.vtxos?.vtxos?.forEach { println("${it.outpoint} ${it.amountSat} ${it.status}") }
+```
+
+```swift
+// Swift: recent activity, then the live VTXO set
+let r = try await client.list(view: .activity, limit: 50)
+r.activity?.entries.forEach { print("\($0.kind) \($0.amountSat)") }
+
+let v = try await client.list(view: .vtxos)
+v.vtxos?.vtxos.forEach { print("\($0.outpoint) \($0.amountSat) \($0.status)") }
+```
+
+## 13. Shut down
 
 `stop` tears the daemon down and cancels any open stream. It is idempotent, and
 the singleton resets so you can `start` again, for example after the operating
@@ -304,7 +364,7 @@ client.stop()   // Kotlin
 try await client.stop()   // Swift
 ```
 
-## 12. Handle errors
+## 14. Handle errors
 
 A failed call throws: `WalletException` in Kotlin, `WalletError` in Swift, each
 carrying the underlying message. Wrap calls the way you would any throwing API.
@@ -331,7 +391,7 @@ A verb called before `start` throws "not started"; a verb that needs a wallet
 (such as `balance` before `createWallet`) throws `FailedPrecondition` from the
 daemon.
 
-## 13. A complete first-run flow
+## 15. A complete first-run flow
 
 ```kotlin
 // Kotlin
@@ -374,6 +434,10 @@ func firstRun(_ client: WalletClient, dataDir: String) async throws {
 | `DepositResult` | `address`, `entry` |
 | `PrepareSendResult` | `sendIntentId`, `amountSat`, `expectedFeeSat`, `feeKnown`, `rail`, `warning` |
 | `SendResult` | `entry`, `actualAmountSat` |
+| `ListResult` | `view`, and one of `activity` / `vtxos` / `onchain` |
+| `WalletVTXO` | `outpoint`, `amountSat`, `status`, `commitmentTxid` |
+| `ExitResult` | `path`, `cooperative`, `queuedOutpoints`, `actorId` |
+| `ExitStatusResult` | `found`, `status`, `sweepTxid`, `lastError` |
 | `Entry` | `id`, `kind`, `status`, `amountSat`, `feeSat`, `counterparty` |
 
 All amounts are satoshis. `kind` and `status` are lowercase strings
