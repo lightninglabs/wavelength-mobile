@@ -1,0 +1,11 @@
+# Gradle / Android build outputs.
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.kotlin/
+.idea/
+.DS_Store
+
+# The gomobile bindings are large native artifacts built by scripts/fetch-aar.sh.
+android/app/libs/*.aar
