@@ -85,6 +85,15 @@ public struct CreateWalletResult: Decodable, Sendable {
     }
 }
 
+/// Result of unlocking a wallet (`unlockWallet`).
+public struct UnlockWalletResult: Decodable, Sendable {
+    public let identityPubKey: String
+
+    enum CodingKeys: String, CodingKey {
+        case identityPubKey = "IdentityPubKey"
+    }
+}
+
 /// One activity entry from the wallet stream (`subscribe`).
 public struct Entry: Decodable, Sendable {
     public let id: String

@@ -58,6 +58,11 @@ enum Bindings {
         return try unwrap(MobileCreateWallet(req, &err), err)
     }
 
+    static func unlockWallet(_ req: Data) throws -> Data {
+        var err: NSError?
+        return try unwrap(MobileUnlockWallet(req, &err), err)
+    }
+
     static func subscribe(_ req: Data) throws -> BindingsSubscription {
         var err: NSError?
         let sub = MobileSubscribe(req, &err)
@@ -90,6 +95,7 @@ enum Bindings {
     static func status() throws -> Data { throw missing() }
     static func balance() throws -> Data { throw missing() }
     static func createWallet(_ req: Data) throws -> Data { throw missing() }
+    static func unlockWallet(_ req: Data) throws -> Data { throw missing() }
     static func subscribe(_ req: Data) throws -> BindingsSubscription { throw missing() }
 }
 

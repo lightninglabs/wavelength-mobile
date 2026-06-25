@@ -105,6 +105,9 @@ design; the full method list is in darepo-client's
 
 ## Documentation
 
+- [`docs/api-guide.md`](docs/api-guide.md) — common operations as a cookbook,
+  with Kotlin and Swift side by side (boot, create/unlock, sync, balance,
+  activity stream, errors).
 - [`docs/architecture.md`](docs/architecture.md) — how the embedded wallet,
   the in-memory transport, and the JSON boundary work.
 - [`docs/android.md`](docs/android.md) — the Android build and run workflow in

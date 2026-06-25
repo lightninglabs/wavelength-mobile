@@ -74,6 +74,13 @@ public actor WalletClient {
         return try decode(await bg { try Bindings.createWallet(body) })
     }
 
+    /// Unlock an existing wallet.
+    public func unlockWallet(walletPassword: Data) async throws -> UnlockWalletResult {
+        let req = UnlockWalletReq(walletPassword: walletPassword.base64EncodedString())
+        let body = try encoder.encode(req)
+        return try decode(await bg { try Bindings.unlockWallet(body) })
+    }
+
     /// Stream wallet activity. The stream finishes on a clean end-of-stream and
     /// throws `WalletError` on a real error. Cancelling the consuming task
     /// closes the underlying subscription, which unblocks the pull loop.
@@ -146,6 +153,13 @@ private struct CreateWalletReq: Encodable {
     let walletPassword: String
     enum CodingKeys: String, CodingKey {
         case mnemonic = "Mnemonic"
+        case walletPassword = "WalletPassword"
+    }
+}
+
+private struct UnlockWalletReq: Encodable {
+    let walletPassword: String
+    enum CodingKeys: String, CodingKey {
         case walletPassword = "WalletPassword"
     }
 }
