@@ -48,8 +48,8 @@ echo "==> building Walletdk.aar from ${DAREPO_CLIENT_DIR}"
 ( cd "${DAREPO_CLIENT_DIR}" && make mobile-android )
 
 SRC_AAR="${DAREPO_CLIENT_DIR}/sdk/walletdk/mobile/build/android/Walletdk.aar"
-DST_DIR="${REPO_ROOT}/android/app/libs"
+DST_DIR="${REPO_ROOT}/android/walletkit/libs"
 mkdir -p "${DST_DIR}"
 cp "${SRC_AAR}" "${DST_DIR}/Walletdk.aar"
 
-echo "==> copied $(du -h "${DST_DIR}/Walletdk.aar" | cut -f1) -> android/app/libs/Walletdk.aar"
+echo "==> copied $(du -h "${DST_DIR}/Walletdk.aar" | cut -f1) -> android/walletkit/libs/Walletdk.aar"

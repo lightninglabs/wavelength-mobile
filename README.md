@@ -31,13 +31,15 @@ embedded wallet, create a key, sync the chain from Esplora, and read balances.
 
 | Path | Contents |
 |------|----------|
-| `android/` | Sample Android app (Jetpack Compose, AGP 9). Boots the embedded wallet and exercises the bindings. |
-| `scripts/fetch-aar.sh` | Builds `Walletdk.aar` from a sibling `darepo-client` checkout and stages it under `android/app/libs`. |
+| `android/walletkit/` | Idiomatic Kotlin wrapper (`suspend` + `Flow` + typed models) over the generated bindings. The Android library other apps depend on. |
+| `android/app/` | Sample Android app (Jetpack Compose, AGP 9) that drives `walletkit`. |
+| `ios/WalletKit/` | Idiomatic Swift wrapper (`actor` + `async` + `AsyncThrowingStream` + `Codable`). Mirrors the Kotlin library. |
+| `scripts/fetch-aar.sh` | Builds `Walletdk.aar` from a sibling `darepo-client` checkout and stages it under `android/walletkit/libs`. |
+| `scripts/fetch-xcframework.sh` | Same for the iOS `Walletdk.xcframework`. |
 | `docs/` | Architecture, the Android workflow, and signet setup. |
 
-The next milestone adds an idiomatic wrapper layer (Kotlin coroutines /
-`Flow`, Swift `async` / `AsyncStream`) and an iOS sample. The sample apps will
-then call the wrappers instead of the raw generated classes.
+The Android wrapper, sample, and signet flow are working end to end. The Swift
+wrapper sources are complete; an iOS sample app and CI build are next.
 
 ## Quick start (Android)
 
@@ -68,22 +70,29 @@ The `.aar` carries the daemon compiled for every Android ABI, so it is large
 (150 MB and up). `fetch-aar.sh` regenerates it and `.gitignore` keeps it out of
 the repo.
 
-## The binding API, in one breath
+## The API
 
-The generated `Mobile` class (Java package
-`engineering.lightning.walletdk.mobile`) is callback-free:
+Use the **wrapper**, not the raw bindings. The Kotlin `WalletClient`
+(`engineering.lightning.walletdk.client`) gives every call a `suspend` function
+that runs off the main thread and returns a typed model, and exposes wallet
+activity as a `Flow`:
 
-- `Mobile.start(configJson)` boots the daemon and blocks until it is serving.
-  Call it off the main thread.
-- The RPC verbs (`getInfo`, `balance`, `createWallet`, `list`, ...) take and
-  return JSON bytes and throw on error.
-- `Mobile.subscribe(req)` returns a `Subscription` whose `next()` you pull in a
-  loop; `close()` ends it.
-- A few hot paths return plain scalars: `confirmedBalanceSat()`,
-  `walletReady()`, `isRunning()`.
+```kotlin
+val client = WalletClient()
+client.start(WalletConfig.signet(dataDir = dir))     // suspend; blocks off-thread
+client.createWallet("my-password".toByteArray())
+val info = client.getInfo()                           // typed Info
+client.activity(includeExisting = true).collect { e -> /* Entry */ }
+```
 
-`docs/architecture.md` explains the design and why it is shaped this way. The
-full method list lives in darepo-client's
+Swift's `WalletClient` mirrors this with `async`/`throws` and an
+`AsyncThrowingStream` (see `ios/`).
+
+Underneath, the generated `Mobile` class is the callback-free escape hatch:
+`start(configJson)` (synchronous, blocks until serving), JSON-bytes verbs that
+throw, `subscribe(req)` returning a pull-`Subscription`, and scalar shortcuts
+(`confirmedBalanceSat()`, `walletReady()`). `docs/architecture.md` explains the
+design; the full method list is in darepo-client's
 [`docs/walletdk_mobile.md`](https://github.com/lightninglabs/darepo-client/blob/main/docs/walletdk_mobile.md).
 
 ## Documentation
@@ -94,3 +103,5 @@ full method list lives in darepo-client's
   detail, including the `android` CLI and emulator.
 - [`docs/signet.md`](docs/signet.md) — pointing the wallet at a signet
   environment and watching it sync.
+- [`ios/README.md`](ios/README.md) — the Swift `WalletKit` wrapper and how to
+  build its `xcframework`.

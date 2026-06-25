@@ -15,13 +15,22 @@ just means sends and rounds are unavailable.
 
 ## Endpoints
 
-Set these in
-`android/app/src/main/java/com/example/walletdksample/ui/main/WalletDemoScreen.kt`:
+`WalletConfig.signet(...)` carries Lightning Labs' public signet deployment as
+defaults; override any of them per call:
 
-| Const | Meaning | Default |
-|-------|---------|---------|
-| `ESPLORA_URL` | Esplora REST base URL for signet | `https://mempool.space/signet/api` |
-| `OPERATOR_ADDRESS` | Ark operator mailbox `host:port` | empty (sends disabled) |
+| Parameter | Meaning | Default |
+|-----------|---------|---------|
+| `esploraUrl` | Esplora REST base URL | `https://mempool.space/signet/api` |
+| `operatorAddress` | Ark operator mailbox `host:port` (TLS) | `arkd-signet.testnet.lightningcluster.com:443` |
+| `swapServerAddress` | swapdk-server `host:port` (TLS) | `swapd-signet.testnet.lightningcluster.com:443` |
+
+The operator and swap endpoints terminate TLS at `:443`, so they run secure (no
+`insecure` flag). Pass an empty `operatorAddress` to run sync-only without an
+operator.
+
+Verified end to end on an emulator: the embedded wallet connects to the operator
+over TLS, fetches operator terms, and starts the durable mailbox ingress loop,
+while the Esplora-backed wallet syncs to the signet tip.
 
 ## Standard signet vs mutinynet
 

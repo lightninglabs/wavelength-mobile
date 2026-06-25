@@ -44,9 +44,9 @@ kotlin {
 }
 
 dependencies {
-  // The gomobile-generated walletdk bindings. Build with `make mobile-android`
-  // (sdk/walletdk/mobile/gen_bindings.sh) and drop the .aar into app/libs.
-  implementation(files("libs/Walletdk.aar"))
+  // The idiomatic Kotlin wrapper (suspend + Flow + typed models) over the
+  // gomobile bindings. It carries the Walletdk.aar transitively.
+  implementation(project(":walletkit"))
 
   val composeBom = platform(libs.androidx.compose.bom)
   implementation(composeBom)
@@ -80,9 +80,4 @@ dependencies {
   androidTestImplementation(libs.androidx.test.ext.junit)
   androidTestImplementation(libs.androidx.test.runner)
   androidTestImplementation(libs.androidx.test.espresso.core)
-
-  // Navigation
-  implementation(libs.androidx.navigation3.ui)
-  implementation(libs.androidx.navigation3.runtime)
-  implementation(libs.androidx.lifecycle.viewmodel.navigation3)
 }

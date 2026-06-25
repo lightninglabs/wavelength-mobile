@@ -1,0 +1,64 @@
+# iOS — WalletKit
+
+`WalletKit` is the idiomatic Swift wrapper over the gomobile bindings: an
+`actor`-based `WalletClient` with `async`/`throws` methods, an
+`AsyncThrowingStream` for wallet activity, and `Codable` models. It mirrors the
+Kotlin `walletkit` library.
+
+> Status: the Swift sources are complete and reviewed, but an iOS sample app and
+> a CI build are still to come. Building requires the `Walletdk.xcframework`,
+> which is produced from darepo-client (`make mobile-ios`) and is not committed
+> here.
+
+## Layout
+
+```
+ios/WalletKit/
+  Package.swift                 SwiftPM package; binaryTarget -> Walletdk.xcframework
+  Sources/WalletKit/
+    Bindings.swift              the only file that touches generated symbols
+    WalletClient.swift          actor: async/throws API + AsyncThrowingStream
+    WalletConfig.swift          Encodable config + signet() factory
+    Models.swift                Codable result models
+  Frameworks/                   Walletdk.xcframework goes here (gitignored)
+```
+
+## Build the framework
+
+```bash
+# From a darepo-client checkout. Produces sdk/walletdk/mobile/build/ios/Walletdk.xcframework
+make mobile-ios
+
+# Stage it into the package (or run scripts/fetch-xcframework.sh):
+mkdir -p ios/WalletKit/Frameworks
+cp -R /path/to/darepo-client/sdk/walletdk/mobile/build/ios/Walletdk.xcframework \
+      ios/WalletKit/Frameworks/
+```
+
+`make mobile-ios` runs on macOS with Xcode installed and cross-compiles the
+embedded daemon for device + simulator slices.
+
+## The generated symbol prefix
+
+gomobile names the generated free functions after the Go package, so they are
+`MobileStart`, `MobileGetInfo`, `MobileSubscribe`, and a `MobileSubscription`
+class, all in a `Walletdk` module. Every reference to those symbols lives in
+`Bindings.swift`; if the prefix changes (the `gomobile bind -prefix` flag in
+`gen_bindings.sh`), that one file is the only edit.
+
+## Usage
+
+```swift
+import WalletKit
+
+let client = WalletClient()
+try await client.start(.signet(dataDir: dataDir))
+_ = try await client.createWallet(walletPassword: Data("demo-password".utf8))
+
+let info = try await client.getInfo()
+print("height \(info.blockHeight), ready \(info.walletReady)")
+
+for try await entry in client.activity(includeExisting: true) {
+    print("\(entry.kind) \(entry.amountSat) sat \(entry.status)")
+}
+```

@@ -31,3 +31,4 @@ plugins {
 
 rootProject.name = "WalletdkSample"
 include(":app")
+include(":walletkit")
