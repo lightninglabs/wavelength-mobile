@@ -1,37 +1,75 @@
 import Foundation
 
 // Bindings is the single bridge to the gomobile-generated symbols. gomobile
-// emits free functions prefixed with the Go package name ("Mobile"), e.g.
+// emits free C functions prefixed with the Go package name ("Mobile"), e.g.
 // MobileStart, MobileGetInfo, MobileSubscribe, and a MobileSubscription class.
 // Confining every generated-symbol reference here means a change to the gomobile
-// prefix (the `make mobile-ios` `-prefix` flag) is a one-file edit, and the rest
-// of WalletKit stays prefix-agnostic.
+// prefix (the `gomobile bind -prefix` flag) is a one-file edit.
 //
-// When the Walletdk.xcframework is absent (e.g. building docs on a machine
-// without the bindings), the stubs below keep the package compiling and throw at
-// runtime. Build the framework with `make mobile-ios` in darepo-client and add
-// it to the WalletKit target; see ios/README.md.
+// Note: Swift does NOT auto-translate gomobile's *free functions* into `throws`
+// (that audit only applies to Objective-C methods), so each takes an explicit
+// NSError out-parameter that we convert to a thrown WalletError here. The
+// MobileSubscription *methods* (next/close) are ObjC methods, so those do import
+// as `throws`.
+//
+// When Walletdk.xcframework is absent, the #else stubs keep the package
+// compiling and throw at runtime. Build it with `make mobile-ios`; see
+// ios/README.md.
 
 #if canImport(Walletdk)
 import Walletdk
 
-/// The generated subscription handle (`MobileSubscription`).
 typealias BindingsSubscription = MobileSubscription
 
 enum Bindings {
     static func isRunning() -> Bool { MobileIsRunning() }
-    static func start(_ cfg: String) throws { try MobileStart(cfg) }
-    static func stop() throws { try MobileStop() }
-    static func getInfo() throws -> Data { try MobileGetInfo() }
-    static func status() throws -> Data { try MobileStatus() }
-    static func balance() throws -> Data { try MobileBalance() }
-    static func createWallet(_ req: Data) throws -> Data { try MobileCreateWallet(req) }
+
+    static func start(_ cfg: String) throws {
+        var err: NSError?
+        let ok = MobileStart(cfg, &err)
+        if let err { throw WalletError(err) }
+        if !ok { throw WalletError(message: "MobileStart returned false") }
+    }
+
+    static func stop() throws {
+        var err: NSError?
+        let ok = MobileStop(&err)
+        if let err { throw WalletError(err) }
+        if !ok { throw WalletError(message: "MobileStop returned false") }
+    }
+
+    static func getInfo() throws -> Data {
+        var err: NSError?
+        return try unwrap(MobileGetInfo(&err), err)
+    }
+
+    static func status() throws -> Data {
+        var err: NSError?
+        return try unwrap(MobileStatus(&err), err)
+    }
+
+    static func balance() throws -> Data {
+        var err: NSError?
+        return try unwrap(MobileBalance(&err), err)
+    }
+
+    static func createWallet(_ req: Data) throws -> Data {
+        var err: NSError?
+        return try unwrap(MobileCreateWallet(req, &err), err)
+    }
+
     static func subscribe(_ req: Data) throws -> BindingsSubscription {
-        var sub: MobileSubscription?
-        // gomobile maps (T, error) to a Swift throwing call returning T.
-        sub = try MobileSubscribe(req)
+        var err: NSError?
+        let sub = MobileSubscribe(req, &err)
+        if let err { throw WalletError(err) }
         guard let sub else { throw WalletError(message: "nil subscription") }
         return sub
+    }
+
+    private static func unwrap(_ data: Data?, _ err: NSError?) throws -> Data {
+        if let err { throw WalletError(err) }
+        guard let data else { throw WalletError(message: "nil response") }
+        return data
     }
 }
 
@@ -40,7 +78,7 @@ enum Bindings {
 /// Placeholder so WalletKit compiles without the bindings. Calls throw.
 final class BindingsSubscription {
     func next() throws -> Data { throw WalletError(message: "Walletdk.xcframework not linked") }
-    func close() {}
+    func close() throws {}
 }
 
 enum Bindings {

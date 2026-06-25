@@ -36,6 +36,33 @@ struct ContentView: View {
             }
         }
         .padding()
+        .task {
+            // Headless driver for CLI / CI runs: set WALLETDK_AUTOSTART to boot
+            // and create a wallet without tapping (the simulator has no CLI tap).
+            if ProcessInfo.processInfo.environment["WALLETDK_AUTOSTART"] != nil {
+                await autoStart()
+            }
+        }
+    }
+
+    private func autoStart() async {
+        busy = true
+        append("Auto-start (signet)…")
+        do {
+            try await client.start(.signet(dataDir: dataDir))
+            running = true
+            append("gRPC serving. Creating wallet…")
+            pollSync()
+            let res = try await client.createWallet(
+                walletPassword: Data("damobile-demo-password".utf8)
+            )
+            walletReady = true
+            append("wallet created; identity=\(res.identityPubKey.prefix(16))…")
+            streamActivity()
+        } catch {
+            append("autostart failed: \(error)")
+        }
+        busy = false
     }
 
     @MainActor private func append(_ line: String) { log += line + "\n" }

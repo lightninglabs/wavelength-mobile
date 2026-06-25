@@ -113,7 +113,7 @@ public actor WalletClient {
             }
 
             continuation.onTermination = { _ in
-                sub.close()
+                try? sub.close()
                 task.cancel()
             }
         }

@@ -22,6 +22,9 @@ targets:
       - package: WalletKit
     settings:
       base:
+        # Go's net resolver (compiled into the xcframework) references
+        # res_9_* symbols from libresolv; link it explicitly.
+        OTHER_LDFLAGS: -lresolv
         PRODUCT_BUNDLE_IDENTIFIER: engineering.lightning.walletdk.sample
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES

@@ -8,6 +8,15 @@ Kotlin `walletkit` library.
 Building requires the `Walletdk.xcframework`, which is produced from
 darepo-client (`make mobile-ios`) and is not committed here.
 
+Verified end to end on the iOS Simulator: the Swift wrapper boots the embedded
+daemon, creates a wallet, connects to the signet operator mailbox, and syncs to
+the chain tip (`operator=connected`, `state=ready`).
+
+> Linker note: the embedded daemon's Go networking references `res_9_*` symbols
+> from **libresolv**, so the app target links `-lresolv` (set in
+> `Sample/project.yml`). Without it the link fails with "Undefined symbols
+> _res_9_ninit / _nclose / _nsearch".
+
 ## Run the sample (command line, no Xcode GUI)
 
 ```bash
@@ -21,7 +30,10 @@ brew install xcodegen
 
 # Then drive the simulator like the Android emulator:
 xcrun simctl io booted screenshot ui.png
-xcrun simctl spawn booted log stream --predicate 'sender == "WalletdkSample"'
+
+# Or run headless (no taps): autostart boots + creates a wallet on launch.
+SIMCTL_CHILD_WALLETDK_AUTOSTART=1 \
+  xcrun simctl launch booted engineering.lightning.walletdk.sample
 ```
 
 `run-ios-sample.sh` stages the xcframework, runs `xcodegen generate` on
