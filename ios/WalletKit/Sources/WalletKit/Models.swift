@@ -114,3 +114,66 @@ public struct Entry: Decodable, Sendable {
         case note = "Note"
     }
 }
+
+/// A Lightning invoice to receive into the wallet, plus its initial entry.
+public struct ReceiveResult: Decodable, Sendable {
+    public let invoice: String
+    public let entry: Entry
+
+    enum CodingKeys: String, CodingKey {
+        case invoice = "Invoice"
+        case entry = "Entry"
+    }
+}
+
+/// A fresh on-chain boarding address to deposit into, plus its initial entry.
+public struct DepositResult: Decodable, Sendable {
+    public let address: String
+    public let entry: Entry
+
+    enum CodingKeys: String, CodingKey {
+        case address = "Address"
+        case entry = "Entry"
+    }
+}
+
+/// A quote for an outbound payment. Show the fee, then dispatch the quote with
+/// `send(_:)` using the single-use `sendIntentID`. The fee is only known up
+/// front when `feeKnown` is true.
+public struct PrepareSendResult: Decodable, Sendable {
+    public let sendIntentID: String
+    public let amountSat: Int64
+    public let expectedFeeSat: Int64
+    public let feeKnown: Bool
+    public let expectedTotalOutflowSat: Int64
+    public let rail: String
+    public let quoteStatus: String
+    public let destinationSummary: String
+    public let paymentHash: String
+    public let warning: String
+
+    enum CodingKeys: String, CodingKey {
+        case sendIntentID = "SendIntentID"
+        case amountSat = "AmountSat"
+        case expectedFeeSat = "ExpectedFeeSat"
+        case feeKnown = "FeeKnown"
+        case expectedTotalOutflowSat = "ExpectedTotalOutflowSat"
+        case rail = "Rail"
+        case quoteStatus = "QuoteStatus"
+        case destinationSummary = "DestinationSummary"
+        case paymentHash = "PaymentHash"
+        case warning = "Warning"
+    }
+}
+
+/// The result of dispatching a prepared send. `actualAmountSat` is what actually
+/// left the wallet, which matters for a sweep-all send.
+public struct SendResult: Decodable, Sendable {
+    public let entry: Entry
+    public let actualAmountSat: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case entry = "Entry"
+        case actualAmountSat = "ActualAmountSat"
+    }
+}

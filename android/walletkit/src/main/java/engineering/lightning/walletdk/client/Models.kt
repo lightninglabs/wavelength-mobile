@@ -86,3 +86,47 @@ data class Entry(
   @SerialName("Note") val note: String = "",
   @SerialName("FailureReason") val failureReason: String = "",
 )
+
+/** A Lightning invoice to receive into the wallet, plus its initial entry. */
+@Serializable
+data class ReceiveResult(
+  @SerialName("Invoice") val invoice: String = "",
+  @SerialName("Entry") val entry: Entry = Entry(),
+)
+
+/** A fresh on-chain boarding address to deposit into, plus its initial entry. */
+@Serializable
+data class DepositResult(
+  @SerialName("Address") val address: String = "",
+  @SerialName("Entry") val entry: Entry = Entry(),
+)
+
+/**
+ * A quote for an outbound payment. Show the fee, then dispatch the quote with
+ * [WalletClient.send] using the single-use [sendIntentId]. The fee is only known
+ * up front when [feeKnown] is true.
+ */
+@Serializable
+data class PrepareSendResult(
+  @SerialName("SendIntentID") val sendIntentId: String = "",
+  @SerialName("AmountSat") val amountSat: Long = 0,
+  @SerialName("ExpectedFeeSat") val expectedFeeSat: Long = 0,
+  @SerialName("FeeKnown") val feeKnown: Boolean = false,
+  @SerialName("ExpectedTotalOutflowSat") val expectedTotalOutflowSat: Long = 0,
+  @SerialName("Rail") val rail: String = "",
+  @SerialName("QuoteStatus") val quoteStatus: String = "",
+  @SerialName("DestinationSummary") val destinationSummary: String = "",
+  @SerialName("PaymentHash") val paymentHash: String = "",
+  @SerialName("Warning") val warning: String = "",
+)
+
+/**
+ * The result of dispatching a prepared send. [actualAmountSat] is what actually
+ * left the wallet, which matters for a sweep-all send where the amount is the
+ * swept total rather than a requested figure.
+ */
+@Serializable
+data class SendResult(
+  @SerialName("Entry") val entry: Entry = Entry(),
+  @SerialName("ActualAmountSat") val actualAmountSat: Long = 0,
+)

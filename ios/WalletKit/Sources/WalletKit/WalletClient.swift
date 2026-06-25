@@ -81,6 +81,61 @@ public actor WalletClient {
         return try decode(await bg { try Bindings.unlockWallet(body) })
     }
 
+    /// Open a Lightning invoice to receive `amountSat` into the wallet. Share
+    /// the returned invoice with the payer; the matching entry shows up on the
+    /// activity stream as it is paid.
+    public func receiveLightning(amountSat: Int64, memo: String = "") async throws -> ReceiveResult {
+        let body = try encoder.encode(ReceiveReq(amountSat: amountSat, memo: memo))
+        return try decode(await bg { try Bindings.receive(body) })
+    }
+
+    /// Allocate a fresh on-chain boarding address to deposit into.
+    public func newDepositAddress(amountSatHint: Int64 = 0) async throws -> DepositResult {
+        let body = try encoder.encode(DepositReq(amountSatHint: amountSatHint))
+        return try decode(await bg { try Bindings.deposit(body) })
+    }
+
+    /// Quote an outbound payment without moving funds. Set exactly one of
+    /// `invoice` or `onchainAddress`. The result carries a single-use intent id
+    /// to pass to `send(_:)`. `sweepAll` drains every VTXO to the address.
+    public func prepareSend(
+        invoice: String? = nil,
+        onchainAddress: String? = nil,
+        amountSat: Int64 = 0,
+        note: String = "",
+        maxFeeSat: Int64 = 0,
+        sweepAll: Bool = false
+    ) async throws -> PrepareSendResult {
+        let req = PrepareSendReq(
+            invoice: invoice, onchainAddress: onchainAddress, amountSat: amountSat,
+            note: note, maxFeeSat: maxFeeSat, sweepAll: sweepAll
+        )
+        let body = try encoder.encode(req)
+        return try decode(await bg { try Bindings.prepareSend(body) })
+    }
+
+    /// Dispatch a prepared send, consuming the single-use intent id.
+    public func send(_ sendIntentID: String) async throws -> SendResult {
+        let body = try encoder.encode(SendPreparedReq(sendIntentID: sendIntentID))
+        return try decode(await bg { try Bindings.sendPrepared(body) })
+    }
+
+    /// Pay a Lightning invoice in one call, skipping the explicit quote step.
+    /// Use `prepareSend` + `send` when you want to show the fee before paying.
+    public func payInvoice(_ invoice: String, maxFeeSat: Int64 = 0) async throws -> SendResult {
+        let quote = try await prepareSend(invoice: invoice, maxFeeSat: maxFeeSat)
+        return try await send(quote.sendIntentID)
+    }
+
+    /// Stream only incoming payments (receives and deposits) as they arrive and
+    /// settle. A convenience over `activity` filtered to the credit kinds: watch
+    /// for an `Entry` whose status becomes "complete".
+    public nonisolated func incomingPayments(
+        includeExisting: Bool = false
+    ) -> AsyncThrowingStream<Entry, Error> {
+        activity(includeExisting: includeExisting, kinds: ["receive", "deposit"])
+    }
+
     /// Stream wallet activity. The stream finishes on a clean end-of-stream and
     /// throws `WalletError` on a real error. Cancelling the consuming task
     /// closes the underlying subscription, which unblocks the pull loop.
@@ -170,5 +225,45 @@ private struct SubscribeReq: Encodable {
     enum CodingKeys: String, CodingKey {
         case includeExisting = "IncludeExisting"
         case kinds = "Kinds"
+    }
+}
+
+private struct ReceiveReq: Encodable {
+    let amountSat: Int64
+    let memo: String
+    enum CodingKeys: String, CodingKey {
+        case amountSat = "AmountSat"
+        case memo = "Memo"
+    }
+}
+
+private struct DepositReq: Encodable {
+    let amountSatHint: Int64
+    enum CodingKeys: String, CodingKey {
+        case amountSatHint = "AmountSatHint"
+    }
+}
+
+private struct PrepareSendReq: Encodable {
+    let invoice: String?
+    let onchainAddress: String?
+    let amountSat: Int64
+    let note: String
+    let maxFeeSat: Int64
+    let sweepAll: Bool
+    enum CodingKeys: String, CodingKey {
+        case invoice = "Invoice"
+        case onchainAddress = "OnchainAddress"
+        case amountSat = "AmountSat"
+        case note = "Note"
+        case maxFeeSat = "MaxFeeSat"
+        case sweepAll = "SweepAll"
+    }
+}
+
+private struct SendPreparedReq: Encodable {
+    let sendIntentID: String
+    enum CodingKeys: String, CodingKey {
+        case sendIntentID = "SendIntentID"
     }
 }

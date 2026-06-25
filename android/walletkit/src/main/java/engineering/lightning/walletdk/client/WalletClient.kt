@@ -73,6 +73,57 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
   }
 
   /**
+   * Open a Lightning invoice to receive [amountSat] into the wallet. Share the
+   * returned invoice with the payer; the matching entry shows up on the
+   * activity stream as it is paid.
+   */
+  suspend fun receiveLightning(amountSat: Long, memo: String = ""): ReceiveResult =
+    decode(io { Mobile.receive(encode(ReceiveReq.serializer(), ReceiveReq(amountSat, memo))) })
+
+  /**
+   * Allocate a fresh on-chain boarding address to deposit into. The optional
+   * hint lets the daemon size the boarding round; zero leaves it to the daemon.
+   */
+  suspend fun newDepositAddress(amountSatHint: Long = 0): DepositResult =
+    decode(io { Mobile.deposit(encode(DepositReq.serializer(), DepositReq(amountSatHint))) })
+
+  /**
+   * Quote an outbound payment without moving funds. Set exactly one of [invoice]
+   * or [onchainAddress]. The returned [PrepareSendResult] carries a single-use
+   * intent id to pass to [send]. [sweepAll] drains every VTXO to the address.
+   */
+  suspend fun prepareSend(
+    invoice: String? = null,
+    onchainAddress: String? = null,
+    amountSat: Long = 0,
+    note: String = "",
+    maxFeeSat: Long = 0,
+    sweepAll: Boolean = false,
+  ): PrepareSendResult = decode(
+    io {
+      Mobile.prepareSend(
+        encode(
+          PrepareSendReq.serializer(),
+          PrepareSendReq(invoice, onchainAddress, amountSat, note, maxFeeSat, sweepAll),
+        ),
+      )
+    },
+  )
+
+  /** Dispatch a prepared send, consuming the single-use intent id. */
+  suspend fun send(sendIntentId: String): SendResult =
+    decode(io { Mobile.sendPrepared(encode(SendPreparedReq.serializer(), SendPreparedReq(sendIntentId))) })
+
+  /**
+   * Pay a Lightning invoice in one call, skipping the explicit quote step. Use
+   * [prepareSend] + [send] instead when you want to show the fee before paying.
+   */
+  suspend fun payInvoice(invoice: String, maxFeeSat: Long = 0): SendResult {
+    val quote = prepareSend(invoice = invoice, maxFeeSat = maxFeeSat)
+    return send(quote.sendIntentId)
+  }
+
+  /**
    * Stream wallet activity as a [Flow]. Each emission is one [Entry]; the flow
    * completes on a clean end-of-stream and fails with [WalletException] on a
    * real error. Cancelling collection closes the underlying subscription,
@@ -106,6 +157,15 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
       pump.cancel()
     }
   }
+
+  /**
+   * Stream only incoming payments (receives and deposits) as they arrive and
+   * settle. A convenience over [activity] filtered to the credit kinds, useful
+   * for a "you were paid" notification: watch for an [Entry] whose status
+   * becomes "complete".
+   */
+  fun incomingPayments(includeExisting: Boolean = false): Flow<Entry> =
+    activity(includeExisting = includeExisting, kinds = listOf("receive", "deposit"))
 
   // --- internals -----------------------------------------------------------
 
@@ -154,4 +214,30 @@ private data class UnlockWalletReq(
 private data class SubscribeReq(
   @SerialName("IncludeExisting") val includeExisting: Boolean = false,
   @SerialName("Kinds") val kinds: List<String> = emptyList(),
+)
+
+@Serializable
+private data class ReceiveReq(
+  @SerialName("AmountSat") val amountSat: Long,
+  @SerialName("Memo") val memo: String = "",
+)
+
+@Serializable
+private data class DepositReq(
+  @SerialName("AmountSatHint") val amountSatHint: Long = 0,
+)
+
+@Serializable
+private data class PrepareSendReq(
+  @SerialName("Invoice") val invoice: String? = null,
+  @SerialName("OnchainAddress") val onchainAddress: String? = null,
+  @SerialName("AmountSat") val amountSat: Long = 0,
+  @SerialName("Note") val note: String = "",
+  @SerialName("MaxFeeSat") val maxFeeSat: Long = 0,
+  @SerialName("SweepAll") val sweepAll: Boolean = false,
+)
+
+@Serializable
+private data class SendPreparedReq(
+  @SerialName("SendIntentID") val sendIntentId: String,
 )

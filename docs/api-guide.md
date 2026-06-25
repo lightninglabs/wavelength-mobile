@@ -14,10 +14,10 @@ method list see darepo-client's
 ## The shape in one paragraph
 
 A `WalletClient` owns the embedded daemon. You `start` it once, `createWallet`
-or `unlockWallet`, then call read verbs (`getInfo`, `status`, `balance`) and
-collect the activity stream. One daemon runs per process, so a single client
-serves the whole app. Every call either returns a typed value or throws, and a
-blocking call runs off the main thread for you.
+or `unlockWallet`, then read state (`getInfo`, `status`, `balance`), receive and
+send payments, and collect the activity stream. One daemon runs per process, so
+a single client serves the whole app. Every call either returns a typed value or
+throws, and a blocking call runs off the main thread for you.
 
 ## 1. Create a client
 
@@ -181,7 +181,116 @@ let task = Task {
 // task.cancel() closes the subscription.
 ```
 
-## 8. Shut down
+## 8. Receive a payment
+
+A wallet can be paid two ways: a Lightning invoice (off-chain, instant) or an
+on-chain boarding address. Both calls return the invoice or address to show the
+payer, plus the initial `Entry` that will progress on the activity stream.
+
+Lightning invoice:
+
+```kotlin
+// Kotlin
+val r = client.receiveLightning(amountSat = 10_000, memo = "coffee")
+showQr(r.invoice)
+```
+
+```swift
+// Swift
+let r = try await client.receiveLightning(amountSat: 10_000, memo: "coffee")
+showQR(r.invoice)
+```
+
+On-chain deposit address:
+
+```kotlin
+// Kotlin
+val d = client.newDepositAddress()
+showAddress(d.address)
+```
+
+```swift
+// Swift
+let d = try await client.newDepositAddress()
+showAddress(d.address)
+```
+
+## 9. Send a payment
+
+Sending is two steps so the app can show the fee before committing. `prepareSend`
+returns a quote with a single-use intent id; `send` dispatches that intent. Set
+exactly one of `invoice` or `onchainAddress`.
+
+```kotlin
+// Kotlin: pay a Lightning invoice, fee shown first
+val quote = client.prepareSend(invoice = bolt11, maxFeeSat = 50)
+if (quote.feeKnown) confirm(quote.amountSat, quote.expectedFeeSat)
+val sent = client.send(quote.sendIntentId)
+println("sent ${sent.actualAmountSat} sat")
+```
+
+```swift
+// Swift: pay a Lightning invoice, fee shown first
+let quote = try await client.prepareSend(invoice: bolt11, maxFeeSat: 50)
+if quote.feeKnown { confirm(quote.amountSat, quote.expectedFeeSat) }
+let sent = try await client.send(quote.sendIntentID)
+print("sent \(sent.actualAmountSat) sat")
+```
+
+For an on-chain send, pass `onchainAddress` and `amountSat` instead. `sweepAll`
+drains every VTXO to the address.
+
+```kotlin
+// Kotlin
+val quote = client.prepareSend(onchainAddress = addr, amountSat = 25_000)
+client.send(quote.sendIntentId)
+```
+
+```swift
+// Swift
+let quote = try await client.prepareSend(onchainAddress: addr, amountSat: 25_000)
+_ = try await client.send(quote.sendIntentID)
+```
+
+When you do not need to show the fee first, `payInvoice` does both steps at once:
+
+```kotlin
+client.payInvoice(bolt11, maxFeeSat = 50)            // Kotlin
+```
+
+```swift
+try await client.payInvoice(bolt11, maxFeeSat: 50)   // Swift
+```
+
+A prepared intent is single-use: if `send` fails, prepare a fresh quote before
+retrying.
+
+## 10. Be notified of incoming payments
+
+`incomingPayments` streams receives and deposits as they arrive and settle. It
+is the activity stream filtered to the credit kinds. The same `Entry` appears
+first as pending and then as complete, so key any UI on `entry.id` and fire a
+"you were paid" notification when its status becomes `complete`.
+
+```kotlin
+// Kotlin
+scope.launch {
+    client.incomingPayments().collect { e ->
+        if (e.status == "complete") notify("Received ${e.amountSat} sat")
+    }
+}
+```
+
+```swift
+// Swift
+Task {
+    for try await e in client.incomingPayments() {
+        if e.status == "complete" { notify("Received \(e.amountSat) sat") }
+    }
+}
+```
+
+## 11. Shut down
 
 `stop` tears the daemon down and cancels any open stream. It is idempotent, and
 the singleton resets so you can `start` again, for example after the operating
@@ -195,7 +304,7 @@ client.stop()   // Kotlin
 try await client.stop()   // Swift
 ```
 
-## 9. Handle errors
+## 12. Handle errors
 
 A failed call throws: `WalletException` in Kotlin, `WalletError` in Swift, each
 carrying the underlying message. Wrap calls the way you would any throwing API.
@@ -222,7 +331,7 @@ A verb called before `start` throws "not started"; a verb that needs a wallet
 (such as `balance` before `createWallet`) throws `FailedPrecondition` from the
 daemon.
 
-## 10. A complete first-run flow
+## 13. A complete first-run flow
 
 ```kotlin
 // Kotlin
@@ -261,6 +370,10 @@ func firstRun(_ client: WalletClient, dataDir: String) async throws {
 | `Status` | `ready`, `unlocked`, `network`, `balance`, `pendingCount` |
 | `CreateWalletResult` | `mnemonic`, `identityPubKey`, `recoveryRan` |
 | `UnlockWalletResult` | `identityPubKey` |
+| `ReceiveResult` | `invoice`, `entry` |
+| `DepositResult` | `address`, `entry` |
+| `PrepareSendResult` | `sendIntentId`, `amountSat`, `expectedFeeSat`, `feeKnown`, `rail`, `warning` |
+| `SendResult` | `entry`, `actualAmountSat` |
 | `Entry` | `id`, `kind`, `status`, `amountSat`, `feeSat`, `counterparty` |
 
 All amounts are satoshis. `kind` and `status` are lowercase strings
