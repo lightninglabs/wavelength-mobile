@@ -12,14 +12,22 @@ in-memory gRPC channel, so nothing ever listens on a socket.
 
 ## How the pieces fit
 
-```
-darepo-client/sdk/walletdk/mobile   gomobile-safe Go facade over the embedded daemon
-            │  gomobile bind
-            ▼
-   Walletdk.aar  /  Walletdk.xcframework   daemon compiled to a native lib
-            │                              + generated Kotlin / Swift classes
-            ▼
-   damobile/android  (this repo)     sample app that links the lib and calls it
+```mermaid
+flowchart TD
+    SDK["darepo-client / sdk/walletdk/mobile<br/>gomobile-safe Go facade over the embedded daemon"]
+    AAR["Walletdk.aar<br/>(Android native lib + Kotlin classes)"]
+    XCF["Walletdk.xcframework<br/>(iOS native lib + Swift classes)"]
+    KT["android/walletkit<br/>Kotlin wrapper: suspend + Flow"]
+    SW["ios/WalletKit<br/>Swift wrapper: async + AsyncThrowingStream"]
+    APP_A["android/app<br/>sample app"]
+    APP_I["ios/Sample<br/>sample app"]
+
+    SDK -->|gomobile bind| AAR
+    SDK -->|gomobile bind| XCF
+    AAR --> KT
+    XCF --> SW
+    KT --> APP_A
+    SW --> APP_I
 ```
 
 The Go facade and the binding build live in **darepo-client**
