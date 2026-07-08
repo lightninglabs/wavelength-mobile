@@ -116,3 +116,8 @@ design; the full method list is in darepo-client's
   environment and watching it sync.
 - [`ios/README.md`](ios/README.md) — the Swift `WalletKit` wrapper and how to
   build its `xcframework`.
+- [`docs/release_branch_management.md`](docs/release_branch_management.md) — the
+  trunk-based release model, `v0.1.x-branch` release branches, and tagging with
+  `scripts/tag-release.sh`.
+- [`docs/backport-workflow.md`](docs/backport-workflow.md) — automated backport
+  of merged `main` PRs to release branches via `backport-v*` labels.
