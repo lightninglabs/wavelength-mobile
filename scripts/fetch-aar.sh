@@ -75,13 +75,17 @@ if ! command -v gh >/dev/null 2>&1; then
 	exit 1
 fi
 
-version_args=()
-if [[ -n "${WAVELENGTH_VERSION:-}" ]]; then
-	version_args=("${WAVELENGTH_VERSION}")
-fi
-
+# The release tag is an optional positional arg to `gh release download`
+# (omitted => latest). Invoke the two forms separately rather than expanding a
+# maybe-empty array: under `set -u`, macOS's stock bash 3.2 aborts on
+# "${arr[@]}" when arr is empty ("unbound variable").
 echo "==> downloading Wavewalletdk.aar from ${WAVELENGTH_REPO} (${WAVELENGTH_VERSION:-latest})"
-gh release download "${version_args[@]}" --repo "${WAVELENGTH_REPO}" \
-	--pattern "Wavewalletdk.aar" --dir "${DST_DIR}" --clobber
+if [[ -n "${WAVELENGTH_VERSION:-}" ]]; then
+	gh release download "${WAVELENGTH_VERSION}" --repo "${WAVELENGTH_REPO}" \
+		--pattern "Wavewalletdk.aar" --dir "${DST_DIR}" --clobber
+else
+	gh release download --repo "${WAVELENGTH_REPO}" \
+		--pattern "Wavewalletdk.aar" --dir "${DST_DIR}" --clobber
+fi
 
 echo "==> staged $(du -h "${DST}" | cut -f1) -> android/walletkit/libs/Wavewalletdk.aar"
