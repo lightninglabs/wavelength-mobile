@@ -5,10 +5,10 @@ plugins {
 }
 
 android {
-    namespace = "com.example.walletdksample"
+    namespace = "com.example.wavewalletdksample"
     compileSdk = 36
     defaultConfig {
-        applicationId = "com.example.walletdksample"
+        applicationId = "com.example.wavewalletdksample"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
@@ -45,7 +45,7 @@ kotlin {
 
 dependencies {
   // The idiomatic Kotlin wrapper (suspend + Flow + typed models) over the
-  // gomobile bindings. It carries the Walletdk.aar transitively.
+  // gomobile bindings. It carries the Wavewalletdk.aar transitively.
   implementation(project(":walletkit"))
 
   val composeBom = platform(libs.androidx.compose.bom)

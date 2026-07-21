@@ -14,12 +14,12 @@ struct ContentView: View {
 
     private var dataDir: String {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
-            .first!.appendingPathComponent("walletdk").path
+            .first!.appendingPathComponent("wavewalletdk").path
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("walletdk signet demo").font(.system(.headline, design: .monospaced))
+            Text("wavewalletdk signet demo").font(.system(.headline, design: .monospaced))
 
             HStack {
                 Button("Start") { start() }.disabled(running || busy)
@@ -37,9 +37,9 @@ struct ContentView: View {
         }
         .padding()
         .task {
-            // Headless driver for CLI / CI runs: set WALLETDK_AUTOSTART to boot
+            // Headless driver for CLI / CI runs: set WAVEWALLETDK_AUTOSTART to boot
             // and create a wallet without tapping (the simulator has no CLI tap).
-            if ProcessInfo.processInfo.environment["WALLETDK_AUTOSTART"] != nil {
+            if ProcessInfo.processInfo.environment["WAVEWALLETDK_AUTOSTART"] != nil {
                 await autoStart()
             }
         }
@@ -54,7 +54,7 @@ struct ContentView: View {
             append("gRPC serving. Creating wallet…")
             pollSync()
             let res = try await client.createWallet(
-                walletPassword: Data("damobile-demo-password".utf8)
+                walletPassword: Data("wavelength-mobile-demo-password".utf8)
             )
             walletReady = true
             append("wallet created; identity=\(res.identityPubKey.prefix(16))…")
@@ -88,7 +88,7 @@ struct ContentView: View {
         Task {
             do {
                 let res = try await client.createWallet(
-                    walletPassword: Data("damobile-demo-password".utf8)
+                    walletPassword: Data("wavelength-mobile-demo-password".utf8)
                 )
                 walletReady = true
                 append("wallet created; identity=\(res.identityPubKey.prefix(16))…")

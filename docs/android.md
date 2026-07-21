@@ -20,26 +20,32 @@ android sdk install \
   system-images/android-36/google_apis/arm64-v8a
 ```
 
-You also need a modern JDK. JDK 8 is too old to assemble the `.aar`; use 17 or
-newer. `fetch-aar.sh` looks for a Homebrew `openjdk@17` if `JAVA_HOME` is unset.
+You also need a modern JDK to build the sample app (and, for a `WAVELENGTH_DIR`
+source build, to assemble the `.aar`). JDK 8 is too old; use 17 or newer. In a
+source build `fetch-aar.sh` looks for a Homebrew `openjdk@17` if `JAVA_HOME` is
+unset.
 
 ## Build the bindings
 
-The sample links `Walletdk.aar`, which is built from darepo-client rather than
-checked in here. `scripts/fetch-aar.sh` runs `make mobile-android` against a
-sibling checkout and copies the result into `android/app/libs`:
+The sample links `Wavewalletdk.aar`, which is not checked in here.
+`scripts/fetch-aar.sh` downloads it from the `wavelength` GitHub release and
+stages it under `android/walletkit/libs`:
 
 ```bash
-# Default checkout location is ../darepo-client.
+# Downloads the latest wavelength release by default (needs the gh CLI
+# authenticated to an account with read access to wavelength).
 ./scripts/fetch-aar.sh
 
-# Or point at an explicit checkout (for example a worktree):
-DAREPO_CLIENT_DIR=/path/to/darepo-client ./scripts/fetch-aar.sh
+# Pin a specific release:
+WAVELENGTH_VERSION=v0.1.0 ./scripts/fetch-aar.sh
+
+# Or build from a local checkout against an unreleased daemon:
+WAVELENGTH_DIR=/path/to/wavelength ./scripts/fetch-aar.sh
 ```
 
-The build cross-compiles the embedded daemon for all four Android ABIs
-(`arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`), so the first run takes a few
-minutes.
+The source build (`make mobile-android`) cross-compiles the embedded daemon for
+all four Android ABIs (`arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`), so the
+first run takes a few minutes.
 
 ## Build the app
 

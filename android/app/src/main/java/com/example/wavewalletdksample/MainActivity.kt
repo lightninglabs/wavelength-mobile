@@ -1,4 +1,4 @@
-package com.example.walletdksample
+package com.example.wavewalletdksample
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -8,8 +8,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
-import com.example.walletdksample.theme.WalletdkSampleTheme
-import com.example.walletdksample.ui.main.WalletDemoScreen
+import com.example.wavewalletdksample.theme.WavewalletdkSampleTheme
+import com.example.wavewalletdksample.ui.main.WalletDemoScreen
 
 class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -17,7 +17,7 @@ class MainActivity : ComponentActivity() {
 
     enableEdgeToEdge()
     setContent {
-      WalletdkSampleTheme {
+      WavewalletdkSampleTheme {
         Surface(
           modifier = Modifier.fillMaxSize(),
           color = MaterialTheme.colorScheme.background,

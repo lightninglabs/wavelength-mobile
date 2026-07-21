@@ -1,4 +1,4 @@
-package engineering.lightning.walletdk.client
+package engineering.lightning.wavewalletdk.client
 
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertTrue

@@ -1,12 +1,12 @@
 // swift-tools-version: 5.9
 import PackageDescription
 
-// WalletKit wraps the gomobile-generated Walletdk.xcframework in an idiomatic
+// WalletKit wraps the gomobile-generated Wavewalletdk.xcframework in an idiomatic
 // Swift API (async / AsyncThrowingStream / Codable models).
 //
-// The xcframework is a large native artifact built from darepo-client and is
+// The xcframework is a large native artifact built from wavelength and is
 // not committed here. Before building this package, run `make mobile-ios` in a
-// darepo-client checkout and copy the result to Frameworks/Walletdk.xcframework
+// wavelength checkout and copy the result to Frameworks/Wavewalletdk.xcframework
 // (see ios/README.md). The scripts/fetch-xcframework.sh helper does this.
 let package = Package(
     name: "WalletKit",
@@ -16,12 +16,12 @@ let package = Package(
     ],
     targets: [
         .binaryTarget(
-            name: "Walletdk",
-            path: "Frameworks/Walletdk.xcframework"
+            name: "Wavewalletdk",
+            path: "Frameworks/Wavewalletdk.xcframework"
         ),
         .target(
             name: "WalletKit",
-            dependencies: ["Walletdk"]
+            dependencies: ["Wavewalletdk"]
         ),
     ]
 )

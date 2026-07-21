@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct WalletdkSampleApp: App {
+struct WavewalletdkSampleApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()

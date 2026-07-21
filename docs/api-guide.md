@@ -8,8 +8,8 @@ client is an `actor` with `async` functions and an `AsyncThrowingStream`.
 
 For the design behind these choices (the in-process daemon, the JSON boundary,
 why there are no callbacks) see [architecture.md](architecture.md). For the full
-method list see darepo-client's
-[`docs/walletdk_mobile.md`](https://github.com/lightninglabs/darepo-client/blob/main/docs/walletdk_mobile.md).
+method list see wavelength's
+[`docs/wavewalletdk_mobile.md`](https://github.com/lightninglabs/wavelength/blob/main/docs/wavewalletdk_mobile.md).
 
 ## The shape in one paragraph
 
@@ -45,14 +45,14 @@ endpoints; override `dataDir` per install.
 
 ```kotlin
 // Kotlin (inside a coroutine)
-client.start(WalletConfig.signet(dataDir = "${context.filesDir}/walletdk"))
+client.start(WalletConfig.signet(dataDir = "${context.filesDir}/wavewalletdk"))
 ```
 
 ```swift
 // Swift (inside a Task)
 let dir = FileManager.default
     .urls(for: .documentDirectory, in: .userDomainMask)[0]
-    .appendingPathComponent("walletdk").path
+    .appendingPathComponent("wavewalletdk").path
 try await client.start(.signet(dataDir: dir))
 ```
 
