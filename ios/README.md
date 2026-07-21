@@ -5,8 +5,9 @@
 `AsyncThrowingStream` for wallet activity, and `Codable` models. It mirrors the
 Kotlin `walletkit` library.
 
-Building requires the `Walletdk.xcframework`, which is produced from
-darepo-client (`make mobile-ios`) and is not committed here.
+Building requires the `Wavewalletdk.xcframework`. `scripts/fetch-xcframework.sh`
+downloads it from the `wavelength` GitHub release by default (or builds it from
+a `WAVELENGTH_DIR` checkout); it is not committed here.
 
 Verified end to end on the iOS Simulator: the Swift wrapper boots the embedded
 daemon, creates a wallet, connects to the signet operator mailbox, and syncs to
@@ -32,8 +33,8 @@ brew install xcodegen
 xcrun simctl io booted screenshot ui.png
 
 # Or run headless (no taps): autostart boots + creates a wallet on launch.
-SIMCTL_CHILD_WALLETDK_AUTOSTART=1 \
-  xcrun simctl launch booted engineering.lightning.walletdk.sample
+SIMCTL_CHILD_WAVEWALLETDK_AUTOSTART=1 \
+  xcrun simctl launch booted engineering.lightning.wavewalletdk.sample
 ```
 
 `run-ios-sample.sh` stages the xcframework, runs `xcodegen generate` on
@@ -47,35 +48,36 @@ official `xcrun mcpbridge` MCP server can drive a live Xcode for agents, and
 
 ```
 ios/WalletKit/
-  Package.swift                 SwiftPM package; binaryTarget -> Walletdk.xcframework
+  Package.swift                 SwiftPM package; binaryTarget -> Wavewalletdk.xcframework
   Sources/WalletKit/
     Bindings.swift              the only file that touches generated symbols
     WalletClient.swift          actor: async/throws API + AsyncThrowingStream
     WalletConfig.swift          Encodable config + signet() factory
     Models.swift                Codable result models
-  Frameworks/                   Walletdk.xcframework goes here (gitignored)
+  Frameworks/                   Wavewalletdk.xcframework goes here (gitignored)
 ```
 
-## Build the framework
+## Stage the framework
 
 ```bash
-# From a darepo-client checkout. Produces sdk/walletdk/mobile/build/ios/Walletdk.xcframework
-make mobile-ios
+# Downloads the latest wavelength release by default (needs the gh CLI
+# authenticated to an account with read access to wavelength). Set
+# WAVELENGTH_VERSION=<tag> to pin a release.
+./scripts/fetch-xcframework.sh
 
-# Stage it into the package (or run scripts/fetch-xcframework.sh):
-mkdir -p ios/WalletKit/Frameworks
-cp -R /path/to/darepo-client/sdk/walletdk/mobile/build/ios/Walletdk.xcframework \
-      ios/WalletKit/Frameworks/
+# Or build from a local checkout against an unreleased daemon (macOS + Xcode).
+# Produces sdk/wavewalletdk/mobile/build/ios/Wavewalletdk.xcframework:
+WAVELENGTH_DIR=/path/to/wavelength ./scripts/fetch-xcframework.sh
 ```
 
-`make mobile-ios` runs on macOS with Xcode installed and cross-compiles the
-embedded daemon for device + simulator slices.
+The source build (`make mobile-ios`) runs on macOS with Xcode installed and
+cross-compiles the embedded daemon for device + simulator slices.
 
 ## The generated symbol prefix
 
 gomobile names the generated free functions after the Go package, so they are
 `MobileStart`, `MobileGetInfo`, `MobileSubscribe`, and a `MobileSubscription`
-class, all in a `Walletdk` module. Every reference to those symbols lives in
+class, all in a `Wavewalletdk` module. Every reference to those symbols lives in
 `Bindings.swift`; if the prefix changes (the `gomobile bind -prefix` flag in
 `gen_bindings.sh`), that one file is the only edit.
 

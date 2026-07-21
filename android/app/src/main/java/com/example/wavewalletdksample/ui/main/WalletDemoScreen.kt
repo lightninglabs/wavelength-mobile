@@ -1,4 +1,4 @@
-package com.example.walletdksample.ui.main
+package com.example.wavewalletdksample.ui.main
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -20,8 +20,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import engineering.lightning.walletdk.client.WalletClient
-import engineering.lightning.walletdk.client.WalletConfig
+import engineering.lightning.wavewalletdk.client.WalletClient
+import engineering.lightning.wavewalletdk.client.WalletConfig
 import java.io.File
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -46,7 +46,7 @@ fun WalletDemoScreen(dataDir: File, modifier: Modifier = Modifier) {
   fun append(line: String) { log += line + "\n" }
 
   val config = remember(dataDir) {
-    WalletConfig.signet(dataDir = "${dataDir.absolutePath}/walletdk")
+    WalletConfig.signet(dataDir = "${dataDir.absolutePath}/wavewalletdk")
   }
 
   // While running, poll readiness every 5s so the block height and server
@@ -77,7 +77,7 @@ fun WalletDemoScreen(dataDir: File, modifier: Modifier = Modifier) {
     modifier = modifier.fillMaxSize().padding(16.dp),
     verticalArrangement = Arrangement.spacedBy(8.dp),
   ) {
-    Text("walletdk signet demo", fontFamily = FontFamily.Monospace)
+    Text("wavewalletdk signet demo", fontFamily = FontFamily.Monospace)
 
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
       Button(
@@ -99,7 +99,7 @@ fun WalletDemoScreen(dataDir: File, modifier: Modifier = Modifier) {
         onClick = {
           append("Creating wallet…")
           scope.launch {
-            runCatching { client.createWallet("damobile-demo-password".toByteArray()) }
+            runCatching { client.createWallet("wavelength-mobile-demo-password".toByteArray()) }
               .onSuccess { res ->
                 walletReady = true
                 append("wallet created; identity=${res.identityPubKey.take(16)}…")

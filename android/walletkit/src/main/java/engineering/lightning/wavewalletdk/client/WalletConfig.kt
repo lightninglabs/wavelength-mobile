@@ -1,4 +1,4 @@
-package engineering.lightning.walletdk.client
+package engineering.lightning.wavewalletdk.client
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable

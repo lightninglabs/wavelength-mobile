@@ -1,7 +1,7 @@
-package engineering.lightning.walletdk.client
+package engineering.lightning.wavewalletdk.client
 
 import android.util.Base64
-import engineering.lightning.walletdk.mobile.Mobile
+import engineering.lightning.wavewalletdk.mobile.Mobile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow

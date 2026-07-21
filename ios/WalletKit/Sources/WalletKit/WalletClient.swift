@@ -1,12 +1,12 @@
 import Foundation
 
 // The gomobile-generated bindings. The framework name comes from the
-// `make mobile-ios` output (Walletdk.xcframework), and the symbol prefix is the
+// `make mobile-ios` output (Wavewalletdk.xcframework), and the symbol prefix is the
 // Go package name, "Mobile" (e.g. MobileStart, MobileGetInfo, MobileSubscribe).
 // All generated-symbol use is confined to the `Bindings` enum below, so if the
 // gomobile prefix changes it is a one-place edit.
-#if canImport(Walletdk)
-import Walletdk
+#if canImport(Wavewalletdk)
+import Wavewalletdk
 #endif
 
 /// Thrown when an embedded-wallet call fails. Wraps the Go-side error.

@@ -1,17 +1,17 @@
 # Architecture
 
-This document explains what runs where when a mobile app uses the walletdk
+This document explains what runs where when a mobile app uses the wavewalletdk
 bindings, and why the API looks the way it does.
 
 ## The wallet runs inside your app
 
-A normal `darepod` deployment is a daemon process that clients reach over a
+A normal `waved` deployment is a daemon process that clients reach over a
 gRPC socket. On mobile that model is awkward: an app cannot reliably keep a
 sidecar process alive, and an open port is an attack surface.
 
 Instead, the binding compiles the whole daemon into a native library and starts
 it inside the app's own process. The Go SDK
-(`darepo-client/sdk/walletdk`) boots the daemon on a background goroutine and
+(`wavelength/sdk/wavewalletdk`) boots the daemon on a background goroutine and
 connects to it over an in-memory transport called a `bufconn`: a gRPC channel
 backed by a memory buffer rather than a TCP socket. The app's calls travel that
 buffer. Nothing listens on the network, and there is no second process to
@@ -22,9 +22,9 @@ manage.
 │  Kotlin / Swift                                        │
 │      │  Mobile.getInfo()  (JNI / cgo)                  │
 │      ▼                                                 │
-│  walletdk/mobile facade ──bufconn (in-memory gRPC)──┐  │
+│  wavewalletdk/mobile facade ──bufconn (in-memory gRPC)──┐  │
 │                                                     ▼  │
-│                         embedded darepod daemon ───────│
+│                         embedded waved daemon ───────│
 │                         (wallet, SQLite, Ark, swaps)   │
 └───────────────────────────────────────────────────────┘
 ```
@@ -37,7 +37,7 @@ and interfaces or structs built from those. It cannot carry a `context.Context`,
 a channel, a map, an unsigned integer, a `time.Time`, a slice of structs, or a
 tagged union.
 
-The walletdk SDK's own API uses all of those. So `walletdk/mobile` is a thin
+The wavewalletdk SDK's own API uses all of those. So `wavewalletdk/mobile` is a thin
 translation layer that presents a flat, gomobile-safe surface and converts at
 the edge. The app never sees the rich Go types directly.
 
@@ -57,7 +57,7 @@ number should not require a decoder: `confirmedBalanceSat()` returns a `Long`,
 
 The bindings are callback-free, which is the main way they differ from
 lnd-mobile. lnd must hand work to a host-implemented callback because
-`lnd.Main` never returns. walletdk's `Start` returns as soon as the daemon's
+`lnd.Main` never returns. wavewalletdk's `Start` returns as soon as the daemon's
 gRPC channel is serving, so the binding can be synchronous instead:
 
 - **`start(configJson)`** blocks until the daemon is serving, then returns. Run
@@ -87,6 +87,6 @@ not cross the JNI boundary. The facade recovers panics in `start` and in
 ## Build tags
 
 The facade compiles only under three Go build tags together: `mobile`,
-`walletdkrpc`, and `swapruntime`. The first selects the mobile facade; the
+`wavewalletrpc`, and `swapruntime`. The first selects the mobile facade; the
 other two pull in the embedded wallet RPC runtime and the swap executor, both of
 which the embedded wallet requires. `gomobile bind` passes all three.

@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-  namespace = "engineering.lightning.walletdk.client"
+  namespace = "engineering.lightning.wavewalletdk.client"
   compileSdk = 36
 
   defaultConfig {
@@ -24,7 +24,7 @@ kotlin {
 dependencies {
   // The gomobile-generated bindings. `api` so consumers can still reach the raw
   // `Mobile` class if they need an escape hatch. Staged by scripts/fetch-aar.sh.
-  api(files("libs/Walletdk.aar"))
+  api(files("libs/Wavewalletdk.aar"))
 
   implementation(libs.kotlinx.serialization.json)
   implementation(libs.kotlinx.coroutines.android)

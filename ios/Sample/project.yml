@@ -1,19 +1,19 @@
-name: WalletdkSample
+name: WavewalletdkSample
 
 options:
-  bundleIdPrefix: engineering.lightning.walletdk
+  bundleIdPrefix: engineering.lightning.wavewalletdk
   deploymentTarget:
     iOS: "15.0"
   createIntermediateGroups: true
 
 packages:
   WalletKit:
-    # The local Swift wrapper package. It carries Walletdk.xcframework via a
+    # The local Swift wrapper package. It carries Wavewalletdk.xcframework via a
     # binaryTarget; run ../../scripts/fetch-xcframework.sh first to stage it.
     path: ../WalletKit
 
 targets:
-  WalletdkSample:
+  WavewalletdkSample:
     type: application
     platform: iOS
     sources:
@@ -25,7 +25,7 @@ targets:
         # Go's net resolver (compiled into the xcframework) references
         # res_9_* symbols from libresolv; link it explicitly.
         OTHER_LDFLAGS: -lresolv
-        PRODUCT_BUNDLE_IDENTIFIER: engineering.lightning.walletdk.sample
+        PRODUCT_BUNDLE_IDENTIFIER: engineering.lightning.wavewalletdk.sample
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES

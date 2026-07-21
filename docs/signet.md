@@ -34,11 +34,11 @@ while the Esplora-backed wallet syncs to the signet tip.
 
 ## Standard signet vs mutinynet
 
-`darepod` maps the network name `signet` to **standard** `chaincfg.SigNetParams`.
+`waved` maps the network name `signet` to **standard** `chaincfg.SigNetParams`.
 Mutinynet is a *custom* signet with its own signet challenge; pointing a
 standard-signet wallet at a mutinynet Esplora will fail header validation.
 Supporting mutinynet requires wiring a configurable signet challenge into
-`darepod` first — track this before switching the default endpoint.
+`waved` first — track this before switching the default endpoint.
 
 ## Notes
 

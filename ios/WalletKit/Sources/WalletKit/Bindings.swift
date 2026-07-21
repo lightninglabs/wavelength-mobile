@@ -12,12 +12,12 @@ import Foundation
 // MobileSubscription *methods* (next/close) are ObjC methods, so those do import
 // as `throws`.
 //
-// When Walletdk.xcframework is absent, the #else stubs keep the package
+// When Wavewalletdk.xcframework is absent, the #else stubs keep the package
 // compiling and throw at runtime. Build it with `make mobile-ios`; see
 // ios/README.md.
 
-#if canImport(Walletdk)
-import Walletdk
+#if canImport(Wavewalletdk)
+import Wavewalletdk
 
 typealias BindingsSubscription = MobileSubscription
 
@@ -117,12 +117,12 @@ enum Bindings {
 
 /// Placeholder so WalletKit compiles without the bindings. Calls throw.
 final class BindingsSubscription {
-    func next() throws -> Data { throw WalletError(message: "Walletdk.xcframework not linked") }
+    func next() throws -> Data { throw WalletError(message: "Wavewalletdk.xcframework not linked") }
     func close() throws {}
 }
 
 enum Bindings {
-    private static func missing() -> Error { WalletError(message: "Walletdk.xcframework not linked") }
+    private static func missing() -> Error { WalletError(message: "Wavewalletdk.xcframework not linked") }
     static func isRunning() -> Bool { false }
     static func start(_ cfg: String) throws { throw missing() }
     static func stop() throws { throw missing() }

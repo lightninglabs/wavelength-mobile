@@ -1,4 +1,4 @@
-package com.example.walletdksample.theme
+package com.example.wavewalletdksample.theme
 
 import androidx.compose.ui.graphics.Color
 
