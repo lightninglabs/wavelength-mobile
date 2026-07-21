@@ -1,14 +1,19 @@
 # wavelength-mobile
 
-Run a self-custodial Ark wallet inside a mobile app, with no separate daemon
-process and no open network port.
+`wavelength-mobile` runs the
+[wavelength](https://github.com/lightninglabs/wavelength) wallet — a
+self-custodial Bitcoin wallet system written in Go that unifies an Ark client, a
+Lightning swap engine, and an on-chain wallet behind one daemon (`waved`) —
+directly inside a mobile app. The whole daemon is embedded in the app's own
+process through [`gomobile`](https://pkg.go.dev/golang.org/x/mobile/cmd/gomobile),
+so a user can board into Ark, hold and transfer VTXOs, swap into and out of the
+Lightning Network, send and receive on-chain, and unilaterally exit to the chain
+at any time — all from their phone, while keeping sole custody of their coins.
 
-`wavelength-mobile` holds the host-side samples and (soon) the idiomatic Kotlin and
-Swift wrappers for the [wavelength](https://github.com/lightninglabs/wavelength)
-wallet SDK. That SDK embeds a full `waved` wallet and exposes it to mobile
-through [`gomobile`](https://pkg.go.dev/golang.org/x/mobile/cmd/gomobile). The
-wallet runs in the app's own process; the app calls it across a private
-in-memory gRPC channel, so nothing ever listens on a socket.
+There is no separate daemon process and no open network port: the app calls the
+embedded wallet across a private in-memory gRPC channel, so nothing ever listens
+on a socket. This repo holds the idiomatic Kotlin and Swift wrappers over the
+gomobile bindings, plus sample apps that drive them end to end.
 
 ## How the pieces fit
 
@@ -46,8 +51,10 @@ embedded wallet, create a key, sync the chain from Esplora, and read balances.
 | `scripts/fetch-xcframework.sh` | Same for the iOS `Wavewalletdk.xcframework`. |
 | `docs/` | Architecture, the Android workflow, and signet setup. |
 
-The Android wrapper, sample, and signet flow are working end to end. The Swift
-wrapper sources are complete; an iOS sample app and CI build are next.
+Both the Android and iOS wrappers and their sample apps run end to end — Android
+on an emulator, iOS on the Simulator — booting the embedded wallet, creating a
+wallet, and syncing signet to the chain tip. wavelength CI builds the bindings
+on release tags, and the fetch scripts pull them from the release.
 
 ## Quick start (Android)
 
