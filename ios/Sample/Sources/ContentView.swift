@@ -1,7 +1,9 @@
 import SwiftUI
 
 struct ContentView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var store = WalletStore()
+    @State private var enteredBackground = false
 
     var body: some View {
         ZStack {
@@ -24,6 +26,17 @@ struct ContentView: View {
                     await store.createWallet(showBackup: false)
                 }
                 #endif
+            }
+        }
+        .onChange(of: scenePhase) { phase in
+            switch phase {
+            case .background:
+                enteredBackground = true
+            case .active where enteredBackground:
+                enteredBackground = false
+                Task { await store.resumeAfterBackground() }
+            default:
+                break
             }
         }
         .alert("Wavelength", isPresented: alertIsPresented) {

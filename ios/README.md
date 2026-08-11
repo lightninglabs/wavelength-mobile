@@ -34,6 +34,18 @@ confirmed boarding deposit can still take up to Wavelength's 60-second
 activity-reconciliation tick to move from pending to complete; pull-to-refresh
 requests a new snapshot but does not bypass those daemon-owned pollers.
 
+Lightning invoice creation asks the native mobile facade for a 20-second
+request-scoped deadline. If the deadline fires, the app reconciles Activity
+before returning an error. If the invoice was durably created just before the
+response was lost, the app recovers and displays that exact invoice; it never
+blindly creates a second one after an ambiguous timeout.
+
+After iOS has actually backgrounded the process, returning to the foreground
+restarts and unlocks the same embedded wallet so its external gRPC transports
+are re-dialled on the current network path. Teardown waits for any in-flight
+state-creating call to return first; it is never used as a cancellation
+shortcut for a payment or receive request with an uncertain outcome.
+
 Activity follows the same lifecycle vocabulary as `wavecli activity`: issuing
 an invoice is shown as a pending request, while “received” is reserved for a
 completed receive. Merely allocating an on-chain address is not activity; its

@@ -2,6 +2,12 @@ import Combine
 import Foundation
 import WalletKit
 
+private struct ReceiveCreationTimeoutError: LocalizedError {
+    var errorDescription: String? {
+        "The Lightning service took too long to answer, so the result is uncertain. Wavelength couldn’t find a newly created invoice in Activity. Check Activity before trying again."
+    }
+}
+
 @MainActor
 final class WalletStore: ObservableObject {
     @Published private(set) var phase: WalletPhase = .idle
@@ -22,6 +28,8 @@ final class WalletStore: ObservableObject {
     private var refreshTask: Task<Void, Never>?
     private var activityTask: Task<Void, Never>?
     private var generation = 0
+    private var stateCreatingCallCount = 0
+    private var foregroundRestartPending = false
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -110,6 +118,14 @@ final class WalletStore: ObservableObject {
         Task { await start() }
     }
 
+    /// Re-dial transports after iOS has frozen the embedded daemon in the
+    /// background. If a state-creating call is still returning, defer teardown
+    /// until its outcome can be reconciled instead of cancelling it midway.
+    func resumeAfterBackground() async {
+        foregroundRestartPending = true
+        await restartForForegroundIfSafe()
+    }
+
     func switchNetwork(to selected: WalletNetwork) async {
         guard selected != network else { return }
         network = selected
@@ -130,6 +146,8 @@ final class WalletStore: ObservableObject {
 
     func createWallet(mnemonic: [String] = [], showBackup: Bool = true) async {
         guard phase == .needsSetup else { return }
+        beginStateCreatingCall()
+        defer { endStateCreatingCall() }
         isWorking = true
         defer { isWorking = false }
 
@@ -155,6 +173,8 @@ final class WalletStore: ObservableObject {
 
     func unlockWallet(password: String) async {
         guard phase == .needsUnlock, !password.isEmpty else { return }
+        beginStateCreatingCall()
+        defer { endStateCreatingCall() }
         isWorking = true
         defer { isWorking = false }
         do {
@@ -178,17 +198,12 @@ final class WalletStore: ObservableObject {
             phase = nextInfo.walletReady ? .ready : .syncing
 
             if nextInfo.walletState == .ready {
-                async let nextBalance = client.balance()
-                async let nextActivity = client.list(view: .activity, limit: 100)
-                let (balanceResult, activityResult) = try await (nextBalance, nextActivity)
-                balance = balanceResult
-                if let entries = activityResult.activity?.entries {
-                    // List is the daemon's authoritative, already-deduplicated
-                    // activity view in most-recent-first order. Replacing the
-                    // snapshot also removes terminal or request-only rows that
-                    // are no longer wallet activity.
-                    activity = entries
-                }
+                // Publish each independent snapshot as soon as it arrives. A
+                // slow optional credit lookup must not hide newer Activity,
+                // and a history error must not suppress a valid balance.
+                async let balanceRefresh: Void = refreshBalanceSnapshot()
+                async let activityRefresh: Void = refreshActivitySnapshot()
+                _ = await (balanceRefresh, activityRefresh)
             }
         } catch {
             // A transient refresh failure does not mean the daemon stopped or
@@ -218,6 +233,8 @@ final class WalletStore: ObservableObject {
     }
 
     func sendPrepared(intentID: String) async throws -> SendResult {
+        beginStateCreatingCall()
+        defer { endStateCreatingCall() }
         let result = try await client.send(intentID)
         upsert(result.entry)
         await refresh()
@@ -225,18 +242,51 @@ final class WalletStore: ObservableObject {
     }
 
     func receiveLightning(amountSat: Int64, memo: String) async throws -> ReceiveResult {
-        let result = try await client.receiveLightning(amountSat: amountSat, memo: memo)
-        upsert(result.entry)
-        return result
+        beginStateCreatingCall()
+        defer { endStateCreatingCall() }
+        let existingEntryIDs = Set(activity.map(\.id))
+
+        do {
+            let result = try await client.receiveLightning(
+                amountSat: amountSat,
+                memo: memo,
+                timeoutSeconds: 20
+            )
+            upsert(result.entry)
+            return result
+        } catch {
+            guard let walletError = error as? WalletError,
+                  walletError.isDeadlineExceeded else {
+                throw error
+            }
+
+            // The request-scoped deadline leaves the daemon running. Creation
+            // can have become durable just before its response was lost, so
+            // reconcile Activity and recover that exact invoice. Never issue a
+            // second state-creating call automatically after an uncertain
+            // result.
+            await refreshActivitySnapshot()
+            if let recovered = recoveredReceive(
+                amountSat: amountSat,
+                memo: memo,
+                excluding: existingEntryIDs
+            ) {
+                return recovered
+            }
+
+            throw ReceiveCreationTimeoutError()
+        }
     }
 
     func newDepositAddress(amountHintSat: Int64) async throws -> DepositResult {
+        beginStateCreatingCall()
+        defer { endStateCreatingCall() }
         // Allocating an address does not mean funds are in flight. The daemon
         // deliberately does not persist Deposit's request-only Entry; it adds
         // the canonical deposit row once Esplora observes a UTXO. Keep the
         // address on the Receive screen and let List/Subscribe surface real
         // activity with the observed amount.
-        try await client.newDepositAddress(amountSatHint: amountHintSat)
+        return try await client.newDepositAddress(amountSatHint: amountHintSat)
     }
 
     private func resolveLifecycle() async throws {
@@ -323,6 +373,67 @@ final class WalletStore: ObservableObject {
         } else {
             activity.insert(entry, at: 0)
         }
+    }
+
+    private func recoveredReceive(
+        amountSat: Int64,
+        memo: String,
+        excluding existingEntryIDs: Set<String>
+    ) -> ReceiveResult? {
+        guard let entry = activity.first(where: {
+            !existingEntryIDs.contains($0.id) &&
+                $0.kind == "receive" &&
+                $0.amountSat == amountSat &&
+                $0.note == memo &&
+                $0.request?.type == "lightning" &&
+                !($0.request?.lightningInvoice.isEmpty ?? true)
+        }), let invoice = entry.request?.lightningInvoice else {
+            return nil
+        }
+
+        return ReceiveResult(invoice: invoice, entry: entry)
+    }
+
+    private func refreshBalanceSnapshot() async {
+        guard let snapshot = try? await client.balance() else { return }
+        balance = snapshot
+    }
+
+    private func refreshActivitySnapshot() async {
+        guard let result = try? await client.list(
+            view: .activity,
+            limit: 100
+        ), let entries = result.activity?.entries else {
+            return
+        }
+
+        // List is the daemon's authoritative, already-deduplicated activity
+        // view in most-recent-first order. Replacing the snapshot also removes
+        // terminal or request-only rows that are no longer wallet activity.
+        activity = entries
+    }
+
+    private func beginStateCreatingCall() {
+        stateCreatingCallCount += 1
+    }
+
+    private func endStateCreatingCall() {
+        stateCreatingCallCount = max(0, stateCreatingCallCount - 1)
+        guard stateCreatingCallCount == 0, foregroundRestartPending else {
+            return
+        }
+
+        Task { [weak self] in
+            await self?.restartForForegroundIfSafe()
+        }
+    }
+
+    private func restartForForegroundIfSafe() async {
+        guard foregroundRestartPending, stateCreatingCallCount == 0 else {
+            return
+        }
+        foregroundRestartPending = false
+        await start()
     }
 
     private func walletConfig() throws -> WalletConfig {

@@ -17,6 +17,7 @@ struct ReceiveView: View {
     @State private var memo = ""
     @State private var request = ""
     @State private var isLoading = false
+    @State private var isTakingLonger = false
     @State private var errorMessage: String?
     @State private var showingShare = false
 
@@ -96,7 +97,11 @@ struct ReceiveView: View {
                 HStack {
                     Spacer()
                     if isLoading { ProgressView().padding(.trailing, 6) }
-                    Text(rail == .lightning ? "Create Invoice" : "Create Address")
+                    if isTakingLonger {
+                        Text("Still connecting…")
+                    } else {
+                        Text(rail == .lightning ? "Create Invoice" : "Create Address")
+                    }
                     Spacer()
                 }
             }
@@ -163,8 +168,18 @@ struct ReceiveView: View {
 
     private func createRequest() {
         isLoading = true
+        isTakingLonger = false
+        let slowNotice = Task {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard !Task.isCancelled, isLoading, rail == .lightning else { return }
+            isTakingLonger = true
+        }
         Task {
-            defer { isLoading = false }
+            defer {
+                slowNotice.cancel()
+                isLoading = false
+                isTakingLonger = false
+            }
             do {
                 switch rail {
                 case .lightning:

@@ -176,6 +176,11 @@ public struct ReceiveResult: Decodable, Sendable {
     public let invoice: String
     public let entry: Entry
 
+    public init(invoice: String, entry: Entry) {
+        self.invoice = invoice
+        self.entry = entry
+    }
+
     enum CodingKeys: String, CodingKey {
         case invoice = "Invoice"
         case entry = "Entry"
