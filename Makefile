@@ -6,8 +6,10 @@ PROJECT := $(SAMPLE_DIR)/Wavelength.xcodeproj
 SCHEME := Wavelength
 DERIVED_DATA ?= $(SAMPLE_DIR)/DerivedData
 SIMULATOR_UDID ?=
+DEVICE_UDID ?=
+BUNDLE_ID ?= engineering.lightning.wavelength.wallet
 
-.PHONY: help framework generate simulator build test run \
+.PHONY: help framework generate simulator device device-logs build test run \
 	check-regtest-env run-regtest test-regtest clean
 
 help: ## Show the available developer commands.
@@ -23,6 +25,14 @@ generate: ## Generate the Xcode project with xcodegen.
 
 simulator: ## Print the selected Simulator UDID, booting it if necessary.
 	@SIMULATOR_UDID="$(SIMULATOR_UDID)" "$(REPO_ROOT)/scripts/select-ios-simulator.sh"
+
+device: ## Print the selected connected physical iOS device UDID.
+	@DEVICE_UDID="$(DEVICE_UDID)" "$(REPO_ROOT)/scripts/select-ios-device.sh"
+
+device-logs: ## Relaunch the installed app on a phone and stream its live logs.
+	@DEVICE_UDID="$(DEVICE_UDID)" \
+	BUNDLE_ID="$(BUNDLE_ID)" \
+	"$(REPO_ROOT)/scripts/observe-ios-device.sh"
 
 build: framework generate ## Build the app for an automatically selected iPhone Simulator.
 	@udid="$$(SIMULATOR_UDID="$(SIMULATOR_UDID)" "$(REPO_ROOT)/scripts/select-ios-simulator.sh")"; \

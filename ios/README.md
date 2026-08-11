@@ -98,6 +98,24 @@ make run
 make test SIMULATOR_UDID=3910E643-9CEF-46AC-83B3-E531CD2A85CA
 ```
 
+For a build already installed on a physical phone, attach the app and embedded
+Go daemon directly to the terminal:
+
+```bash
+# Auto-select the first connected and unlocked iOS device.
+make device-logs
+
+# Optional when more than one phone is connected.
+make device-logs DEVICE_UDID=9A5A428D-8182-5787-B7AC-C983FEAD67EC
+```
+
+The command terminates and relaunches the installed app with `devicectl`, then
+streams both Swift output and the embedded daemon's stdout until `Ctrl-C`.
+Nothing needs to be copied from the in-app developer screen. It does not build
+or reinstall the app, so use Xcode (or the device build command used for that
+build) first. The phone must be connected, unlocked, trusted by the Mac, and
+have Developer Mode enabled. `make device` prints the auto-selected device ID.
+
 `make run` and `make run-regtest` open and foreground Simulator.app after
 booting the selected device. `make build` and `make test` stay headless. Set
 `OPEN_SIMULATOR=0` for an intentionally headless application launch:
