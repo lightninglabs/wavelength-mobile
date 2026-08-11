@@ -47,11 +47,15 @@ public struct Balance: Decodable, Sendable {
     public let confirmedSat: Int64
     public let pendingInSat: Int64
     public let pendingOutSat: Int64
+    public let creditAvailableSat: Int64?
+    public let creditReservedSat: Int64?
 
     enum CodingKeys: String, CodingKey {
         case confirmedSat = "ConfirmedSat"
         case pendingInSat = "PendingInSat"
         case pendingOutSat = "PendingOutSat"
+        case creditAvailableSat = "CreditAvailableSat"
+        case creditReservedSat = "CreditReservedSat"
     }
 }
 
@@ -95,7 +99,7 @@ public struct UnlockWalletResult: Decodable, Sendable {
 }
 
 /// One activity entry from the wallet stream (`subscribe`).
-public struct Entry: Decodable, Sendable {
+public struct Entry: Decodable, Identifiable, Sendable {
     public let id: String
     public let kind: String
     public let status: String
@@ -103,6 +107,13 @@ public struct Entry: Decodable, Sendable {
     public let feeSat: Int64
     public let counterparty: String
     public let note: String
+    public let createdAt: String?
+    public let updatedAt: String?
+    public let failureReason: String?
+    public let failureCode: String?
+    public let cursor: Int64?
+    public let progress: EntryProgress?
+    public let request: EntryRequest?
 
     enum CodingKeys: String, CodingKey {
         case id = "ID"
@@ -112,6 +123,51 @@ public struct Entry: Decodable, Sendable {
         case feeSat = "FeeSat"
         case counterparty = "Counterparty"
         case note = "Note"
+        case createdAt = "CreatedAt"
+        case updatedAt = "UpdatedAt"
+        case failureReason = "FailureReason"
+        case failureCode = "FailureCode"
+        case cursor = "Cursor"
+        case progress = "Progress"
+        case request = "Request"
+    }
+}
+
+/// Best-effort lifecycle metadata for a wallet activity entry.
+public struct EntryProgress: Decodable, Sendable {
+    public let phase: String
+    public let phaseLabel: String
+    public let paymentHash: String
+    public let txid: String
+    public let confirmationHeight: Int64
+    public let vtxoOutpoint: String
+    public let preimage: String
+
+    enum CodingKeys: String, CodingKey {
+        case phase = "Phase"
+        case phaseLabel = "PhaseLabel"
+        case paymentHash = "PaymentHash"
+        case txid = "Txid"
+        case confirmationHeight = "ConfirmationHeight"
+        case vtxoOutpoint = "VTXOOutpoint"
+        case preimage = "Preimage"
+    }
+}
+
+/// User-recognizable request data retained with an activity entry.
+public struct EntryRequest: Decodable, Sendable {
+    public let type: String
+    public let lightningInvoice: String
+    public let paymentHash: String
+    public let onchainAddress: String
+    public let arkAddress: String
+
+    enum CodingKeys: String, CodingKey {
+        case type = "Type"
+        case lightningInvoice = "LightningInvoice"
+        case paymentHash = "PaymentHash"
+        case onchainAddress = "OnchainAddress"
+        case arkAddress = "ArkAddress"
     }
 }
 
@@ -151,6 +207,11 @@ public struct PrepareSendResult: Decodable, Sendable {
     public let destinationSummary: String
     public let paymentHash: String
     public let warning: String
+    public let totalOutflowKnown: Bool?
+    public let invoiceDescription: String?
+    public let expiresAtUnix: Int64?
+    public let selectedOutpoints: [String]?
+    public let creditPreview: CreditPreview?
 
     enum CodingKeys: String, CodingKey {
         case sendIntentID = "SendIntentID"
@@ -163,6 +224,28 @@ public struct PrepareSendResult: Decodable, Sendable {
         case destinationSummary = "DestinationSummary"
         case paymentHash = "PaymentHash"
         case warning = "Warning"
+        case totalOutflowKnown = "TotalOutflowKnown"
+        case invoiceDescription = "InvoiceDescription"
+        case expiresAtUnix = "ExpiresAtUnix"
+        case selectedOutpoints = "SelectedOutpoints"
+        case creditPreview = "CreditPreview"
+    }
+}
+
+/// How a prepared send will use server credit, when applicable.
+public struct CreditPreview: Decodable, Sendable {
+    public let mustUseCredit: Bool
+    public let creditAppliedSat: Int64
+    public let creditShortfallSat: Int64
+    public let creditTopupSat: Int64
+    public let arkFundingSat: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case mustUseCredit = "MustUseCredit"
+        case creditAppliedSat = "CreditAppliedSat"
+        case creditShortfallSat = "CreditShortfallSat"
+        case creditTopupSat = "CreditTopupSat"
+        case arkFundingSat = "ArkFundingSat"
     }
 }
 
@@ -220,7 +303,14 @@ public struct OnchainTx: Decodable, Sendable {
 public struct ActivityList: Decodable, Sendable {
     public let entries: [Entry]
     public let total: Int64
-    enum CodingKeys: String, CodingKey { case entries = "Entries"; case total = "Total" }
+    public let hasMore: Bool?
+    public let nextCursor: String?
+    enum CodingKeys: String, CodingKey {
+        case entries = "Entries"
+        case total = "Total"
+        case hasMore = "HasMore"
+        case nextCursor = "NextCursor"
+    }
 }
 
 public struct VTXOInventory: Decodable, Sendable {

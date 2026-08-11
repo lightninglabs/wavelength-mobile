@@ -10,10 +10,13 @@ import Wavewalletdk
 #endif
 
 /// Thrown when an embedded-wallet call fails. Wraps the Go-side error.
-public struct WalletError: Error, Sendable {
+public struct WalletError: LocalizedError, CustomStringConvertible, Sendable {
     public let message: String
     init(_ error: Error) { self.message = (error as NSError).localizedDescription }
     init(message: String) { self.message = message }
+
+    public var errorDescription: String? { message }
+    public var description: String { message }
 }
 
 /// An idiomatic Swift facade over the gomobile bindings.
