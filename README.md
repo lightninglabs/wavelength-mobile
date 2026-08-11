@@ -47,8 +47,10 @@ embedded wallet, create a key, sync the chain from Esplora, and read balances.
 | `android/walletkit/` | Idiomatic Kotlin wrapper (`suspend` + `Flow` + typed models) over the generated bindings. The Android library other apps depend on. |
 | `android/app/` | Sample Android app (Jetpack Compose, AGP 9) that drives `walletkit`. |
 | `ios/WalletKit/` | Idiomatic Swift wrapper (`actor` + `async` + `AsyncThrowingStream` + `Codable`). Mirrors the Kotlin library. |
+| `ios/Sample/` | Native SwiftUI Wavelength wallet with onboarding, balance, send, receive, activity, details, and per-network settings. |
 | `scripts/fetch-aar.sh` | Downloads `Wavewalletdk.aar` from the `wavelength` GitHub release (or builds it from a `WAVELENGTH_DIR` checkout) and stages it under `android/walletkit/libs`. |
 | `scripts/fetch-xcframework.sh` | Same for the iOS `Wavewalletdk.xcframework`. |
+| `Makefile` | One-command iOS Simulator build, test, run, and opt-in live regtest workflows. |
 | `docs/` | Architecture, the Android workflow, and signet setup. |
 
 Both the Android and iOS wrappers and their sample apps run end to end — Android
@@ -126,5 +128,6 @@ design; the full method list is in wavelength's
   detail, including the `android` CLI and emulator.
 - [`docs/signet.md`](docs/signet.md) — pointing the wallet at a signet
   environment and watching it sync.
-- [`ios/README.md`](ios/README.md) — the Swift `WalletKit` wrapper and how to
-  build its `xcframework`.
+- [`ios/README.md`](ios/README.md) — the Swift `WalletKit` wrapper, native
+  wallet, one-command Simulator workflow, and environment-driven regtest
+  validation.

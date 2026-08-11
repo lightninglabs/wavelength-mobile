@@ -12,6 +12,7 @@ android/walletkit/libs/*.aar
 # iOS gomobile xcframework (built by scripts/fetch-xcframework.sh) + SwiftPM.
 ios/WalletKit/Frameworks/*.xcframework
 ios/WalletKit/.build/
+ios/WalletKit/.swiftpm/
 
 # iOS sample: generated project + build output (xcodegen regenerates).
 ios/Sample/*.xcodeproj
