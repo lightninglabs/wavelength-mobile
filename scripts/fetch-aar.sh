@@ -66,9 +66,8 @@ if [[ -n "${WAVELENGTH_DIR:-}" ]]; then
 	exit 0
 fi
 
-# Default: download the binding from the GitHub release. wavelength is a
-# private repo, so this needs a gh CLI authenticated to an account with read
-# access (gh auth login).
+# Default: download the binding from the GitHub release. Use an authenticated
+# gh CLI so repository access and release-asset redirects work consistently.
 if ! command -v gh >/dev/null 2>&1; then
 	echo "error: gh CLI not found; install it and run 'gh auth login', or set" >&2
 	echo "       WAVELENGTH_DIR to build from a local wavelength checkout." >&2
