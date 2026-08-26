@@ -2,9 +2,9 @@ import Combine
 import Foundation
 import WalletKit
 
-private struct ReceiveCreationTimeoutError: LocalizedError {
+private struct ReceiveCreationUncertainError: LocalizedError {
     var errorDescription: String? {
-        "The Lightning service took too long to answer, so the result is uncertain. Wavelength couldn’t find a newly created invoice in Activity. Check Activity before trying again."
+        "The receive request ended before Wavelength could confirm the result. Wavelength couldn’t find a newly created invoice in Activity. Check Activity before trying again."
     }
 }
 
@@ -256,15 +256,15 @@ final class WalletStore: ObservableObject {
             return result
         } catch {
             guard let walletError = error as? WalletError,
-                  walletError.isDeadlineExceeded else {
+                  walletError.isReceiveOutcomeUncertain ||
+                    walletError.isDeadlineExceeded else {
                 throw error
             }
 
-            // The request-scoped deadline leaves the daemon running. Creation
-            // can have become durable just before its response was lost, so
-            // reconcile Activity and recover that exact invoice. Never issue a
-            // second state-creating call automatically after an uncertain
-            // result.
+            // A request deadline or lifecycle cancellation can race durable
+            // creation. Reconcile Activity and recover that exact invoice.
+            // Never issue a second state-creating call automatically after an
+            // uncertain result.
             await refreshActivitySnapshot()
             if let recovered = recoveredReceive(
                 amountSat: amountSat,
@@ -274,7 +274,7 @@ final class WalletStore: ObservableObject {
                 return recovered
             }
 
-            throw ReceiveCreationTimeoutError()
+            throw ReceiveCreationUncertainError()
         }
     }
 

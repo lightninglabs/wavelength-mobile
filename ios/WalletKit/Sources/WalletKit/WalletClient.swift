@@ -11,6 +11,9 @@ import Wavewalletdk
 
 /// Thrown when an embedded-wallet call fails. Wraps the Go-side error.
 public struct WalletError: LocalizedError, CustomStringConvertible, Sendable {
+    private static let receiveOutcomeUncertainPrefix =
+        "receive outcome uncertain; reconcile activity before retrying"
+
     public let message: String
     init(_ error: Error) { self.message = (error as NSError).localizedDescription }
     init(message: String) { self.message = message }
@@ -24,6 +27,12 @@ public struct WalletError: LocalizedError, CustomStringConvertible, Sendable {
         let normalized = message.lowercased()
         return normalized.contains("deadline exceeded") ||
             normalized.contains("timed out")
+    }
+
+    /// Whether a receive may have become durable before cancellation. Reconcile
+    /// Activity before asking the wallet to create another invoice.
+    public var isReceiveOutcomeUncertain: Bool {
+        message.lowercased().hasPrefix(Self.receiveOutcomeUncertainPrefix)
     }
 }
 

@@ -35,10 +35,11 @@ activity-reconciliation tick to move from pending to complete; pull-to-refresh
 requests a new snapshot but does not bypass those daemon-owned pollers.
 
 Lightning invoice creation asks the native mobile facade for a 20-second
-request-scoped deadline. If the deadline fires, the app reconciles Activity
-before returning an error. If the invoice was durably created just before the
-response was lost, the app recovers and displays that exact invoice; it never
-blindly creates a second one after an ambiguous timeout.
+request-scoped deadline. The binding marks both deadline and lifecycle
+cancellation as an uncertain outcome. The app then reconciles Activity before
+returning an error. If the invoice was durably created just before the response
+was lost, the app recovers and displays that exact invoice; it never blindly
+creates a second one after ambiguous cancellation.
 
 After iOS has actually backgrounded the process, returning to the foreground
 restarts and unlocks the same embedded wallet so its external gRPC transports
