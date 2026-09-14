@@ -10,7 +10,7 @@ DEVICE_UDID ?=
 BUNDLE_ID ?= engineering.lightning.wavelength.wallet
 
 .PHONY: help framework generate simulator device device-logs build test run \
-	check-regtest-env run-regtest test-regtest clean
+	check-regtest-env run-regtest test-regtest test-signet clean
 
 help: ## Show the available developer commands.
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -46,8 +46,14 @@ build: framework generate ## Build the app for an automatically selected iPhone 
 		CODE_SIGN_IDENTITY=- \
 		build
 
-test: framework generate ## Run unit tests; live regtest UI tests skip unless enabled.
+test: framework generate ## Run unit tests; live network UI tests skip unless enabled.
 	@udid="$$(SIMULATOR_UDID="$(SIMULATOR_UDID)" "$(REPO_ROOT)/scripts/select-ios-simulator.sh")"; \
+	TEST_RUNNER_WAVELENGTH_UI_SIGNET="$${WAVELENGTH_UI_SIGNET:-}" \
+	TEST_RUNNER_WAVELENGTH_UI_REGTEST="$${WAVELENGTH_UI_REGTEST:-}" \
+	TEST_RUNNER_WAVELENGTH_UI_EXTERNAL_FUNDING="$${WAVELENGTH_UI_EXTERNAL_FUNDING:-}" \
+	TEST_RUNNER_WAVELENGTH_OPERATOR_ADDRESS="$${WAVELENGTH_OPERATOR_ADDRESS:-}" \
+	TEST_RUNNER_WAVELENGTH_SWAP_ADDRESS="$${WAVELENGTH_SWAP_ADDRESS:-}" \
+	TEST_RUNNER_WAVELENGTH_ESPLORA_URL="$${WAVELENGTH_ESPLORA_URL:-}" \
 	xcodebuild \
 		-project "$(PROJECT)" \
 		-scheme "$(SCHEME)" \
@@ -60,6 +66,9 @@ test: framework generate ## Run unit tests; live regtest UI tests skip unless en
 
 run: ## Build, install, and launch the app in an iPhone Simulator.
 	@SIMULATOR_UDID="$(SIMULATOR_UDID)" "$(REPO_ROOT)/scripts/run-ios-sample.sh"
+
+test-signet: ## Create receive requests and verify foreground/relaunch recovery on signet.
+	@WAVELENGTH_UI_SIGNET=1 $(MAKE) --no-print-directory test
 
 check-regtest-env:
 	@missing=(); \

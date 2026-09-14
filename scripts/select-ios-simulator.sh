@@ -22,20 +22,34 @@ if [[ -n "${requested_udid}" ]]; then
 	fi
 	device_udid="${requested_udid}"
 else
-	device_udid="$(grep 'iPhone.*(Booted)' <<<"${devices}" | extract_udid || true)"
+	device_udid="$(grep -E '(iPhone|wavelength-mobile-iphone).*(Booted)' <<<"${devices}" | extract_udid || true)"
 	if [[ -z "${device_udid}" ]]; then
-		device_udid="$(grep 'iPhone' <<<"${devices}" | extract_udid || true)"
+		device_udid="$(grep -E 'iPhone|wavelength-mobile-iphone' <<<"${devices}" | extract_udid || true)"
 	fi
 fi
 
 if [[ -z "${device_udid:-}" ]]; then
-	runtime="$(xcrun simctl list runtimes available \
-		| grep -oE 'com\.apple\.CoreSimulator\.SimRuntime\.iOS[-0-9]+' \
-		| tail -1)"
-	devtype="$(xcrun simctl list devicetypes \
-		| grep 'iPhone' \
-		| grep -oE 'com\.apple\.CoreSimulator\.SimDeviceType\.iPhone[-0-9A-Za-z]+' \
-		| tail -1)"
+	# Device-type listing order does not imply runtime compatibility. Use
+	# the runtime's supported set so a fresh Xcode install cannot pair an
+	# old iPhone with a new iOS runtime (or the reverse).
+	selection="$(xcrun simctl list runtimes --json | python3 -c '
+import json
+import sys
+
+runtimes = sorted(
+    json.load(sys.stdin)["runtimes"],
+    key=lambda runtime: tuple(int(part) for part in runtime["version"].split(".")),
+    reverse=True,
+)
+for runtime in runtimes:
+    if not runtime.get("isAvailable") or ".iOS-" not in runtime["identifier"]:
+        continue
+    for device in runtime.get("supportedDeviceTypes", []):
+        if device.get("productFamily") == "iPhone":
+            print(runtime["identifier"], device["identifier"])
+            sys.exit(0)
+')"
+	read -r runtime devtype <<<"${selection}"
 
 	if [[ -z "${runtime}" || -z "${devtype}" ]]; then
 		echo "error: no iPhone Simulator or usable iOS runtime is installed" >&2
@@ -45,7 +59,7 @@ if [[ -z "${device_udid:-}" ]]; then
 
 	echo "Creating Wavelength iPhone Simulator (${devtype}, ${runtime})" >&2
 	device_udid="$(xcrun simctl create \
-		'wavelength-mobile-iphone' "${devtype}" "${runtime}")"
+		'Wavelength iPhone' "${devtype}" "${runtime}")"
 fi
 
 state="$(xcrun simctl list devices | grep "${device_udid}" || true)"

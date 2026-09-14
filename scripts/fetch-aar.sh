@@ -12,7 +12,7 @@
 # run this once after cloning, and again whenever the pinned daemon changes.
 #
 # Configuration (env vars, all optional):
-#   WAVELENGTH_VERSION  release tag to download (default: the latest release)
+#   WAVELENGTH_VERSION  release tag to download (default: .wavelength-version)
 #   WAVELENGTH_REPO     owner/name of the wavelength repo
 #                       (default: lightninglabs/wavelength)
 #   WAVELENGTH_DIR      path to a wavelength checkout; when set, build from
@@ -26,6 +26,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DST_DIR="${REPO_ROOT}/android/walletkit/libs"
 DST="${DST_DIR}/Wavewalletdk.aar"
 WAVELENGTH_REPO="${WAVELENGTH_REPO:-lightninglabs/wavelength}"
+WAVELENGTH_VERSION="${WAVELENGTH_VERSION:-$(cat "${REPO_ROOT}/.wavelength-version")}"
 mkdir -p "${DST_DIR}"
 
 # Source build: only when WAVELENGTH_DIR points at a checkout. This path needs
@@ -74,17 +75,8 @@ if ! command -v gh >/dev/null 2>&1; then
 	exit 1
 fi
 
-# The release tag is an optional positional arg to `gh release download`
-# (omitted => latest). Invoke the two forms separately rather than expanding a
-# maybe-empty array: under `set -u`, macOS's stock bash 3.2 aborts on
-# "${arr[@]}" when arr is empty ("unbound variable").
-echo "==> downloading Wavewalletdk.aar from ${WAVELENGTH_REPO} (${WAVELENGTH_VERSION:-latest})"
-if [[ -n "${WAVELENGTH_VERSION:-}" ]]; then
-	gh release download "${WAVELENGTH_VERSION}" --repo "${WAVELENGTH_REPO}" \
-		--pattern "Wavewalletdk.aar" --dir "${DST_DIR}" --clobber
-else
-	gh release download --repo "${WAVELENGTH_REPO}" \
-		--pattern "Wavewalletdk.aar" --dir "${DST_DIR}" --clobber
-fi
+echo "==> downloading Wavewalletdk.aar from ${WAVELENGTH_REPO} (${WAVELENGTH_VERSION})"
+gh release download "${WAVELENGTH_VERSION}" --repo "${WAVELENGTH_REPO}" \
+	--pattern "Wavewalletdk.aar" --dir "${DST_DIR}" --clobber
 
 echo "==> staged $(du -h "${DST}" | cut -f1) -> android/walletkit/libs/Wavewalletdk.aar"

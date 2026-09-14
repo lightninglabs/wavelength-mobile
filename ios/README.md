@@ -71,8 +71,18 @@ network with unavailable endpoints from locking the user out of Settings.
 
 ## Build and run
 
-The build requires `Wavewalletdk.xcframework`. The fetch script downloads a
-released binding by default or builds one from a local Wavelength checkout.
+The build requires Xcode, an iOS Simulator runtime, Python 3, and `xcodegen`
+(`brew install xcodegen`). The fetch script downloads `Wavewalletdk.xcframework`
+from the release pinned in `../.wavelength-version`, currently `v0.1.2`, or
+builds one from a local Wavelength checkout. v0.1.2 includes the bounded mobile
+reads and uncertain receive-outcome contract used by this app.
+
+Complete Xcode's first-launch system-component installation before building.
+`xcodebuild -checkFirstLaunchStatus` must succeed; if it reports pending setup,
+run `sudo xcodebuild -runFirstLaunch` from your terminal and authenticate there.
+
+Rerun the fetch script when updating an existing checkout to replace its
+previously staged framework. The Makefile reuses a framework already on disk.
 
 ```bash
 # Released binding. Requires an authenticated gh CLI with repository access.
@@ -98,6 +108,15 @@ make run
 # Optional: pin one of the devices printed by `xcrun simctl list devices`.
 make test SIMULATOR_UDID=3910E643-9CEF-46AC-83B3-E531CD2A85CA
 ```
+
+`make test-signet` opts into public-service smoke coverage: create/unlock a
+signet wallet, allocate a boarding address, create a Lightning invoice, and
+verify that the same invoice remains in Activity after foreground recovery
+and process relaunch. It creates requests without funding the wallet or
+sending payments. Use a dedicated Simulator with default signet endpoints.
+This does not establish funded boarding, payment settlement, or background
+wake support; those require separate live tests. Normal `make test` skips
+both the signet and regtest network tests.
 
 For a build already installed on a physical phone, attach the app and embedded
 Go daemon directly to the terminal:
@@ -231,9 +250,9 @@ ios/WalletKit/
 ## Stage the framework
 
 ```bash
-# Downloads the latest wavelength release by default (needs the gh CLI
+# Downloads the release pinned in ../.wavelength-version (needs the gh CLI
 # authenticated to an account with read access to wavelength). Set
-# WAVELENGTH_VERSION=<tag> to pin a release.
+# WAVELENGTH_VERSION=<tag> to override the pin.
 ./scripts/fetch-xcframework.sh
 
 # Or build from a local checkout against an unreleased daemon (macOS + Xcode).

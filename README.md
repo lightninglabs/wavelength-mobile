@@ -56,7 +56,9 @@ embedded wallet, create a key, sync the chain from Esplora, and read balances.
 Both the Android and iOS wrappers and their sample apps run end to end — Android
 on an emulator, iOS on the Simulator — booting the embedded wallet, creating a
 wallet, and syncing signet to the chain tip. wavelength CI builds the bindings
-on release tags, and the fetch scripts pull them from the release.
+on release tags. Both fetch scripts use the release pinned in
+`.wavelength-version` (currently `v0.1.2`). After changing that pin, rerun
+the appropriate fetch script to replace any previously staged framework or AAR.
 
 ## Quick start (Android)
 
@@ -75,8 +77,8 @@ You need three things:
 3. A modern JDK (17 or newer).
 
 ```bash
-# 1. Fetch the binding and stage it here. Downloads the latest wavelength
-#    release by default; set WAVELENGTH_VERSION=<tag> to pin a release, or
+# 1. Fetch the binding and stage it here. Uses .wavelength-version by
+#    default; set WAVELENGTH_VERSION=<tag> to override the pin, or
 #    WAVELENGTH_DIR=<checkout> to build from source instead.
 ./scripts/fetch-aar.sh
 
