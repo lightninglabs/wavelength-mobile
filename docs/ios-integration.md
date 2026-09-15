@@ -139,3 +139,7 @@ equivalent to sharing the host's SQL connection or persistence implementation.
 The next storage experiment should define connection, schema, migration, and
 transaction ownership before choosing a cross-language adapter. Projecting wallet
 activity into an app's business database is a separate, narrower integration.
+
+The [storage and lifecycle investigation](ios-storage.md) records the proposed
+host contract, source audit, and executable probe for independent app storage
+and relocation of a closed wallet directory.

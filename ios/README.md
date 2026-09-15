@@ -120,6 +120,15 @@ This does not establish funded boarding, payment settlement, or background
 wake support; those require separate live tests. Normal `make test` skips
 both the signet and regtest network tests.
 
+`make test-storage-signet` runs the unit target with an isolated storage probe.
+It creates an unfunded wallet alongside an app-owned SQLite database, holds an
+app write transaction during wallet operations, then stops and relocates the
+entire wallet directory. Reopen must preserve the identity and original invoice.
+The test uses a temporary directory and no sample-app Keychain entries; it does
+not launch the sample UI. Normal `make test` skips this live probe too. See the
+[storage investigation](../docs/ios-storage.md) for results, the proposed host
+contract and the limits of this test.
+
 For a build already installed on a physical phone, attach the app and embedded
 Go daemon directly to the terminal:
 

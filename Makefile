@@ -8,9 +8,10 @@ DERIVED_DATA ?= $(SAMPLE_DIR)/DerivedData
 SIMULATOR_UDID ?=
 DEVICE_UDID ?=
 BUNDLE_ID ?= engineering.lightning.wavelength.wallet
+TEST_ARGS ?=
 
 .PHONY: help framework generate simulator device device-logs build test run \
-	check-regtest-env run-regtest test-regtest test-signet clean
+	check-regtest-env run-regtest test-regtest test-signet test-storage-signet clean
 
 help: ## Show the available developer commands.
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -49,6 +50,7 @@ build: framework generate ## Build the app for an automatically selected iPhone 
 test: framework generate ## Run unit tests; live network UI tests skip unless enabled.
 	@udid="$$(SIMULATOR_UDID="$(SIMULATOR_UDID)" "$(REPO_ROOT)/scripts/select-ios-simulator.sh")"; \
 	TEST_RUNNER_WAVELENGTH_UI_SIGNET="$${WAVELENGTH_UI_SIGNET:-}" \
+	TEST_RUNNER_WAVELENGTH_STORAGE_SIGNET="$${WAVELENGTH_STORAGE_SIGNET:-}" \
 	TEST_RUNNER_WAVELENGTH_UI_REGTEST="$${WAVELENGTH_UI_REGTEST:-}" \
 	TEST_RUNNER_WAVELENGTH_UI_EXTERNAL_FUNDING="$${WAVELENGTH_UI_EXTERNAL_FUNDING:-}" \
 	TEST_RUNNER_WAVELENGTH_OPERATOR_ADDRESS="$${WAVELENGTH_OPERATOR_ADDRESS:-}" \
@@ -62,13 +64,17 @@ test: framework generate ## Run unit tests; live network UI tests skip unless en
 		CODE_SIGNING_ALLOWED=YES \
 		CODE_SIGNING_REQUIRED=YES \
 		CODE_SIGN_IDENTITY=- \
-		test
+		$(TEST_ARGS) test
 
 run: ## Build, install, and launch the app in an iPhone Simulator.
 	@SIMULATOR_UDID="$(SIMULATOR_UDID)" "$(REPO_ROOT)/scripts/run-ios-sample.sh"
 
 test-signet: ## Create receive requests and verify foreground/relaunch recovery on signet.
 	@WAVELENGTH_UI_SIGNET=1 $(MAKE) --no-print-directory test
+
+test-storage-signet: ## Probe host database coexistence and closed wallet relocation on signet.
+	@WAVELENGTH_STORAGE_SIGNET=1 $(MAKE) --no-print-directory test \
+		TEST_ARGS="-only-testing:WavelengthTests"
 
 check-regtest-env:
 	@missing=(); \
