@@ -32,12 +32,12 @@ The sample links `Wavewalletdk.aar`, which is not checked in here.
 stages it under `android/walletkit/libs`:
 
 ```bash
-# Downloads the latest wavelength release by default (needs the gh CLI
+# Downloads the release pinned in .wavelength-version (needs the gh CLI
 # authenticated to an account with read access to wavelength).
 ./scripts/fetch-aar.sh
 
-# Pin a specific release:
-WAVELENGTH_VERSION=v0.1.0 ./scripts/fetch-aar.sh
+# Override the repository pin:
+WAVELENGTH_VERSION=v0.1.2 ./scripts/fetch-aar.sh
 
 # Or build from a local checkout against an unreleased daemon:
 WAVELENGTH_DIR=/path/to/wavelength ./scripts/fetch-aar.sh

@@ -10,10 +10,30 @@ import Wavewalletdk
 #endif
 
 /// Thrown when an embedded-wallet call fails. Wraps the Go-side error.
-public struct WalletError: Error, Sendable {
+public struct WalletError: LocalizedError, CustomStringConvertible, Sendable {
+    private static let receiveOutcomeUncertainPrefix =
+        "receive outcome uncertain; reconcile activity before retrying"
+
     public let message: String
     init(_ error: Error) { self.message = (error as NSError).localizedDescription }
     init(message: String) { self.message = message }
+
+    public var errorDescription: String? { message }
+    public var description: String { message }
+
+    /// Whether the native binding ended the request at its operation-specific
+    /// deadline. The outcome of a state-creating call may still be uncertain.
+    public var isDeadlineExceeded: Bool {
+        let normalized = message.lowercased()
+        return normalized.contains("deadline exceeded") ||
+            normalized.contains("timed out")
+    }
+
+    /// Whether a receive may have become durable before cancellation. Reconcile
+    /// Activity before asking the wallet to create another invoice.
+    public var isReceiveOutcomeUncertain: Bool {
+        message.lowercased().hasPrefix(Self.receiveOutcomeUncertainPrefix)
+    }
 }
 
 /// An idiomatic Swift facade over the gomobile bindings.
@@ -81,11 +101,19 @@ public actor WalletClient {
         return try decode(await bg { try Bindings.unlockWallet(body) })
     }
 
-    /// Open a Lightning invoice to receive `amountSat` into the wallet. Share
-    /// the returned invoice with the payer; the matching entry shows up on the
-    /// activity stream as it is paid.
-    public func receiveLightning(amountSat: Int64, memo: String = "") async throws -> ReceiveResult {
-        let body = try encoder.encode(ReceiveReq(amountSat: amountSat, memo: memo))
+    /// Open a Lightning invoice to receive `amountSat` into the wallet. The
+    /// native deadline bounds a stale mobile transport but does not prove a
+    /// receive was absent; reconcile Activity before retrying after timeout.
+    public func receiveLightning(
+        amountSat: Int64,
+        memo: String = "",
+        timeoutSeconds: Int64 = 20
+    ) async throws -> ReceiveResult {
+        let body = try encoder.encode(ReceiveReq(
+            amountSat: amountSat,
+            memo: memo,
+            timeoutSeconds: timeoutSeconds
+        ))
         return try decode(await bg { try Bindings.receive(body) })
     }
 
@@ -274,9 +302,11 @@ private struct SubscribeReq: Encodable {
 private struct ReceiveReq: Encodable {
     let amountSat: Int64
     let memo: String
+    let timeoutSeconds: Int64
     enum CodingKeys: String, CodingKey {
         case amountSat = "AmountSat"
         case memo = "Memo"
+        case timeoutSeconds = "TimeoutSeconds"
     }
 }
 
