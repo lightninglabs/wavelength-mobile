@@ -37,7 +37,26 @@ final class SignetWalletTests: XCTestCase {
         XCTAssertTrue(request.waitForExistence(timeout: 45))
         XCTAssertTrue(request.label.lowercased().hasPrefix("lntb"))
         let invoice = request.label
+        let copy = app.buttons["receive.copy"]
+        for _ in 0..<5 where !copy.exists || !copy.isHittable { app.swipeUp() }
+        XCTAssertTrue(copy.waitForExistence(timeout: 5))
+        copy.tap()
         app.buttons["Done"].tap()
+
+        // Pasting must not also trigger the scanner in the same Form row.
+        // A long invoice stays inside the editor so review remains visible.
+        app.buttons["wallet.send"].tap()
+        app.buttons["send.paste"].tap()
+        let destination = app.textViews.firstMatch
+        XCTAssertTrue(destination.waitForExistence(timeout: 5))
+        let pasted = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", invoice),
+            object: destination
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [pasted], timeout: 5), .completed,
+                       "The pasted request did not match the copied invoice")
+        XCTAssertTrue(app.buttons["send.review"].isHittable)
+        app.buttons["Cancel"].tap()
 
         // A UI lifecycle transition tests foreground recovery, not OS wake or
         // guaranteed execution while suspended.

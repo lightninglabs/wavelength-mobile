@@ -112,8 +112,10 @@ make test SIMULATOR_UDID=3910E643-9CEF-46AC-83B3-E531CD2A85CA
 `make test-signet` opts into public-service smoke coverage: create/unlock a
 signet wallet, allocate a boarding address, create a Lightning invoice, and
 verify that the same invoice remains in Activity after foreground recovery
-and process relaunch. It creates requests without funding the wallet or
-sending payments. Use a dedicated Simulator with default signet endpoints.
+and process relaunch. It also checks that pasting the invoice leaves the send
+review controls visible without opening the scanner. It creates requests without
+funding the wallet or sending payments. Use a dedicated Simulator with default
+signet endpoints.
 This does not establish funded boarding, payment settlement, or background
 wake support; those require separate live tests. Normal `make test` skips
 both the signet and regtest network tests.

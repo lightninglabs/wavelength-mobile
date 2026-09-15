@@ -70,9 +70,10 @@ struct SendView: View {
                         .padding(.leading, 5)
                 }
                 TextEditor(text: $destination)
-                    .frame(minHeight: 90)
+                    .frame(height: 110)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled(true)
+                    .accessibilityIdentifier("send.destination")
             }
             HStack {
                 Button {
@@ -84,12 +85,11 @@ struct SendView: View {
 
                 Spacer()
 
-                Button {
-                    if let value = UIPasteboard.general.string { destination = value }
-                } label: {
-                    Label("Paste", systemImage: "doc.on.clipboard")
-                }
+                pasteButton
             }
+            // Form rows give automatic buttons a shared row-wide action.
+            // Keep scanning and pasting independently tappable.
+            .buttonStyle(.borderless)
         } header: {
             Text("Pay to")
         } footer: {
@@ -139,8 +139,28 @@ struct SendView: View {
                 }
             }
             .disabled(!canPrepare || isLoading)
+            .accessibilityIdentifier("send.review")
         } footer: {
             Text("Preparing validates the destination and quotes fees. It does not move funds.")
+        }
+    }
+
+    @ViewBuilder
+    private var pasteButton: some View {
+        if #available(iOS 16.0, *) {
+            // The system control authorizes this user-initiated paste without
+            // blocking the app on a direct pasteboard-read permission dialog.
+            PasteButton(payloadType: String.self) { values in
+                if let value = values.first { destination = value }
+            }
+            .accessibilityIdentifier("send.paste")
+        } else {
+            Button {
+                if let value = UIPasteboard.general.string { destination = value }
+            } label: {
+                Label("Paste", systemImage: "doc.on.clipboard")
+            }
+            .accessibilityIdentifier("send.paste")
         }
     }
 

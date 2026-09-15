@@ -47,6 +47,9 @@ create replacement requests or repeat payments merely because one side times out
 
 ## Next acceptance sequence
 
+The funded checks below were subsequently exercised on 2026-09-15; external
+Lightning routing and physical-device wake remain open.
+
 1. Fund a boarding address above the operator's current minimum and observe
    pending funds, chain confirmation, and completion into spendable balance.
 2. Pay a fresh invoice from a controlled Lightning peer; verify the payer's
@@ -59,8 +62,66 @@ create replacement requests or repeat payments merely because one side times out
 5. Run the lifecycle matrix on a physical device, including lock, suspension,
    connectivity loss, delayed wake, and process termination.
 
-Simulator foregrounding and process persistence do not establish OS-driven
-background execution, funded crash recovery, or seed-only restore.
+The unfunded smoke test does not establish OS-driven background execution,
+funded crash recovery, or seed-only restore.
+
+## Funded boarding and receiver recovery — 2026-09-15
+
+Two deposits to the same boarding address, 1,000,000 and 224,348 sats, confirmed
+at signet height 322191. The app showed their combined 1,224,348 sats as pending
+while the Ark round was in progress. The round confirmed at height 322192 and
+the app then showed 1,223,838 spendable sats and a completed deposit.
+
+An isolated second iPhone 16 Pro Simulator ran the same v0.1.2 native framework.
+Its wallet retained its funds after relaunch with automatic creation disabled.
+
+| Check | Observed result |
+|---|---|
+| First payment | Primary paid the peer's 25,000-sat BOLT11 invoice; both sessions reached `Completed` with the same payment hash |
+| Quote and balance | `In Ark` quote: 25,000 sats, zero fee; primary moved from 1,223,838 to 1,198,838 sats; peer received 25,000 sats |
+| Receiver absent | Primary created a 10,000-sat invoice, then its process was terminated before the peer sent; peer persisted `WaitingForClaim`, primary remained `InvoiceCreated` |
+| Receiver catch-up | Primary was relaunched without automatic creation; the existing receive and peer's existing send reached `Completed`, with no replacement invoice or duplicate credit |
+| Final balances | Primary 1,208,838 sats; peer 15,000 sats; both payments had zero quoted and recorded fees |
+
+These payments exercised the `In Ark` settlement route selected for invoices
+between Wavelength wallets. They do not establish routed Lightning payments to
+an external node. The stopped-receiver test proves funded process catch-up; it
+does not prove an OS background wake or arbitrary crash recovery at every phase.
+
+The manual send test also exposed two sample-app problems: the Form row invoked
+both Paste and Scan, and a long invoice expanded the editor enough to hide review
+controls. The buttons now use an independent borderless style and the editor has
+a fixed, scrollable height. On iOS 16 and later, the system `PasteButton` also
+avoids blocking a direct clipboard read on a paste-permission dialog. That dialog
+blocked the first automated regression run, which was interrupted before rerunning
+with the system control. The signet smoke test covers pasting the original
+invoice and reaching review without the scanner opening.
+The test scrolls the long invoice until Copy is visible in the lazy Form and
+waits for the asynchronous paste to deliver the exact invoice.
+The final `make test-signet` run passed all 14 unit tests and the expanded live
+test (53.8 seconds), with three regtest tests skipped and the Simulator's original
+automatic pasteboard synchronization setting restored. Read-only checks after
+relaunch also confirmed one completed activity/session per payment and the exact
+final balances above.
+
+### Remaining fee-reporting finding
+
+The combined boarding deposit reports a 417-sat fee, while the difference between
+funded and spendable amounts is 510 sats. In v0.1.2,
+[`sumDepositsByAddress`](https://github.com/lightninglabs/wavelength/blob/v0.1.2/swapwallet/history.go)
+sums deposit amounts but retains the representative input's fee. The two input
+fee allocations are 417 and 93 sats, which explains the missing 93 sats in the
+aggregated activity fee. The native app displays the SDK's value.
+
+Track the correction in the engine separately from this pinned integration
+baseline. Related fee-reporting work is tracked in
+[wavelength#866](https://github.com/lightninglabs/wavelength/issues/866) and
+[wavelength#994](https://github.com/lightninglabs/wavelength/issues/994); this
+specific aggregation case is recorded in the project EPIC. Its regression should
+combine two funded inputs at one address and
+assert both the summed amount and summed fee, including reprojecting already
+persisted activity. The wallet's spendable balance was consistent throughout
+the two payments; this finding concerns activity fee reporting.
 
 ## Storage observations
 
