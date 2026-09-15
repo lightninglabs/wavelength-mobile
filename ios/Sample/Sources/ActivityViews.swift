@@ -101,7 +101,7 @@ struct ActivityDetailView: View {
                     Text(currentEntry.activityAmountText)
                         .font(.title2.bold())
                         .foregroundStyle(currentEntry.activityAmountColor)
-                    StatusLabel(status: currentEntry.status)
+                    StatusLabel(status: currentEntry.activityStatus)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
@@ -189,12 +189,12 @@ struct ActivityDetailView: View {
             }
 
             if currentEntry.status == "failed" || !(currentEntry.failureReason ?? "").isEmpty {
-                Section("Failure") {
+                Section(currentEntry.isExpiredInvoice ? "Expiry" : "Failure") {
                     if let code = currentEntry.failureCode, !code.isEmpty {
                         ValueRow(label: "Code", value: code.replacingOccurrences(of: "_", with: " ").capitalized)
                     }
                     if let reason = currentEntry.failureReason, !reason.isEmpty {
-                        Text(reason).foregroundStyle(.red)
+                        Text(reason).foregroundStyle(currentEntry.isExpiredInvoice ? Color.secondary : Color.red)
                     }
                 }
             }

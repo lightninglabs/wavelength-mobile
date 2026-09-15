@@ -15,22 +15,23 @@ just means sends and rounds are unavailable.
 
 ## Endpoints
 
-`WalletConfig.signet(...)` carries Lightning Labs' public signet deployment as
-defaults; override any of them per call:
+Empty endpoint overrides in `WalletConfig.signet(...)` use the defaults compiled
+into the Wavelength binding. For the pinned v0.1.2 release these are:
 
 | Parameter | Meaning | Default |
 |-----------|---------|---------|
-| `esploraUrl` | Esplora REST base URL | `https://mempool.space/signet/api` |
-| `operatorAddress` | Ark operator mailbox `host:port` (TLS) | `arkd-signet.testnet.lightningcluster.com:443` |
-| `swapServerAddress` | swapdk-server `host:port` (TLS) | `swapd-signet.testnet.lightningcluster.com:443` |
+| `esploraURL` | Esplora REST base URL | `https://mempool.space/signet/api` |
+| `operatorAddress` | Ark operator mailbox `host:port` (TLS) | `signet.wavelength.lightning.finance:443` |
+| `swapServerAddress` | swap server `host:port` (TLS) | `swap.signet.wavelength.lightning.finance:443` |
 
 The operator and swap endpoints terminate TLS at `:443`, so they run secure (no
-`insecure` flag). Pass an empty `operatorAddress` to run sync-only without an
-operator.
+`insecure` flag). An empty `operatorAddress` uses the default operator; it does
+not disable the operator connection.
 
-Verified end to end on an emulator: the embedded wallet connects to the operator
-over TLS, fetches operator terms, and starts the durable mailbox ingress loop,
-while the Esplora-backed wallet syncs to the signet tip.
+The native iOS smoke test connects to these services, creates receive requests,
+and recovers the original invoice after foregrounding and process relaunch.
+It does not fund or settle a payment. See the [iOS integration log](ios-integration.md)
+for observed results and the next funded test.
 
 ## Standard signet vs mutinynet
 

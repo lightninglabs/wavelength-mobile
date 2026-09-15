@@ -185,6 +185,7 @@ struct ActivityRow: View {
                         .multilineTextAlignment(.trailing)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
+                        .frame(minWidth: 104, alignment: .trailing)
                 }
 
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -197,7 +198,7 @@ struct ActivityRow: View {
 
                     Spacer(minLength: 4)
 
-                    StatusLabel(status: entry.status)
+                    StatusLabel(status: entry.activityStatus)
                         .fixedSize()
                 }
             }
@@ -256,7 +257,16 @@ struct ActivityRailIcon: View {
 }
 
 extension Entry {
+    /// The SDK uses failed + expired for an invoice that was never funded.
+    /// Keep that distinct from a payment that failed after it was attempted.
+    var isExpiredInvoice: Bool {
+        kind == "receive" && status == "failed" && failureCode == "expired"
+    }
+
+    var activityStatus: String { isExpiredInvoice ? "expired" : status }
+
     var activityColor: Color {
+        if isExpiredInvoice { return .secondary }
         switch status {
         case "failed": return .red
         case "pending": return .orange
@@ -275,7 +285,7 @@ extension Entry {
     }
 
     var activityDirectionLabel: String {
-        if isAwaitingIncomingPayment { return "Incoming request" }
+        if isAwaitingIncomingPayment || isExpiredInvoice { return "Incoming request" }
         return isCredit ? "Incoming" : "Outgoing"
     }
 
@@ -304,6 +314,7 @@ extension Entry {
             }
             return status == "complete" ? "On-chain sent" : "On-chain send"
         case "receive":
+            if isExpiredInvoice { return "Lightning invoice expired" }
             if status == "complete" { return "Lightning received" }
             if status == "failed" { return "Lightning receive failed" }
             return isAwaitingIncomingPayment ? "Lightning invoice" : "Lightning receive"
@@ -318,10 +329,10 @@ extension Entry {
     }
 
     var activityAmountText: String {
-        if isAwaitingIncomingPayment {
+        if isAwaitingIncomingPayment || isExpiredInvoice {
             guard amountSat > 0 else { return "Waiting for payment" }
             let suffix = kind == "receive" ? "requested" : "expected"
-            return "\(WalletFormatting.sats(amountSat)) \(suffix)"
+            return "\(WalletFormatting.sats(amountSat))\n\(suffix)"
         }
         if isCredit, status == "pending" {
             return WalletFormatting.sats(amountSat)
@@ -331,7 +342,7 @@ extension Entry {
     }
 
     var activityAmountColor: Color {
-        if isAwaitingIncomingPayment { return .secondary }
+        if isAwaitingIncomingPayment || isExpiredInvoice { return .secondary }
         if isCredit, status == "pending" { return .primary }
         return isCredit ? .green : .primary
     }
@@ -353,6 +364,7 @@ struct StatusLabel: View {
         switch status {
         case "complete": return .green
         case "failed": return .red
+        case "expired": return .secondary
         default: return .orange
         }
     }
