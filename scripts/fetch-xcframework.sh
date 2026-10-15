@@ -9,7 +9,7 @@
 # build from source instead (requires macOS with Xcode).
 #
 # Configuration (env vars, all optional):
-#   WAVELENGTH_VERSION  release tag to download (default: the latest release)
+#   WAVELENGTH_VERSION  release tag to download (default: .wavelength-version)
 #   WAVELENGTH_REPO     owner/name of the wavelength repo
 #                       (default: lightninglabs/wavelength)
 #   WAVELENGTH_DIR      path to a wavelength checkout; when set, build from
@@ -22,6 +22,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DST_DIR="${REPO_ROOT}/ios/WalletKit/Frameworks"
 DST="${DST_DIR}/Wavewalletdk.xcframework"
 WAVELENGTH_REPO="${WAVELENGTH_REPO:-lightninglabs/wavelength}"
+WAVELENGTH_VERSION="${WAVELENGTH_VERSION:-$(cat "${REPO_ROOT}/.wavelength-version")}"
 mkdir -p "${DST_DIR}"
 
 # Source build: only when WAVELENGTH_DIR points at a checkout. Requires macOS
@@ -54,8 +55,8 @@ fi
 
 # Default: download the packaged binding from the GitHub release and unpack it.
 # The release asset is a tarball (Wavewalletdk.xcframework.tar.gz) since an
-# .xcframework is a directory. wavelength is a private repo, so this needs a gh
-# CLI authenticated to an account with read access (gh auth login).
+# .xcframework is a directory. Use an authenticated gh CLI so repository
+# access and release-asset redirects work consistently.
 if ! command -v gh >/dev/null 2>&1; then
 	echo "error: gh CLI not found; install it and run 'gh auth login', or set" >&2
 	echo "       WAVELENGTH_DIR to build from a local wavelength checkout." >&2
@@ -65,18 +66,9 @@ fi
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 
-# The release tag is an optional positional arg to `gh release download`
-# (omitted => latest). Invoke the two forms separately rather than expanding a
-# maybe-empty array: under `set -u`, macOS's stock bash 3.2 aborts on
-# "${arr[@]}" when arr is empty ("unbound variable").
-echo "==> downloading Wavewalletdk.xcframework from ${WAVELENGTH_REPO} (${WAVELENGTH_VERSION:-latest})"
-if [[ -n "${WAVELENGTH_VERSION:-}" ]]; then
-	gh release download "${WAVELENGTH_VERSION}" --repo "${WAVELENGTH_REPO}" \
-		--pattern "Wavewalletdk.xcframework.tar.gz" --dir "${tmp}" --clobber
-else
-	gh release download --repo "${WAVELENGTH_REPO}" \
-		--pattern "Wavewalletdk.xcframework.tar.gz" --dir "${tmp}" --clobber
-fi
+echo "==> downloading Wavewalletdk.xcframework from ${WAVELENGTH_REPO} (${WAVELENGTH_VERSION})"
+gh release download "${WAVELENGTH_VERSION}" --repo "${WAVELENGTH_REPO}" \
+	--pattern "Wavewalletdk.xcframework.tar.gz" --dir "${tmp}" --clobber
 
 rm -rf "${DST}"
 tar -xzf "${tmp}/Wavewalletdk.xcframework.tar.gz" -C "${DST_DIR}"

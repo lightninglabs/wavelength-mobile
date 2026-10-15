@@ -21,7 +21,13 @@ let package = Package(
         ),
         .target(
             name: "WalletKit",
-            dependencies: ["Wavewalletdk"]
+            dependencies: ["Wavewalletdk"],
+            linkerSettings: [
+                // The embedded Go resolver references res_9_* symbols. Keep
+                // this on the package so tests and downstream hosts link it
+                // without duplicating an app-target setting.
+                .linkedLibrary("resolv"),
+            ]
         ),
     ]
 )

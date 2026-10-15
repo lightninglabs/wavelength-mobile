@@ -1,10 +1,31 @@
 import SwiftUI
 
 @main
-struct WavewalletdkSampleApp: App {
+struct WavelengthApp: App {
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ZStack {
+                ContentView()
+                if scenePhase != .active {
+                    PrivacyCover()
+                }
+            }
+            .tint(.orange)
         }
+    }
+}
+
+private struct PrivacyCover: View {
+    var body: some View {
+        ZStack {
+            Color(.systemBackground).ignoresSafeArea()
+            VStack(spacing: 16) {
+                WavelengthMark(size: 70)
+                Text("Wavelength").font(.title2.bold())
+            }
+        }
+        .accessibilityHidden(true)
     }
 }

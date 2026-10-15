@@ -1,4 +1,4 @@
-name: WavewalletdkSample
+name: Wavelength
 
 options:
   bundleIdPrefix: engineering.lightning.wavewalletdk
@@ -13,7 +13,7 @@ packages:
     path: ../WalletKit
 
 targets:
-  WavewalletdkSample:
+  Wavelength:
     type: application
     platform: iOS
     sources:
@@ -22,14 +22,61 @@ targets:
       - package: WalletKit
     settings:
       base:
-        # Go's net resolver (compiled into the xcframework) references
-        # res_9_* symbols from libresolv; link it explicitly.
-        OTHER_LDFLAGS: -lresolv
-        PRODUCT_BUNDLE_IDENTIFIER: engineering.lightning.wavewalletdk.sample
+        PRODUCT_BUNDLE_IDENTIFIER: engineering.lightning.wavelength.wallet
+        PRODUCT_NAME: Wavelength
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Wavelength
+        INFOPLIST_KEY_NSCameraUsageDescription: Scan Lightning invoices and Bitcoin payment QR codes.
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_USER_SCRIPT_SANDBOXING: YES
+
+  WavelengthTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests
+    dependencies:
+      - package: WalletKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: engineering.lightning.wavelength.wallet.tests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.9"
+
+  WavelengthUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - UITests
+    dependencies:
+      - target: Wavelength
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: engineering.lightning.wavelength.wallet.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.9"
+
+schemes:
+  Wavelength:
+    build:
+      targets:
+        Wavelength: all
+        WavelengthTests: [test]
+        WavelengthUITests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - WavelengthTests
+        - WavelengthUITests
+    archive:
+      config: Release
