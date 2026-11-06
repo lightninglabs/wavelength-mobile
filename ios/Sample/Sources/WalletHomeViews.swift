@@ -96,11 +96,11 @@ private struct WalletDashboardView: View {
                     WalletDivider()
                 }
 
-                if store.activity.isEmpty && store.refreshOperation == nil {
+                if store.visibleActivity.isEmpty && store.refreshOperation == nil {
                     Text("No activity").foregroundStyle(WalletTheme.secondary).padding(.vertical, 16)
                 } else {
                     LazyVStack(spacing: 0) {
-                        ForEach(store.activity) { entry in
+                        ForEach(store.visibleActivity) { entry in
                             NavigationLink(destination: ActivityDetailView(entry: entry)) {
                                 ActivityRow(entry: entry)
                             }
@@ -110,7 +110,7 @@ private struct WalletDashboardView: View {
                             WalletDivider()
                         }
                     }
-                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: store.activity.map(\.id))
+                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: store.visibleActivity.map(\.id))
                 }
             }
         }

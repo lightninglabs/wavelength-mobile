@@ -88,6 +88,7 @@ struct WalletStatus: View {
     var pending = false
     var complete = false
     var failed = false
+    var textStyle: Font = .body.weight(.medium)
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -106,7 +107,7 @@ struct WalletStatus: View {
                 Image(systemName: "exclamationmark.circle")
                     .foregroundStyle(.red)
             }
-            Text(text).font(.body.weight(.medium))
+            Text(text).font(textStyle)
         }
         .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.8), value: complete)
         .accessibilityElement(children: .combine)

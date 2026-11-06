@@ -15,6 +15,9 @@ struct ActivityDetailView: View {
             WalletStatus(text: currentEntry.displayStatus,
                          pending: currentEntry.status == "pending" && !currentEntry.isAwaitingIncomingPayment,
                          complete: currentEntry.status == "complete", failed: currentEntry.status == "failed")
+            if let date = WalletFormatting.date(currentEntry.createdAt) {
+                Text(date).font(.subheadline).foregroundStyle(WalletTheme.secondary)
+            }
             if currentEntry.feeSat > 0 {
                 HStack { Text("Fee"); Spacer(); Text(WalletFormatting.sats(currentEntry.feeSat)) }
             }
@@ -28,8 +31,17 @@ struct ActivityDetailView: View {
             }
             DisclosureGroup("Details", isExpanded: $details) {
                 VStack(alignment: .leading, spacing: 20) {
+                    ForEach(WalletActivityPresentation.creditTopups(for: currentEntry, in: store.activity)) { topup in
+                        NavigationLink(destination: ActivityDetailView(entry: topup)) {
+                            HStack {
+                                Text("Credit top-up")
+                                Spacer()
+                                Text(WalletFormatting.sats(abs(topup.amountSat)))
+                                Image(systemName: "chevron.right").font(.caption)
+                            }.frame(minHeight: 44).contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                    }
                     ValueRow(label: "Network", value: currentEntry.activityRailLabel)
-                    if let date = WalletFormatting.date(currentEntry.createdAt) { ValueRow(label: "Created", value: date) }
                     if !currentEntry.counterparty.isEmpty {
                         ValueRow(label: "Destination", value: currentEntry.counterparty, copyable: true)
                     }

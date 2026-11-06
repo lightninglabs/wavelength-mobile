@@ -92,13 +92,22 @@ enum WalletFormatting {
         return magnitude + " sats"
     }
 
-    static func date(_ value: String?) -> String? {
+    private static func parsedDate(_ value: String?) -> Date? {
         guard let value, !value.isEmpty else { return nil }
         let parser = ISO8601DateFormatter()
         parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let date = parser.date(from: value) ?? ISO8601DateFormatter().date(from: value)
-        guard let date else { return nil }
-        return date.formatted(date: .abbreviated, time: .shortened)
+        return date
+    }
+
+    static func date(_ value: String?) -> String? {
+        parsedDate(value)?.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    static func activityTime(_ value: String?) -> String? {
+        guard let date = parsedDate(value) else { return nil }
+        return date.formatted(date: Calendar.current.isDateInToday(date) ? .omitted : .abbreviated,
+                              time: .shortened)
     }
 
     static func shortened(_ value: String, head: Int = 10, tail: Int = 8) -> String {

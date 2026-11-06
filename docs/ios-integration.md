@@ -257,3 +257,33 @@ Final validation on Xcode 26.6 / iOS 26.5:
 | Native bridge | SDK and mobile package tests passed; changed-source formatting and local lint passed |
 | Framework provenance | Release cache, source pin/patch checks, offline reuse, and failed replacement preservation passed |
 | Device build | Generic iPhone Debug build signed successfully; no connected phone was available for installation |
+
+
+### Physical-device credit activity repair — 2026-11-06
+
+The iPhone received a 10,000-sat signet invoice, then paid one 999-sat peer
+invoice. The receiver recorded exactly one completed 999-sat receive. Device
+activity also contained a separate 1,000-sat funding transfer, initially shown
+as another Payment because it had no credit-top-up label or payment link.
+
+The durable credit operation identified that transfer's exact session and
+1,000-sat top-up. Its ledger spent a 10,000-sat input and returned 9,000 sats in
+change. Existing history code already netted self-change for display, but the
+credit correlation still compared the gross input amount with the net top-up.
+[Wavelength PR #1530](https://github.com/lightninglabs/wavelength/pull/1530)
+fixes that comparison without changing accounting or dispatch. The regression
+fails before the fix; the full swapwallet suite, formatting, and local lint
+pass. The source bridge patch carries the fix for the pinned iOS SDK.
+
+After rebuilding and installing over the existing iPhone app, a read-only
+inspection confirmed the same original payment and funding records, now linked
+by the invoice payment hash and the credit-top-up label. No wallet reset or
+second payment was used. The app groups that verified funding leg under the
+999-sat payment's Details. Unknown, unmatched, and failed funding entries remain
+visible. Activity adds status and local time beside the note/title; payment
+screens keep note, status, and time above Details.
+
+Validation: 20 Swift tests passed, two opt-in network/storage probes skipped;
+the live signet request/copy/foreground/relaunch UI test passed separately.
+The rebuilt source framework and device-signed iPhone app compiled, installed,
+and launched successfully.

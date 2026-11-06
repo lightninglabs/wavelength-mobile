@@ -105,8 +105,12 @@ struct ReceiveView: View {
     @ViewBuilder private var paymentRequest: some View {
         if paymentDetected, let entry = currentEntry {
             WalletAmount(amount: entry.amountSat)
+            if !entry.note.isEmpty { Text(entry.note).foregroundStyle(WalletTheme.secondary) }
             WalletStatus(text: entry.displayStatus, pending: entry.status == "pending",
                          complete: entry.status == "complete", failed: entry.status == "failed")
+            if let date = WalletFormatting.date(entry.createdAt) {
+                Text(date).font(.subheadline).foregroundStyle(WalletTheme.secondary)
+            }
             if let reason = entry.failureReason, !reason.isEmpty {
                 Text(reason).font(.footnote).foregroundStyle(WalletTheme.secondary)
             }

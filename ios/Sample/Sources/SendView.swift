@@ -38,6 +38,9 @@ struct SendView: View {
                     Text(entry.note.isEmpty ? "Payment" : entry.note).foregroundStyle(WalletTheme.secondary)
                     WalletStatus(text: entry.displayStatus, pending: entry.status == "pending",
                                  complete: entry.status == "complete", failed: entry.status == "failed")
+                    if let date = WalletFormatting.date(entry.createdAt) {
+                        Text(date).font(.subheadline).foregroundStyle(WalletTheme.secondary)
+                    }
                     NavigationLink(destination: ActivityDetailView(entry: entry)) { Text("Details") }
                     Button("Done") { presentationMode.wrappedValue.dismiss() }
                         .buttonStyle(WalletButtonStyle())

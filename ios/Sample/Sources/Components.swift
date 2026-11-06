@@ -148,10 +148,15 @@ struct ActivityRow: View {
                         .foregroundStyle(entry.activityAmountColor)
                         .multilineTextAlignment(.trailing)
                 }
-                WalletStatus(text: entry.displayStatus,
-                             pending: entry.status == "pending" && !entry.isAwaitingIncomingPayment)
-                    .font(.caption)
-                    .foregroundStyle(WalletTheme.secondary)
+                HStack(alignment: .firstTextBaseline) {
+                    WalletStatus(text: entry.displayStatus,
+                                 pending: entry.status == "pending" && !entry.isAwaitingIncomingPayment,
+                                 textStyle: .caption)
+                    Spacer(minLength: 12)
+                    if let time = WalletFormatting.activityTime(entry.createdAt) {
+                        Text(time).font(.caption).monospacedDigit()
+                    }
+                }.foregroundStyle(WalletTheme.secondary)
             }
         }
         .padding(.vertical, 17)

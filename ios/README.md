@@ -56,6 +56,12 @@ control protects the actual wallet password. Password fallback reopens and
 unlocks the encrypted wallet rather than accepting a UI-only authentication
 flag. Existing devices can enable biometrics in Settings > Security.
 
+Home activity shows the payment amount, note/title, status, and local time.
+Explicitly linked credit-funding entries are grouped under their invoice
+payment's Details, rather than presented as a second payment. Unmatched
+transfers and failed funding remain visible. The complete SDK activity and
+accounting records are retained.
+
 An invoice stays Awaiting payment until money is detected; completion alone
 produces Received. Allocating a Bitcoin address creates no activity. A deposit
 appears when the wallet observes a transaction. Pending invoice details reopen
@@ -99,7 +105,9 @@ not only Command Line Tools.
 `43c517cf6fefe9aae3f9c2a879d0b11f6ff407a2`. The fetch script builds that exact
 commit with `scripts/wavelength-ios-recovery.patch`. The narrow bridge exposes
 refresh, refresh observation, full recovery inventory, and signed portable
-recovery export through gomobile. Android keeps its separate existing pin.
+recovery export through gomobile. The patch also carries the credit top-up
+correlation fix in Wavelength PR #1530 until it is available in the pin.
+Android keeps its separate existing pin.
 
 The Swift wrapper retains the
 bounded-read and uncertain receive-outcome contracts and exposes

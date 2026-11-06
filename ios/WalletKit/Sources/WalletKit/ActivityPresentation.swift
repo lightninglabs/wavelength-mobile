@@ -59,8 +59,16 @@ public extension Entry {
         return "Checking status"
     }
 
+    var isCreditTopup: Bool { kind == "send" && progress?.phaseLabel == "credit_topup" }
+
+    var activityPaymentHash: String? {
+        if let hash = progress?.paymentHash, !hash.isEmpty { return hash }
+        if let hash = request?.paymentHash, !hash.isEmpty { return hash }
+        return nil
+    }
+
     var activityTitle: String {
-        if progress?.phaseLabel == "credit_topup" { return "Credit top-up" }
+        if isCreditTopup { return "Credit top-up" }
         if !note.isEmpty { return note }
         switch kind {
         case "send": return "Payment"
@@ -69,5 +77,24 @@ public extension Entry {
         case "refresh": return "Refresh"
         default: return kind.replacingOccurrences(of: "_", with: " ").capitalized
         }
+    }
+}
+
+/// Groups only explicitly correlated funding legs; raw Activity stays intact.
+public enum WalletActivityPresentation {
+    public static func entries(_ entries: [Entry]) -> [Entry] {
+        let paymentHashes = Set(entries.filter { $0.kind == "send" && !$0.isCreditTopup }
+            .compactMap(\.activityPaymentHash))
+        return entries.filter { entry in
+            guard entry.isCreditTopup, entry.status != "failed",
+                  let hash = entry.activityPaymentHash else { return true }
+            return !paymentHashes.contains(hash)
+        }
+    }
+
+    public static func creditTopups(for payment: Entry, in entries: [Entry]) -> [Entry] {
+        guard payment.kind == "send", !payment.isCreditTopup,
+              let hash = payment.activityPaymentHash else { return [] }
+        return entries.filter { $0.isCreditTopup && $0.activityPaymentHash == hash }
     }
 }

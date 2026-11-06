@@ -83,6 +83,8 @@ final class WalletStore: ObservableObject {
         #endif
     }
 
+    var visibleActivity: [Entry] { WalletActivityPresentation.entries(activity) }
+
     var canChangeNetwork: Bool { stateCreatingCallCount == 0 && !isWorking }
 
     var isReady: Bool { phase == .ready }
