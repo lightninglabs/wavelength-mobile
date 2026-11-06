@@ -109,7 +109,7 @@ struct ActivityDetailView: View {
 
             Section("Details") {
                 ValueRow(label: "Kind", value: currentEntry.kind.replacingOccurrences(of: "_", with: " ").capitalized)
-                ValueRow(label: "Rail", value: currentEntry.isLightningActivity ? "Lightning" : "On-chain")
+                ValueRow(label: "Rail", value: currentEntry.activityRailLabel)
                 ValueRow(label: "Direction", value: currentEntry.activityDirectionLabel)
                 if currentEntry.feeSat > 0 {
                     ValueRow(label: "Fee", value: WalletFormatting.sats(currentEntry.feeSat))

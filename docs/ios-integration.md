@@ -171,5 +171,35 @@ Validation used Xcode 26.6 (17F113) and a new iPhone 17 Pro Simulator on iOS
 
 The micro payment probe uses two disposable, unfunded wallets and never calls
 `Send`. It proves quote routing and authorization forwarding, not funded
-micro payment settlement. Physical-device behavior, OS background wake, and
-upgrading the earlier funded wallet remain unverified in this refresh.
+micro payment settlement. The funded checks below exercise settlement
+separately. Physical-device behavior, OS background wake, and upgrading the
+earlier funded wallet remain unverified in this refresh.
+
+### Funded receive, credit payments, and restart — 2026-11-06
+
+The iPhone 17 Pro Simulator's closed signet wallet directory was backed up,
+then the app created a fresh wallet. Its configured signet operator, swap,
+and Esplora overrides were saved through Settings. The CLI peer used Wavelength
+`12854f30`, built with the wallet RPC and swap runtime enabled; the app retained
+the published v0.2.1 SDK.
+
+| Check | Observed result |
+|---|---|
+| Routed Lightning receive | A separate signet LND paid the app's 20,000-sat invoice once; payer succeeded with a 2-sat routing fee, and the original app receive completed with 20,000 spendable Ark sats |
+| First micro payment | The app quoted and paid a distinct 10-sat peer invoice through credit, with a 1,000-sat top-up and zero payment fee |
+| Credit reuse | A second distinct 10-sat invoice quoted 10 sats of existing credit, zero top-up, and zero new Ark outflow; both payer and receiver completed |
+| Final balances | App: 19,000 Ark sats and 980 available credit sats; peer: 20 available credit sats and no reserved credit |
+| Process restart | Rebuild and relaunch retained the same four complete activity IDs and amounts: one receive, two micro payments, and one top-up; saved endpoint overrides also persisted |
+
+The original receive and both outgoing payment hashes each identify exactly
+one complete app operation. The peer retained both original receive IDs.
+The app's 19,000 Ark sats, its 980 credit sats, and the peer's 20 credit sats
+sum to the received 20,000 sats. The 2-sat routing fee was paid separately by
+the Lightning payer.
+
+This run exposed a presentation error: an activity row without a Lightning
+request or payment hash was assumed to be on-chain. The SDK's persisted
+credit-funding row did not identify a rail, so the app called it "On-chain
+sent". Unknown send rails now use the neutral "Bitcoin sent" title and
+"Not reported" in details. Explicit Lightning, on-chain, and Ark requests
+retain their corresponding rail labels; no amount or settlement state changes.

@@ -276,12 +276,21 @@ extension Entry {
 
     var isCredit: Bool { kind == "receive" || kind == "deposit" }
 
-    var isLightningActivity: Bool {
-        if request?.type.lowercased() == "lightning" { return true }
-        if request?.type.lowercased() == "onchain" { return false }
-        if kind == "receive" { return true }
-        if kind == "deposit" || kind == "exit" { return false }
-        return !(progress?.paymentHash ?? "").isEmpty
+    var isLightningActivity: Bool { activityRailLabel == "Lightning" }
+
+    /// A ledger-only send, including a credit top-up, may omit its rail.
+    /// Absence of a Lightning request does not establish an on-chain payment.
+    var activityRailLabel: String {
+        switch request?.type.lowercased() {
+        case "lightning": return "Lightning"
+        case "onchain": return "On-chain"
+        case "ark": return "Ark"
+        default:
+            if kind == "receive" { return "Lightning" }
+            if kind == "deposit" || kind == "exit" { return "On-chain" }
+            if !(progress?.paymentHash ?? "").isEmpty { return "Lightning" }
+            return "Not reported"
+        }
     }
 
     var activityDirectionLabel: String {
@@ -306,13 +315,11 @@ extension Entry {
     var activityTitle: String {
         switch kind {
         case "send":
+            let rail = activityRailLabel == "Not reported" ? "Bitcoin" : activityRailLabel
             if status == "failed" {
-                return isLightningActivity ? "Lightning send failed" : "On-chain send failed"
+                return "\(rail) send failed"
             }
-            if isLightningActivity {
-                return status == "complete" ? "Lightning sent" : "Lightning send"
-            }
-            return status == "complete" ? "On-chain sent" : "On-chain send"
+            return status == "complete" ? "\(rail) sent" : "\(rail) send"
         case "receive":
             if isExpiredInvoice { return "Lightning invoice expired" }
             if status == "complete" { return "Lightning received" }
