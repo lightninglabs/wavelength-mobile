@@ -1,0 +1,56 @@
+name: gateway
+
+# Public entry point for the Gateway review bot. Start a review with
+# /gateway review, then use /gateway re-review after updating the PR.
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request:
+    types: [review_requested, closed]
+
+permissions:
+  # Gateway uses this token for a read-only caller permission check, then
+  # mints its own App token for review and comment updates.
+  contents: read
+
+jobs:
+  review:
+    # The association check avoids runners for unrelated commenters.
+    # Gateway still authorizes each command against repository permissions.
+    if: >-
+      ${{
+        github.event_name == 'pull_request' ||
+        (github.event_name == 'issue_comment'
+          && github.event.issue.pull_request != null
+          && contains(github.event.comment.body, '/gateway')
+          && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+            || github.event.comment.user.login == github.event.issue.user.login)) ||
+        (github.event_name == 'pull_request_review_comment'
+          && contains(github.event.comment.body, '/gateway')
+          && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+            || github.event.comment.user.login == github.event.pull_request.user.login))
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Match the single-call review mode used by Wavelength.
+      GATEWAY_REVIEW_MODE: single
+    steps:
+      - uses: lightninglabs/gateway-action@254f0cbd39bcf5fe7ef29120267f7e33a3f0db9b # v0.7.2
+        with:
+          # Pin the runtime too, so neither executable ref can move silently.
+          runtime_ref: abe5c3a2149a1be17f141989b5bb0833857145e3 # v0.7.2
+          event_name: ${{ github.event_name }}
+          event_action: ${{ github.event.action }}
+          repo: ${{ github.repository }}
+          pr_number: ${{ github.event.issue.number || github.event.pull_request.number }}
+          actor: ${{ github.event.sender.login }}
+          comment_body: ${{ github.event.comment.body }}
+          comment_id: ${{ github.event.comment.id }}
+          comment_in_reply_to: ${{ github.event.comment.in_reply_to_id }}
+          # Resolve the App installation for this repository at runtime.
+          app_id: ${{ secrets.GATEWAY_APP_ID }}
+          private_key: ${{ secrets.GATEWAY_PRIVATE_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
