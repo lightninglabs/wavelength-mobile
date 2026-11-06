@@ -47,14 +47,22 @@ embedded wallet, create a key, sync the chain from Esplora, and read balances.
 | `android/walletkit/` | Idiomatic Kotlin wrapper (`suspend` + `Flow` + typed models) over the generated bindings. The Android library other apps depend on. |
 | `android/app/` | Sample Android app (Jetpack Compose, AGP 9) that drives `walletkit`. |
 | `ios/WalletKit/` | Idiomatic Swift wrapper (`actor` + `async` + `AsyncThrowingStream` + `Codable`). Mirrors the Kotlin library. |
+| `ios/Sample/` | Native SwiftUI wallet with dark/light themes, Face ID, balance and activity, send/receive, refresh, exit, and recovery. |
 | `scripts/fetch-aar.sh` | Downloads `Wavewalletdk.aar` from the `wavelength` GitHub release (or builds it from a `WAVELENGTH_DIR` checkout) and stages it under `android/walletkit/libs`. |
-| `scripts/fetch-xcframework.sh` | Same for the iOS `Wavewalletdk.xcframework`. |
+| `scripts/fetch-xcframework.sh` | Builds the pinned Wavelength source with the carried iOS recovery bridge and stages `Wavewalletdk.xcframework`; verifies source/patch provenance. |
+| `Makefile` | One-command iOS Simulator build, test, run, and opt-in live regtest workflows. |
 | `docs/` | Architecture, the Android workflow, and signet setup. |
 
 Both the Android and iOS wrappers and their sample apps run end to end — Android
 on an emulator, iOS on the Simulator — booting the embedded wallet, creating a
 wallet, and syncing signet to the chain tip. wavelength CI builds the bindings
-on release tags, and the fetch scripts pull them from the release.
+on release tags. iOS uses the source commit in `.wavelength-ios-version`
+(`43c517cf6fefe9aae3f9c2a879d0b11f6ff407a2`) plus
+`scripts/wavelength-ios-recovery.patch`;
+Android uses `.wavelength-version` (currently `v0.1.2`). The separate pins let
+each host wrapper adopt SDK changes after its own validation. iOS build, test,
+and run commands replace a staged framework when its recorded source commit or bridge digest
+differs from the iOS pin and patch. For Android, rerun the fetch script after changing its pin.
 
 ## Quick start (Android)
 
@@ -73,8 +81,8 @@ You need three things:
 3. A modern JDK (17 or newer).
 
 ```bash
-# 1. Fetch the binding and stage it here. Downloads the latest wavelength
-#    release by default; set WAVELENGTH_VERSION=<tag> to pin a release, or
+# 1. Fetch the binding and stage it here. Uses .wavelength-version by
+#    default; set WAVELENGTH_VERSION=<tag> to override the pin, or
 #    WAVELENGTH_DIR=<checkout> to build from source instead.
 ./scripts/fetch-aar.sh
 
@@ -126,5 +134,6 @@ design; the full method list is in wavelength's
   detail, including the `android` CLI and emulator.
 - [`docs/signet.md`](docs/signet.md) — pointing the wallet at a signet
   environment and watching it sync.
-- [`ios/README.md`](ios/README.md) — the Swift `WalletKit` wrapper and how to
-  build its `xcframework`.
+- [`ios/README.md`](ios/README.md) — the Swift `WalletKit` wrapper, native
+  wallet, one-command Simulator workflow, and environment-driven regtest
+  validation.
