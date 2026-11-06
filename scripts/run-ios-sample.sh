@@ -14,8 +14,8 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SAMPLE_DIR="${REPO_ROOT}/ios/Sample"
-BUNDLE_ID="engineering.lightning.wavewalletdk.sample"
-SCHEME="WavewalletdkSample"
+BUNDLE_ID="engineering.lightning.wavelength.wallet"
+SCHEME="Wavelength"
 
 # 1. Stage the bindings.
 "${REPO_ROOT}/scripts/fetch-xcframework.sh" --if-needed
@@ -49,10 +49,20 @@ app="${SAMPLE_DIR}/DerivedData/Build/Products/Debug-iphonesimulator/${SCHEME}.ap
 echo "==> installing ${app}"
 xcrun simctl install "${device_udid}" "${app}"
 
-# Preserve the existing diagnostic demo's opt-in headless startup.
-if [[ -n "${WAVEWALLETDK_AUTOSTART:-}" ]]; then
-    export SIMCTL_CHILD_WAVEWALLETDK_AUTOSTART="${WAVEWALLETDK_AUTOSTART}"
-fi
+# simctl only forwards environment variables carrying its SIMCTL_CHILD_
+# prefix. Keep normal launches clean, while allowing an external regtest
+# environment to configure the app without modifying persisted app settings.
+for name in \
+	WAVELENGTH_REGTEST \
+	WAVELENGTH_AUTOCREATE \
+	WAVELENGTH_OPERATOR_ADDRESS \
+	WAVELENGTH_SWAP_ADDRESS \
+	WAVELENGTH_ESPLORA_URL
+do
+	if [[ -n "${!name:-}" ]]; then
+		export "SIMCTL_CHILD_${name}=${!name}"
+	fi
+done
 xcrun simctl launch "${device_udid}" "${BUNDLE_ID}"
 
 if [[ "${OPEN_SIMULATOR:-1}" == "1" ]]; then

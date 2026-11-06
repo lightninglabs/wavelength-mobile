@@ -7,7 +7,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BUNDLE_ID="${BUNDLE_ID:-engineering.lightning.wavewalletdk.sample}"
+BUNDLE_ID="${BUNDLE_ID:-engineering.lightning.wavelength.wallet}"
 
 device_udid="$("${REPO_ROOT}/scripts/select-ios-device.sh")"
 
