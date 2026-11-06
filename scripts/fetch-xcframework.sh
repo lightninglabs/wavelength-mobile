@@ -4,12 +4,12 @@
 # into the Swift package at ios/WalletKit/Frameworks/Wavewalletdk.xcframework
 # (which is gitignored).
 #
-# By default it downloads the binding from the wavelength GitHub release, which
-# needs no toolchain. Point WAVELENGTH_DIR at a local wavelength checkout to
-# build from source instead (requires macOS with Xcode).
+# Commit pins build the exact source plus the checked-in mobile bridge. Release
+# tags download a packaged binding. Source builds require macOS, Xcode, Go, and
+# gomobile. WAVELENGTH_DIR can select an exactly matching prepared checkout.
 #
 # Configuration (env vars, all optional):
-#   WAVELENGTH_VERSION  release tag to download (default: .wavelength-ios-version)
+#   WAVELENGTH_VERSION  source commit or release tag (default: repository pin)
 #   WAVELENGTH_REPO     owner/name of the wavelength repo
 #                       (default: lightninglabs/wavelength)
 #   WAVELENGTH_DIR      path to a wavelength checkout; when set, build from
@@ -34,6 +34,50 @@ WAVELENGTH_VERSION="${WAVELENGTH_VERSION:-$(cat "${REPO_ROOT}/.wavelength-ios-ve
 receipt="${DST}/.wavelength-origin"
 release_origin="release:${WAVELENGTH_REPO}:${WAVELENGTH_VERSION}"
 mkdir -p "${DST_DIR}"
+
+# A commit pin builds the unreleased SDK together with the narrow mobile ABI
+# additions carried in this repository. Include the patch digest in provenance
+# so a previously staged release or another bridge revision cannot be reused.
+if [[ "${WAVELENGTH_VERSION}" =~ ^[0-9a-f]{40}$ ]]; then
+	bridge_patch="${REPO_ROOT}/scripts/wavelength-ios-recovery.patch"
+	bridge_digest="$(shasum -a 256 "${bridge_patch}" | awk '{print $1}')"
+	source_origin="source:${WAVELENGTH_REPO}:${WAVELENGTH_VERSION}:${bridge_digest}"
+	if ${if_needed} && [[ -z "${WAVELENGTH_DIR:-}" && -f "${receipt}" ]] && \
+		[[ "$(cat "${receipt}")" == "${source_origin}" ]]; then
+		echo "==> using pinned Wavelength iOS SDK (${WAVELENGTH_VERSION})"
+		exit 0
+	fi
+	if [[ "$(uname)" != "Darwin" ]]; then
+		echo "error: the pinned iOS SDK requires macOS + Xcode" >&2
+		exit 1
+	fi
+	source_tree="${WAVELENGTH_DIR:-${HOME}/.cache/wavelength-mobile-ios/${WAVELENGTH_VERSION}}"
+	if [[ ! -d "${source_tree}/.git" && ! -f "${source_tree}/.git" ]]; then
+		mkdir -p "$(dirname "${source_tree}")"
+		gh repo clone "${WAVELENGTH_REPO}" "${source_tree}" -- --filter=blob:none --no-checkout
+		git -C "${source_tree}" fetch origin "${WAVELENGTH_VERSION}" --depth=1
+		git -C "${source_tree}" checkout --detach "${WAVELENGTH_VERSION}"
+		git -C "${source_tree}" apply --index "${bridge_patch}"
+	fi
+	if [[ "$(git -C "${source_tree}" rev-parse HEAD)" != "${WAVELENGTH_VERSION}" ]]; then
+		echo "error: WAVELENGTH_DIR does not match the pinned SDK commit" >&2
+		exit 1
+	fi
+	actual_digest="$(git -C "${source_tree}" diff HEAD --binary | shasum -a 256 | awk '{print $1}')"
+	if [[ "${actual_digest}" != "${bridge_digest}" ]] || \
+		[[ -n "$(git -C "${source_tree}" ls-files --others --exclude-standard)" ]]; then
+		echo "error: SDK bridge differs from scripts/wavelength-ios-recovery.patch" >&2
+		echo "Apply the checked-in bridge to the pinned source, or unset WAVELENGTH_DIR." >&2
+		exit 1
+	fi
+	export PATH="$(go env GOPATH)/bin:${PATH}"
+	( cd "${source_tree}" && make mobile-ios )
+	rm -rf "${DST}"
+	cp -R "${source_tree}/sdk/wavewalletdk/mobile/build/ios/Wavewalletdk.xcframework" "${DST}"
+	printf '%s\n' "${source_origin}" > "${receipt}"
+	echo "==> staged pinned iOS SDK (${WAVELENGTH_VERSION})"
+	exit 0
+fi
 
 # A directory alone says nothing about the staged SDK version. Reuse only an
 # artifact installed by this script for the requested release. Source builds

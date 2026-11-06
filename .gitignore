@@ -17,4 +17,5 @@ ios/WalletKit/.swiftpm/
 # iOS sample: generated project + build output (xcodegen regenerates).
 ios/Sample/*.xcodeproj
 ios/Sample/DerivedData/
+ios/Sample/DerivedData-Phone/
 ios/Sample/build/

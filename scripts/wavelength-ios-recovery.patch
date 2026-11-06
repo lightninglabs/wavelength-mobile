@@ -1,0 +1,399 @@
+diff --git a/sdk/wavewalletdk/client_export.go b/sdk/wavewalletdk/client_export.go
+new file mode 100644
+index 00000000..c420147c
+--- /dev/null
++++ b/sdk/wavewalletdk/client_export.go
+@@ -0,0 +1,41 @@
++package wavewalletdk
++
++import (
++	"context"
++	"fmt"
++
++	"github.com/lightninglabs/wavelength/rpc/wavewalletrpc"
++	"google.golang.org/protobuf/encoding/protojson"
++)
++
++// ExportExitsJSON returns a portable, versioned recovery bundle for the
++// selected outpoints. It signs recovery data but never broadcasts or starts an
++// exit. Keep the RPC's complete bundle schema rather than dropping fields
++// through a second SDK representation that an external executor could
++// misinterpret.
++func (c *Client) ExportExitsJSON(ctx context.Context, outpoints []string) (
++	[]byte, error) {
++
++	if err := c.requireWalletRPC(); err != nil {
++		return nil, err
++	}
++
++	exits := make([]*wavewalletrpc.ExportExitRequest, len(outpoints))
++	for i, outpoint := range outpoints {
++		exits[i] = &wavewalletrpc.ExportExitRequest{Outpoint: outpoint}
++	}
++
++	resp, err := c.wallet.ExportExits(
++		ctx, &wavewalletrpc.ExportExitsRequest{
++			Exits: exits,
++		},
++	)
++	if err != nil {
++		return nil, fmt.Errorf("export recovery bundle: %w", err)
++	}
++
++	return protojson.MarshalOptions{UseProtoNames: true, Indent: "  "}.
++		Marshal(
++			resp,
++		)
++}
+diff --git a/sdk/wavewalletdk/client_recovery_mobile_test.go b/sdk/wavewalletdk/client_recovery_mobile_test.go
+new file mode 100644
+index 00000000..4d8a5818
+--- /dev/null
++++ b/sdk/wavewalletdk/client_recovery_mobile_test.go
+@@ -0,0 +1,121 @@
++package wavewalletdk
++
++import (
++	"context"
++	"testing"
++
++	"github.com/lightninglabs/wavelength/rpc/wavewalletrpc"
++	"github.com/lightninglabs/wavelength/waverpc"
++	"github.com/stretchr/testify/require"
++	"google.golang.org/grpc"
++	"google.golang.org/protobuf/encoding/protojson"
++)
++
++// recoveryExportClient records export selection and returns a portable bundle.
++type recoveryExportClient struct {
++	wavewalletrpc.WalletServiceClient
++	request *wavewalletrpc.ExportExitsRequest
++	result  *wavewalletrpc.ExportExitsResponse
++}
++
++// ExportExits records the read/sign request without implementing any send RPC.
++func (c *recoveryExportClient) ExportExits(_ context.Context,
++	req *wavewalletrpc.ExportExitsRequest, _ ...grpc.CallOption) (
++	*wavewalletrpc.ExportExitsResponse, error) {
++
++	c.request = req
++
++	return c.result, nil
++}
++
++// TestRecoveryExportPreservesPortableSchema checks the complete bundle survives
++// JSON transport rather than losing fields in a second host DTO.
++func TestRecoveryExportPreservesPortableSchema(t *testing.T) {
++	t.Parallel()
++
++	wallet := &recoveryExportClient{
++		result: &wavewalletrpc.ExportExitsResponse{
++			FormatVersion: 2,
++			Network:       "signet",
++			GenesisHash:   "chain-bound",
++		},
++	}
++	client := newExitTestClient(wallet)
++	data, err := client.ExportExitsJSON(t.Context(), []string{"abc:0"})
++	require.NoError(t, err)
++	require.Equal(t, "abc:0", wallet.request.GetExits()[0].GetOutpoint())
++	require.Empty(t, wallet.request.GetExits()[0].GetSweepAddress())
++
++	var decoded wavewalletrpc.ExportExitsResponse
++	require.NoError(t, protojson.Unmarshal(data, &decoded))
++	require.Equal(t, uint32(2), decoded.GetFormatVersion())
++	require.Equal(t, "chain-bound", decoded.GetGenesisHash())
++}
++
++// recoveryDaemonClient returns the wallet's persisted VTXO settlement records.
++type recoveryDaemonClient struct {
++	waverpc.DaemonServiceClient
++	result *waverpc.ListVTXOsResponse
++}
++
++// ListVTXOs returns persisted records for the observation test.
++func (c *recoveryDaemonClient) ListVTXOs(_ context.Context,
++	_ *waverpc.ListVTXOsRequest, _ ...grpc.CallOption) (
++	*waverpc.ListVTXOsResponse, error) {
++
++	return c.result, nil
++}
++
++// TestRefreshObservationRequiresEveryConfirmedInput prevents a removed live
++// input or an unconfirmed settlement from falsely completing the UI operation.
++func TestRefreshObservationRequiresEveryConfirmedInput(t *testing.T) {
++	t.Parallel()
++
++	forfeited := waverpc.VTXOStatus_VTXO_STATUS_FORFEITED
++
++	daemon := &recoveryDaemonClient{result: &waverpc.ListVTXOsResponse{
++		Vtxos: []*waverpc.VTXO{
++			{
++				Outpoint: "a:0",
++				Status:   forfeited,
++				Settlement: &waverpc.VTXOSettlement{
++					Height: 100,
++				},
++			},
++			{
++				Outpoint:   "b:0",
++				Status:     forfeited,
++				Settlement: &waverpc.VTXOSettlement{},
++			},
++		},
++	}}
++	client := newExitTestClient(&recoveryExportClient{})
++	client.daemon = daemon
++	result, err := client.ObserveRefresh(
++		t.Context(), []string{
++			"a:0",
++			"b:0",
++		},
++	)
++	require.NoError(t, err)
++	require.False(t, result.Complete)
++	require.Equal(t, 1, result.ConfirmedCount)
++
++	daemon.result.Vtxos[1].Settlement.Height = 101
++	result, err = client.ObserveRefresh(t.Context(), []string{"a:0", "b:0"})
++	require.NoError(t, err)
++	require.True(t, result.Complete)
++
++	result, err = client.ObserveRefresh(t.Context(), []string{"missing:0"})
++	require.NoError(t, err)
++	require.False(t, result.Complete)
++	require.False(t, result.RetryAllowed)
++
++	for _, v := range daemon.result.Vtxos {
++		v.Status = waverpc.VTXOStatus_VTXO_STATUS_LIVE
++	}
++	result, err = client.ObserveRefresh(t.Context(), []string{"a:0", "b:0"})
++	require.NoError(t, err)
++	require.True(t, result.RetryAllowed)
++	require.False(t, result.Complete)
++}
+diff --git a/sdk/wavewalletdk/client_refresh_status.go b/sdk/wavewalletdk/client_refresh_status.go
+new file mode 100644
+index 00000000..a546fcc4
+--- /dev/null
++++ b/sdk/wavewalletdk/client_refresh_status.go
+@@ -0,0 +1,126 @@
++package wavewalletdk
++
++import (
++	"context"
++	"fmt"
++	"strings"
++
++	"github.com/lightninglabs/wavelength/waverpc"
++)
++
++// RefreshObservation reports confirmed forfeits for a caller's refresh inputs.
++// Absence from the live inventory alone is not proof of completed refresh.
++type RefreshObservation struct {
++	Complete       bool
++	ConfirmedCount int
++	Total          int
++	RetryAllowed   bool
++}
++
++// RecoveryInventory includes expired and in-flight Bitcoin funds that the
++// spendable-only wallet inventory intentionally omits. Asset carriers remain
++// outside this Bitcoin wallet view.
++func (c *Client) RecoveryInventory(ctx context.Context) (*VTXOInventory,
++	error) {
++
++	if err := c.requireWalletRPC(); err != nil {
++		return nil, err
++	}
++	resp, err := c.daemon.ListVTXOs(ctx, &waverpc.ListVTXOsRequest{
++		ExcludeCheckpointPsbts: true,
++	})
++	if err != nil {
++		return nil, fmt.Errorf("get recovery inventory: %w", err)
++	}
++
++	result := &VTXOInventory{}
++	for _, v := range resp.GetVtxos() {
++		if v.GetAssetRef() != "" {
++			continue
++		}
++
++		result.VTXOs = append(result.VTXOs, WalletVTXO{
++			Outpoint:  v.GetOutpoint(),
++			AmountSat: v.GetAmountSat(),
++			Status: strings.ToLower(
++				strings.TrimPrefix(
++					v.GetStatus().String(),
++					"VTXO_STATUS_",
++				),
++			),
++			BatchExpiry:    v.GetBatchExpiry(),
++			RelativeExpiry: v.GetRelativeExpiry(),
++			CommitmentTxid: v.GetCommitmentTxid(),
++		})
++	}
++	result.Total = uint32(len(result.VTXOs))
++
++	return result, nil
++}
++
++// ObserveRefresh checks persisted confirmed settlement for every selected
++// input. The host must pass the exact input selection it queued for refresh.
++func (c *Client) ObserveRefresh(ctx context.Context, outpoints []string) (
++	*RefreshObservation, error) {
++
++	if err := c.requireWalletRPC(); err != nil {
++		return nil, err
++	}
++
++	forfeited := waverpc.VTXOStatus_VTXO_STATUS_FORFEITED
++	resp, err := c.daemon.ListVTXOs(ctx, &waverpc.ListVTXOsRequest{
++		StatusFilter:           forfeited,
++		ExcludeCheckpointPsbts: true,
++	})
++	if err != nil {
++		return nil, fmt.Errorf("observe refresh settlement: %w", err)
++	}
++
++	confirmed := make(map[string]bool)
++	for _, v := range resp.GetVtxos() {
++		if v.GetStatus() == waverpc.VTXOStatus_VTXO_STATUS_FORFEITED &&
++			v.GetSettlement().GetHeight() > 0 {
++
++			confirmed[v.GetOutpoint()] = true
++		}
++	}
++
++	result := &RefreshObservation{Total: len(outpoints)}
++	for _, outpoint := range outpoints {
++		if confirmed[outpoint] {
++			result.ConfirmedCount++
++		}
++	}
++	result.Complete = result.Total > 0 &&
++		result.ConfirmedCount == result.Total
++	if result.Complete || result.Total == 0 {
++		return result, nil
++	}
++
++	// The wallet reserves refresh inputs before returning acceptance. A
++	// restart or rejected round can release them back to live. Only
++	// positive live records for every input permit a new user-reviewed
++	// attempt; a missing record or a failed read must keep the existing
++	// operation.
++	live, err := c.daemon.ListVTXOs(ctx, &waverpc.ListVTXOsRequest{
++		StatusFilter:           waverpc.VTXOStatus_VTXO_STATUS_LIVE,
++		ExcludeCheckpointPsbts: true,
++	})
++	if err != nil {
++		return nil, fmt.Errorf("observe refresh release: %w", err)
++	}
++	liveInputs := make(map[string]bool)
++	for _, v := range live.GetVtxos() {
++		if v.GetStatus() == waverpc.VTXOStatus_VTXO_STATUS_LIVE {
++			liveInputs[v.GetOutpoint()] = true
++		}
++	}
++	result.RetryAllowed = true
++	for _, outpoint := range outpoints {
++		if !liveInputs[outpoint] {
++			result.RetryAllowed = false
++		}
++	}
++
++	return result, nil
++}
+diff --git a/sdk/wavewalletdk/mobile/recovery.go b/sdk/wavewalletdk/mobile/recovery.go
+new file mode 100644
+index 00000000..a4e2d042
+--- /dev/null
++++ b/sdk/wavewalletdk/mobile/recovery.go
+@@ -0,0 +1,87 @@
++//go:build mobile && wavewalletrpc && swapruntime
++
++package mobile
++
++import "github.com/lightninglabs/wavelength/sdk/wavewalletdk"
++
++// Refresh previews or queues reissuance of selected VTXOs. The JSON request and
++// response use wavewalletdk.RefreshRequest and wavewalletdk.RefreshResult.
++func Refresh(reqJSON []byte) ([]byte, error) {
++	client, ctx, err := activeClient()
++	if err != nil {
++		return nil, err
++	}
++
++	var req wavewalletdk.RefreshRequest
++	if err := decode(reqJSON, &req); err != nil {
++		return nil, err
++	}
++
++	res, err := client.Refresh(ctx, req)
++	if err != nil {
++		return nil, err
++	}
++
++	return marshal(res)
++}
++
++// ExportExits returns the complete portable recovery JSON for Outpoints from a
++// JSON object. This does not broadcast transactions or start recovery jobs.
++func ExportExits(reqJSON []byte) ([]byte, error) {
++	client, parent, err := activeClient()
++	if err != nil {
++		return nil, err
++	}
++	ctx, cancel := readContext(parent)
++	defer cancel()
++
++	var req struct {
++		Outpoints []string
++	}
++	if err := decode(reqJSON, &req); err != nil {
++		return nil, err
++	}
++
++	return client.ExportExitsJSON(ctx, req.Outpoints)
++}
++
++// ObserveRefresh reports confirmed settlement of the exact selected inputs.
++func ObserveRefresh(reqJSON []byte) ([]byte, error) {
++	client, parent, err := activeClient()
++	if err != nil {
++		return nil, err
++	}
++	ctx, cancel := readContext(parent)
++	defer cancel()
++
++	var req struct {
++		Outpoints []string
++	}
++	if err := decode(reqJSON, &req); err != nil {
++		return nil, err
++	}
++
++	res, err := client.ObserveRefresh(ctx, req.Outpoints)
++	if err != nil {
++		return nil, err
++	}
++
++	return marshal(res)
++}
++
++// RecoveryInventory returns nonterminal Bitcoin funds including expired ones.
++func RecoveryInventory() ([]byte, error) {
++	client, parent, err := activeClient()
++	if err != nil {
++		return nil, err
++	}
++	ctx, cancel := readContext(parent)
++	defer cancel()
++
++	res, err := client.RecoveryInventory(ctx)
++	if err != nil {
++		return nil, err
++	}
++
++	return marshal(res)
++}

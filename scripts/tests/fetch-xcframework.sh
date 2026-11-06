@@ -64,3 +64,51 @@ test "$(cat "${receipt}")" == 'release:lightninglabs/wavelength:v0.2.0'
 bash "${fetch}" --if-needed
 test "$(cat "${receipt}")" == 'release:lightninglabs/wavelength:v0.2.1'
 echo 'fetch-xcframework release cache tests passed'
+
+# Source pins must match both the commit and the complete bridge diff.
+source_tree="${fixture}/source"
+mkdir -p "${source_tree}/sdk/wavewalletdk/mobile"
+git -C "${source_tree}" init -q
+printf 'sdk/wavewalletdk/mobile/build/\n' > "${source_tree}/.gitignore"
+printf 'base\n' > "${source_tree}/sdk/wavewalletdk/mobile/base"
+git -C "${source_tree}" add .
+git -C "${source_tree}" -c user.name=Fixture -c user.email=fixture@example.invalid \
+    -c commit.gpgsign=false commit -qm 'Fixture SDK'
+source_pin="$(git -C "${source_tree}" rev-parse HEAD)"
+printf '%s\n' "${source_pin}" > "${fixture}/.wavelength-ios-version"
+printf 'bridge\n' > "${source_tree}/sdk/wavewalletdk/mobile/bridge"
+git -C "${source_tree}" add .
+git -C "${source_tree}" diff HEAD --binary > "${fixture}/scripts/wavelength-ios-recovery.patch"
+bridge_digest="$(shasum -a 256 "${fixture}/scripts/wavelength-ios-recovery.patch" | awk '{print $1}')"
+cat > "${fixture}/bin/make" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p sdk/wavewalletdk/mobile/build/ios/Wavewalletdk.xcframework
+printf 'source fixture\n' > sdk/wavewalletdk/mobile/build/ios/Wavewalletdk.xcframework/Info.plist
+echo build >> "${FETCH_TEST_ROOT}/builds"
+MOCK
+chmod +x "${fixture}/bin/make"
+WAVELENGTH_DIR="${source_tree}" bash "${fetch}" --if-needed
+expected_origin="source:lightninglabs/wavelength:${source_pin}:${bridge_digest}"
+test "$(cat "${receipt}")" == "${expected_origin}"
+# Cached source artifacts can be used offline without a checkout or toolchain.
+bash "${fetch}" --if-needed
+test "$(wc -l < "${fixture}/builds" | tr -d ' ')" == 1
+
+# An edited bridge or unexpected untracked source must fail before building.
+printf 'changed\n' >> "${source_tree}/sdk/wavewalletdk/mobile/bridge"
+if WAVELENGTH_DIR="${source_tree}" bash "${fetch}" --if-needed; then
+    echo 'expected source diff mismatch' >&2
+    exit 1
+fi
+git -C "${source_tree}" checkout -- sdk/wavewalletdk/mobile/bridge
+printf 'untracked\n' > "${source_tree}/unexpected.go"
+if WAVELENGTH_DIR="${source_tree}" bash "${fetch}" --if-needed; then
+    echo 'expected untracked source rejection' >&2
+    exit 1
+fi
+rm "${source_tree}/unexpected.go"
+test "$(cat "${receipt}")" == "${expected_origin}"
+test "$(cat "${framework}/Info.plist")" == 'source fixture'
+test "$(wc -l < "${fixture}/builds" | tr -d ' ')" == 1
+echo 'fetch-xcframework source provenance tests passed'

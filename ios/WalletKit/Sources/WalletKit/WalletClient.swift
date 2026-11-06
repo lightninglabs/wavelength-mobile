@@ -213,9 +213,51 @@ public actor WalletClient {
     }
 
     /// Query the phase of an exit job for a VTXO outpoint.
-    public func exitStatus(outpoint: String) async throws -> ExitStatusResult {
-        let body = try encoder.encode(ExitStatusReq(outpoint: outpoint))
+    public func exitStatus(outpoint: String, detailed: Bool = true) async throws -> ExitStatusResult {
+        let body = try JSONSerialization.data(withJSONObject: ["Outpoint": outpoint, "Detailed": detailed])
         return try decode(await bg { try Bindings.exitStatus(body) })
+    }
+
+    /// Preview or queue refresh of the selected funds. An empty selection uses
+    /// the daemon's default selection; an absent estimate never means zero fee.
+    public func refreshFunds(outpoints: [String] = [], dryRun: Bool) async throws -> RefreshResult {
+        let body = try JSONSerialization.data(withJSONObject: ["Outpoints": outpoints, "DryRun": dryRun])
+        return try decode(await bg { try Bindings.refresh(body) })
+    }
+
+    /// Include expired and reserved Bitcoin funds for recovery presentation.
+    public func recoveryInventory() async throws -> VTXOInventory {
+        try decode(await bg { try Bindings.recoveryInventory() })
+    }
+
+    /// Observe confirmed forfeits for the exact input selection of a refresh.
+    public func observeRefresh(outpoints: [String]) async throws -> RefreshObservation {
+        let body = try JSONSerialization.data(withJSONObject: ["Outpoints": outpoints])
+        return try decode(await bg { try Bindings.observeRefresh(body) })
+    }
+
+    /// Preview confirmed fee-input funding before an explicit unilateral exit.
+    public func getExitPlan(outpoints: [String]) async throws -> ExitPlan {
+        let body = try JSONSerialization.data(withJSONObject: ["Outpoints": outpoints])
+        return try decode(await bg { try Bindings.getExitPlan(body) })
+    }
+
+    /// List live recovery jobs so the host can resume them after relaunch.
+    public func exitSummary() async throws -> ExitSummary {
+        let body = Data("{}".utf8)
+        return try decode(await bg { try Bindings.exitSummary(body) })
+    }
+
+    /// Preview or broadcast a sweep of confirmed backing-wallet funds.
+    public func sweepWallet(destination: String, broadcast: Bool) async throws -> SweepPreview {
+        let body = try JSONSerialization.data(withJSONObject: ["DestinationAddress": destination, "Broadcast": broadcast])
+        return try decode(await bg { try Bindings.sweepWallet(body) })
+    }
+
+    /// Export the complete versioned signed bundle without broadcasting.
+    public func exportRecovery(outpoints: [String]) async throws -> Data {
+        let body = try JSONSerialization.data(withJSONObject: ["Outpoints": outpoints])
+        return try await bg { try Bindings.exportExits(body) }
     }
 
     /// Stream only incoming payments (receives and deposits) as they arrive and

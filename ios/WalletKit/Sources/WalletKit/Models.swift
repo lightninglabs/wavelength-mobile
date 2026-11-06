@@ -277,12 +277,14 @@ public struct WalletVTXO: Decodable, Sendable {
     public let amountSat: Int64
     public let status: String
     public let commitmentTxid: String
+    public let batchExpiry: Int32?
 
     enum CodingKeys: String, CodingKey {
         case outpoint = "Outpoint"
         case amountSat = "AmountSat"
         case status = "Status"
         case commitmentTxid = "CommitmentTxid"
+        case batchExpiry = "BatchExpiry"
     }
 }
 
@@ -372,11 +374,15 @@ public struct ExitStatusResult: Decodable, Sendable {
     public let status: String
     public let sweepTxid: String
     public let lastError: String
+    public let progress: ExitProgress?
+    public let csv: ExitCSV?
+    public let fees: ExitFees?
 
     enum CodingKeys: String, CodingKey {
         case found = "Found"
         case status = "Status"
         case sweepTxid = "SweepTxid"
         case lastError = "LastError"
+        case progress = "Progress", csv = "CSV", fees = "Fees"
     }
 }
