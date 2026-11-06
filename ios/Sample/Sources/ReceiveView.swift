@@ -2,207 +2,175 @@ import CoreImage
 import CoreImage.CIFilterBuiltins
 import SwiftUI
 import UIKit
+import WalletKit
 
 private enum ReceiveRail: String, CaseIterable, Identifiable {
     case lightning = "Lightning"
-    case onchain = "On-chain"
+    case onchain = "Bitcoin address"
     var id: String { rawValue }
 }
 
 struct ReceiveView: View {
     @EnvironmentObject private var store: WalletStore
     @Environment(\.presentationMode) private var presentationMode
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var rail: ReceiveRail = .lightning
     @State private var amount = ""
     @State private var memo = ""
     @State private var request = ""
+    @State private var initialEntry: Entry?
     @State private var isLoading = false
-    @State private var isTakingLonger = false
     @State private var errorMessage: String?
     @State private var showingShare = false
+    @State private var details = false
 
-    private var amountSat: Int64 { Int64(amount) ?? 0 }
+    init(existingEntry: Entry? = nil) {
+        _initialEntry = State(initialValue: existingEntry)
+        _request = State(initialValue: existingEntry?.request?.lightningInvoice ?? "")
+        _amount = State(initialValue: existingEntry.map { String($0.amountSat) } ?? "")
+    }
+
+    private var currentEntry: Entry? {
+        store.activity.first { entry in
+            if let initialEntry, entry.id == initialEntry.id { return true }
+            return !request.isEmpty && entry.request?.onchainAddress == request
+        } ?? initialEntry
+    }
+    private var paymentDetected: Bool {
+        guard let currentEntry else { return false }
+        return !currentEntry.isAwaitingIncomingPayment
+    }
 
     var body: some View {
         NavigationView {
-            Form {
-                if request.isEmpty {
-                    requestForm
-                } else {
-                    paymentRequest
-                }
+            WalletPage {
+                if request.isEmpty { requestForm } else { paymentRequest }
             }
-            .navigationTitle("Receive Bitcoin")
+            .navigationTitle("Receive")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(request.isEmpty ? "Cancel" : "Done") {
-                        presentationMode.wrappedValue.dismiss()
-                    }
+                    Button("Close") { presentationMode.wrappedValue.dismiss() }
                 }
             }
-            .alert("Couldn’t Create Request", isPresented: errorIsPresented) {
+            .interactiveDismissDisabled(isLoading)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: paymentDetected)
+            .alert("Receive", isPresented: Binding(get: { errorMessage != nil },
+                                                  set: { if !$0 { errorMessage = nil } })) {
                 Button("OK", role: .cancel) { errorMessage = nil }
-            } message: {
-                Text(errorMessage ?? "")
-            }
-            .sheet(isPresented: $showingShare) {
-                ShareSheet(items: [request])
-            }
-            .onAppear {
-                if !store.offchainAvailable { rail = .onchain }
+            } message: { Text(errorMessage ?? "") }
+            .sheet(isPresented: $showingShare) { ShareSheet(items: [request]) }
+            .onAppear { if request.isEmpty && !store.offchainAvailable { rail = .onchain } }
+            .onChange(of: currentEntry?.status) { status in
+                if status == "complete" { WalletFeedback.completed() }
             }
         }
+        .navigationViewStyle(.stack)
     }
 
-    @ViewBuilder
-    private var requestForm: some View {
-        Section {
-            Picker("Receive using", selection: $rail) {
-                ForEach(ReceiveRail.allCases) { option in
-                    Text(option.rawValue)
-                        .tag(option)
-                        .disabled(option == .lightning && !store.offchainAvailable)
-                }
-            }
-            .pickerStyle(.segmented)
-            .accessibilityIdentifier("receive.rail")
-        } footer: {
-            if !store.operatorAvailable {
-                Text("\(store.network.title) receive requires a trusted Ark operator endpoint in Settings. Esplora syncs the chain, but it cannot create a Wavelength boarding address by itself.")
-            } else if !store.offchainAvailable {
-                Text("\(store.network.title) Lightning additionally requires a swap endpoint in Settings. On-chain boarding receive remains available.")
+    @ViewBuilder private var requestForm: some View {
+        Picker("Receive using", selection: $rail) {
+            ForEach(ReceiveRail.allCases) { option in
+                Text(option.rawValue).tag(option)
+                    .disabled(option == .lightning && !store.offchainAvailable)
             }
         }
-
-        Section("Amount") {
-            HStack {
-                TextField(rail == .lightning ? "Required" : "Optional hint", text: $amount)
-                    .keyboardType(.numberPad)
-                    .accessibilityIdentifier("receive.amount")
-                Text("sats").foregroundStyle(.secondary)
-            }
-        }
-
+        .pickerStyle(.segmented)
+        .accessibilityIdentifier("receive.rail")
         if rail == .lightning {
-            Section("Optional") {
-                TextField("Memo", text: $memo)
-            }
-        }
-
-        Section {
-            Button {
-                createRequest()
-            } label: {
+            WalletField(title: "Amount") {
                 HStack {
-                    Spacer()
-                    if isLoading { ProgressView().padding(.trailing, 6) }
-                    if isTakingLonger {
-                        Text("Still connecting…")
-                    } else {
-                        Text(rail == .lightning ? "Create Invoice" : "Create Address")
-                    }
-                    Spacer()
+                    TextField("0", text: $amount).keyboardType(.numberPad)
+                        .accessibilityIdentifier("receive.amount")
+                    Text("sats").foregroundStyle(WalletTheme.secondary)
                 }
             }
-            .disabled(!canCreate || isLoading)
-            .accessibilityIdentifier("receive.create")
-        } footer: {
-            Text(rail == .lightning
-                 ? "Creates a BOLT 11 invoice payable into your Wavelength wallet."
-                 : "Creates a fresh boarding address tracked by the wallet’s Esplora-based chain backend.")
+            DisclosureGroup("Note") {
+                TextField("Optional", text: $memo).accessibilityIdentifier("receive.memo").padding(.top, 12)
+            }
         }
+        if !store.operatorAvailable {
+            Text("Configure a connection in Settings.").foregroundStyle(WalletTheme.secondary)
+        }
+        Button(action: createRequest) {
+            if isLoading { ProgressView() }
+            else { Text(rail == .lightning ? "Create request" : "Create address") }
+        }
+        .buttonStyle(WalletButtonStyle())
+        .disabled(isLoading || !store.isReady || !store.operatorAvailable ||
+                  (rail == .lightning && ((Int64(amount) ?? 0) <= 0 || !store.offchainAvailable)))
+        .accessibilityIdentifier("receive.create")
     }
 
-    private var paymentRequest: some View {
-        Group {
-            Section {
-                VStack(spacing: 18) {
-                    QRCodeView(value: request)
-                        .frame(width: 230, height: 230)
-                        .padding(12)
-                        .background(Color.white, in: RoundedRectangle(cornerRadius: 18))
-                        .accessibilityLabel("Payment request QR code")
-
-                    Text(rail == .lightning ? "Lightning invoice" : "Bitcoin address")
-                        .font(.headline)
-                    if amountSat > 0 {
-                        Text(WalletFormatting.sats(amountSat))
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                }
+    @ViewBuilder private var paymentRequest: some View {
+        if paymentDetected, let entry = currentEntry {
+            WalletAmount(amount: entry.amountSat)
+            WalletStatus(text: entry.displayStatus, pending: entry.status == "pending",
+                         complete: entry.status == "complete", failed: entry.status == "failed")
+            if let reason = entry.failureReason, !reason.isEmpty {
+                Text(reason).font(.footnote).foregroundStyle(WalletTheme.secondary)
+            }
+            DisclosureGroup("Details", isExpanded: $details) {
+                requestContent
+                NavigationLink(destination: ActivityDetailView(entry: entry)) { Text("Activity") }
+            }
+        } else {
+            if rail == .lightning, (Int64(amount) ?? 0) > 0 {
+                WalletAmount(amount: Int64(amount) ?? 0)
+            }
+            QRCodeView(value: request)
+                .frame(maxWidth: 290, maxHeight: 290)
+                .aspectRatio(1, contentMode: .fit)
+                .padding(18)
+                .background(Color.white, in: RoundedRectangle(cornerRadius: 16))
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-            }
-
-            Section {
-                Text(request)
-                    .font(.system(.caption, design: .monospaced))
-                    .textSelection(.enabled)
-                    .privacySensitive()
-                    .accessibilityIdentifier("receive.request")
-                Button {
-                    UIPasteboard.general.string = request
-                } label: {
-                    Label("Copy", systemImage: "doc.on.doc")
-                }
-                .accessibilityIdentifier("receive.copy")
-                Button {
-                    showingShare = true
-                } label: {
-                    Label("Share", systemImage: "square.and.arrow.up")
-                }
-            }
-
-            Section {
-                Button("Create Another Request") { request = "" }
-            }
+                .accessibilityLabel("Payment request QR code")
+            requestContent
+            WalletStatus(text: "Waiting for payment")
+                .foregroundStyle(WalletTheme.secondary)
+        }
+        if paymentDetected {
+            Button("Done") { presentationMode.wrappedValue.dismiss() }
+                .buttonStyle(WalletButtonStyle())
         }
     }
 
-    private var canCreate: Bool {
-        store.isReady && store.operatorAvailable &&
-            (rail == .onchain || (amountSat > 0 && store.offchainAvailable))
+    private var requestContent: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            HStack(spacing: 20) {
+                Button { UIPasteboard.general.string = request } label: { Label("Copy", systemImage: "doc.on.doc") }
+                    .accessibilityIdentifier("receive.copy")
+                Button { showingShare = true } label: { Label("Share", systemImage: "square.and.arrow.up") }
+            }
+            if paymentDetected { requestValue } else {
+                DisclosureGroup("Details", isExpanded: $details) { requestValue.padding(.top, 12) }
+            }
+        }.padding(.vertical, 12)
+    }
+
+    private var requestValue: some View {
+        Text(request)
+            .font(.system(.caption, design: .monospaced))
+            .textSelection(.enabled).privacySensitive()
+            .accessibilityIdentifier("receive.request")
     }
 
     private func createRequest() {
+        guard !isLoading else { return }
         isLoading = true
-        isTakingLonger = false
-        let slowNotice = Task {
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
-            guard !Task.isCancelled, isLoading, rail == .lightning else { return }
-            isTakingLonger = true
-        }
         Task {
-            defer {
-                slowNotice.cancel()
-                isLoading = false
-                isTakingLonger = false
-            }
+            defer { isLoading = false }
             do {
-                switch rail {
-                case .lightning:
-                    let result = try await store.receiveLightning(
-                        amountSat: amountSat,
-                        memo: memo.trimmingCharacters(in: .whitespacesAndNewlines)
-                    )
+                if rail == .lightning {
+                    let result = try await store.receiveLightning(amountSat: Int64(amount) ?? 0,
+                        memo: memo.trimmingCharacters(in: .whitespacesAndNewlines))
+                    initialEntry = result.entry
                     request = result.invoice
-                case .onchain:
-                    let result = try await store.newDepositAddress(amountHintSat: amountSat)
-                    request = result.address
+                } else {
+                    request = try await store.newDepositAddress(amountHintSat: 0).address
                 }
-            } catch {
-                errorMessage = error.walletMessage
-            }
+            } catch { errorMessage = error.walletMessage }
         }
-    }
-
-    private var errorIsPresented: Binding<Bool> {
-        Binding(
-            get: { errorMessage != nil },
-            set: { if !$0 { errorMessage = nil } }
-        )
     }
 }
 

@@ -18,17 +18,20 @@ targets:
     platform: iOS
     sources:
       - Sources
+      - Resources
     dependencies:
       - package: WalletKit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: engineering.lightning.wavelength.wallet
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         PRODUCT_NAME: Wavelength
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_CFBundleDisplayName: Wavelength
         INFOPLIST_KEY_NSCameraUsageDescription: Scan Lightning invoices and Bitcoin payment QR codes.
+        INFOPLIST_KEY_NSFaceIDUsageDescription: Unlock your Wavelength wallet.
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
         MARKETING_VERSION: "1.0"

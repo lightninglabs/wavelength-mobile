@@ -41,7 +41,7 @@ final class SDKIntegrationTests: XCTestCase {
         XCTAssertLessThanOrEqual(credit.creditTopupSat, Int64(SendCreditDefaults.maxCreditTopupSat))
         XCTAssertEqual(quote.expectedTotalOutflowSat, credit.arkFundingSat + credit.creditTopupSat)
 
-        // Explicit opt-out must still reach the released native binding.
+        // Explicit opt-out must still reach the native binding.
         do {
             _ = try await client.prepareSend(
                 invoice: receive.invoice, maxCreditSat: 0, maxCreditTopupSat: 0

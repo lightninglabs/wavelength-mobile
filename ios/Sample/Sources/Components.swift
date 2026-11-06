@@ -1,160 +1,116 @@
 import SwiftUI
 import WalletKit
 
+/// A single smooth wave, shared by the wordmark and launch artwork.
 struct WavelengthMark: View {
     let size: CGFloat
-
     var body: some View {
-        ZStack {
-            Circle()
-                .fill(
-                    LinearGradient(
-                        colors: [.orange, Color(red: 1, green: 0.42, blue: 0.12)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-            Image(systemName: "wave.3.right")
-                .font(.system(size: size * 0.43, weight: .bold))
-                .foregroundStyle(.white)
-        }
-        .frame(width: size, height: size)
-        .shadow(color: .orange.opacity(0.25), radius: 14, y: 8)
-        .accessibilityHidden(true)
+        WavelengthWave()
+            .stroke(WalletTheme.foreground,
+                    style: StrokeStyle(lineWidth: max(2, size * 0.055), lineCap: .round))
+            .frame(width: size, height: size * 0.42)
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
     }
 }
 
-struct NetworkBadge: View {
-    let network: WalletNetwork
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Circle().fill(network.color).frame(width: 7, height: 7)
-            Text(network.title)
-        }
-        .font(.caption.weight(.semibold))
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(network.color.opacity(0.12), in: Capsule())
-        .foregroundStyle(network.color)
-        .accessibilityLabel("Bitcoin network: \(network.title)")
+private struct WavelengthWave: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX + rect.width * 0.04, y: rect.midY))
+        path.addCurve(to: CGPoint(x: rect.midX, y: rect.midY),
+                      control1: CGPoint(x: rect.width * 0.22, y: rect.minY),
+                      control2: CGPoint(x: rect.width * 0.28, y: rect.minY))
+        path.addCurve(to: CGPoint(x: rect.width * 0.96, y: rect.midY),
+                      control1: CGPoint(x: rect.width * 0.72, y: rect.maxY),
+                      control2: CGPoint(x: rect.width * 0.78, y: rect.maxY))
+        return path
     }
 }
 
-/// Opens the network chooser from screens that cannot reach the Settings tab,
-/// such as first-run setup, unlock, and daemon-start failure states.
+struct WavelengthWordmark: View {
+    var body: some View {
+        HStack(spacing: 9) {
+            WavelengthMark(size: 28)
+            Text("wavelength").font(.title3.weight(.medium))
+        }
+        .foregroundStyle(WalletTheme.foreground)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// The same quiet network row is available before and after wallet unlock.
 struct NetworkSelectionButton: View {
     @EnvironmentObject private var store: WalletStore
-    @State private var showingNetworks = false
-
+    @State private var route: NetworkPickerRoute?
     var body: some View {
-        Button {
-            showingNetworks = true
-        } label: {
-            HStack(spacing: 7) {
-                NetworkBadge(network: store.network)
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(.secondary)
+        Button { route = NetworkPickerRoute() } label: {
+            HStack {
+                Text("Network")
+                Spacer()
+                Text(store.network.title).foregroundStyle(WalletTheme.secondary)
+                Image(systemName: "chevron.down").font(.caption).foregroundStyle(WalletTheme.secondary)
             }
+            .padding(.vertical, 14)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Change Bitcoin network. Current network: \(store.network.title)")
-        .sheet(isPresented: $showingNetworks) {
-            NetworkSelectionView()
-                .environmentObject(store)
-        }
+        .disabled(!store.canChangeNetwork)
+        .accessibilityIdentifier("wallet.network")
+        .sheet(item: $route) { _ in NetworkSelectionView().environmentObject(store) }
     }
+    private struct NetworkPickerRoute: Identifiable { let id = "network" }
 }
 
 private struct NetworkSelectionView: View {
     @EnvironmentObject private var store: WalletStore
     @Environment(\.presentationMode) private var presentationMode
     @State private var proposedMainnet = false
-    @State private var isSwitching = false
-
+    @State private var switching = false
     var body: some View {
         NavigationView {
-            List {
-                Section {
+            WalletPage {
+                VStack(spacing: 0) {
                     ForEach(WalletNetwork.selectableNetworks, id: \.rawValue) { network in
-                        Button {
-                            select(network)
-                        } label: {
-                            HStack(spacing: 12) {
-                                Circle()
-                                    .fill(network.color)
-                                    .frame(width: 10, height: 10)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(network.title)
-                                        .foregroundStyle(.primary)
-                                    Text(network.subtitle)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
+                        Button { select(network) } label: {
+                            HStack {
+                                Text(network.title).font(.body.weight(.medium))
                                 Spacer()
                                 if store.network == network {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundStyle(network.color)
+                                    Image(systemName: "checkmark").foregroundStyle(WalletTheme.action)
                                 }
                             }
+                            .frame(minHeight: 62)
+                            .contentShape(Rectangle())
                         }
-                        .disabled(isSwitching || store.network == network)
-                    }
-                } header: {
-                    Text("Bitcoin network")
-                } footer: {
-                    Text("Each network has an isolated wallet database, balance, activity history, and device encryption key. Switching never moves funds between networks.")
-                }
-
-                if isSwitching {
-                    Section {
-                        HStack(spacing: 12) {
-                            ProgressView()
-                            Text("Starting \(store.network.title)…")
-                                .foregroundStyle(.secondary)
-                        }
+                        .buttonStyle(.plain)
+                        .disabled(switching)
+                        .accessibilityIdentifier("network.\(network.rawValue)")
+                        .accessibilityAddTraits(store.network == network ? .isSelected : [])
+                        WalletDivider()
                     }
                 }
+                if switching { WalletStatus(text: "Connecting", pending: true) }
             }
-            .navigationTitle("Choose Network")
-            .navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("Network").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        presentationMode.wrappedValue.dismiss()
-                    }
-                    .disabled(isSwitching)
+                    Button("Done") { presentationMode.wrappedValue.dismiss() }.disabled(switching)
                 }
             }
-            .confirmationDialog(
-                "Use real bitcoin on Mainnet?",
-                isPresented: $proposedMainnet,
-                titleVisibility: .visible
-            ) {
-                Button("Switch to Mainnet", role: .destructive) {
-                    switchTo(.mainnet)
-                }
+            .confirmationDialog("Use Mainnet?", isPresented: $proposedMainnet, titleVisibility: .visible) {
+                Button("Use Mainnet", role: .destructive) { switchTo(.mainnet) }
                 Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("Mainnet uses a separate wallet and real funds. Off-chain operations remain unavailable until you configure trusted services.")
-            }
-        }
-        .navigationViewStyle(.stack)
+            } message: { Text("Mainnet uses real bitcoin.") }
+            .interactiveDismissDisabled(switching)
+        }.navigationViewStyle(.stack)
     }
-
     private func select(_ network: WalletNetwork) {
-        guard network != store.network else { return }
-        if network == .mainnet {
-            proposedMainnet = true
-        } else {
-            switchTo(network)
-        }
+        guard network != store.network else { presentationMode.wrappedValue.dismiss(); return }
+        if network == .mainnet { proposedMainnet = true } else { switchTo(network) }
     }
-
     private func switchTo(_ network: WalletNetwork) {
-        isSwitching = true
+        switching = true
         Task {
             await store.switchNetwork(to: network)
             presentationMode.wrappedValue.dismiss()
@@ -164,182 +120,51 @@ private struct NetworkSelectionView: View {
 
 struct ActivityRow: View {
     let entry: Entry
-
     var body: some View {
-        HStack(alignment: .top, spacing: 13) {
-            ActivityRailIcon(entry: entry)
-
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(entry.activityTitle)
-                        .font(.body.weight(.medium))
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .layoutPriority(1)
-
-                    Spacer(minLength: 4)
-
+        HStack(alignment: .top, spacing: 14) {
+            ActivityRailIcon(entry: entry, size: 24)
+                .padding(.top, 3)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(entry.activityTitle).lineLimit(1)
+                    Spacer(minLength: 12)
                     Text(entry.activityAmountText)
-                        .font(.subheadline.weight(.semibold))
+                        .monospacedDigit()
                         .foregroundStyle(entry.activityAmountColor)
                         .multilineTextAlignment(.trailing)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(minWidth: 104, alignment: .trailing)
                 }
-
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .layoutPriority(1)
-
-                    Spacer(minLength: 4)
-
-                    StatusLabel(status: entry.activityStatus)
-                        .fixedSize()
-                }
+                WalletStatus(text: entry.displayStatus,
+                             pending: entry.status == "pending" && !entry.isAwaitingIncomingPayment)
+                    .font(.caption)
+                    .foregroundStyle(WalletTheme.secondary)
             }
         }
-        .padding(.vertical, 5)
+        .padding(.vertical, 17)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
     }
-
-    private var detail: String {
-        let context: String
-        if let date = WalletFormatting.date(entry.createdAt) {
-            context = date
-        } else if !entry.note.isEmpty {
-            context = entry.note
-        } else if !entry.counterparty.isEmpty {
-            context = WalletFormatting.shortened(entry.counterparty)
-        } else {
-            context = WalletFormatting.shortened(entry.id)
-        }
-        return "\(entry.activityDirectionLabel) · \(context)"
-    }
 }
 
-/// The large glyph identifies the payment rail; the small badge identifies
-/// direction. That keeps Lightning/on-chain and incoming/outgoing as two
-/// independent, consistently represented pieces of information.
 struct ActivityRailIcon: View {
     let entry: Entry
-    var size: CGFloat = 42
-
+    var size: CGFloat = 24
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            Circle()
-                .fill(entry.activityColor.opacity(0.12))
-                .frame(width: size, height: size)
-
-            Image(systemName: entry.isLightningActivity ? "bolt.fill" : "bitcoinsign")
-                .font(.system(size: size * 0.41, weight: .semibold))
-                .foregroundStyle(entry.activityColor)
-                .frame(width: size, height: size)
-
-            ZStack {
-                Circle()
-                    .fill(entry.activityColor)
-                Image(systemName: entry.isCredit ? "arrow.down.left" : "arrow.up.right")
-                    .font(.system(size: size * 0.20, weight: .bold))
-                    .foregroundStyle(.white)
-            }
-            .frame(width: size * 0.42, height: size * 0.42)
-            .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 2))
-        }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
+        Image(systemName: entry.kind == "refresh" ? "arrow.triangle.2.circlepath" :
+                entry.kind == "exit" ? "arrow.up.right.square" :
+                entry.isCredit ? "arrow.down.left" : "arrow.up.right")
+            .font(.system(size: size * 0.8, weight: .regular))
+            .frame(width: size, height: size)
+            .foregroundStyle(WalletTheme.foreground)
+            .accessibilityHidden(true)
     }
 }
 
 extension Entry {
-    /// The SDK uses failed + expired for an invoice that was never funded.
-    /// Keep that distinct from a payment that failed after it was attempted.
-    var isExpiredInvoice: Bool {
-        kind == "receive" && status == "failed" && failureCode == "expired"
-    }
-
-    var activityStatus: String { isExpiredInvoice ? "expired" : status }
-
-    var activityColor: Color {
-        if isExpiredInvoice { return .secondary }
-        switch status {
-        case "failed": return .red
-        case "pending": return .orange
-        default: return isCredit ? .green : .blue
-        }
-    }
-
-    var isCredit: Bool { kind == "receive" || kind == "deposit" }
-
-    var isLightningActivity: Bool { activityRailLabel == "Lightning" }
-
-    /// A ledger-only send, including a credit top-up, may omit its rail.
-    /// Absence of a Lightning request does not establish an on-chain payment.
-    var activityRailLabel: String {
-        switch request?.type.lowercased() {
-        case "lightning": return "Lightning"
-        case "onchain": return "On-chain"
-        case "ark": return "Ark"
-        default:
-            if kind == "receive" { return "Lightning" }
-            if kind == "deposit" || kind == "exit" { return "On-chain" }
-            if !(progress?.paymentHash ?? "").isEmpty { return "Lightning" }
-            return "Not reported"
-        }
-    }
-
-    var activityDirectionLabel: String {
-        if isAwaitingIncomingPayment || isExpiredInvoice { return "Incoming request" }
-        return isCredit ? "Incoming" : "Outgoing"
-    }
-
-    /// A newly issued invoice/address is an invitation to pay, not evidence
-    /// that money was received. Keep requested amounts visually distinct until
-    /// Wavelength reports payment detection or a later lifecycle phase.
-    var isAwaitingIncomingPayment: Bool {
-        guard isCredit, status == "pending" else { return false }
-        let phase = progress?.phase ?? ""
-        let label = progress?.phaseLabel ?? ""
-        let requestOnlyPhases = [
-            "request_created", "waiting_for_payment", "address_issued",
-        ]
-        let lifecycle = label.isEmpty ? phase : label
-        return lifecycle.isEmpty || requestOnlyPhases.contains(lifecycle)
-    }
-
-    var activityTitle: String {
-        switch kind {
-        case "send":
-            let rail = activityRailLabel == "Not reported" ? "Bitcoin" : activityRailLabel
-            if status == "failed" {
-                return "\(rail) send failed"
-            }
-            return status == "complete" ? "\(rail) sent" : "\(rail) send"
-        case "receive":
-            if isExpiredInvoice { return "Lightning invoice expired" }
-            if status == "complete" { return "Lightning received" }
-            if status == "failed" { return "Lightning receive failed" }
-            return isAwaitingIncomingPayment ? "Lightning invoice" : "Lightning receive"
-        case "deposit":
-            if status == "failed" { return "On-chain deposit failed" }
-            return isAwaitingIncomingPayment ? "On-chain address" : "On-chain deposit"
-        case "exit":
-            return "On-chain exit"
-        default:
-            return kind.replacingOccurrences(of: "_", with: " ").capitalized
-        }
-    }
-
     var activityAmountText: String {
         if isAwaitingIncomingPayment || isExpiredInvoice {
             guard amountSat > 0 else { return "Waiting for payment" }
             let suffix = kind == "receive" ? "requested" : "expected"
-            return "\(WalletFormatting.sats(amountSat))\n\(suffix)"
+            return "\(WalletFormatting.sats(amountSat)) \(suffix)"
         }
         if isCredit, status == "pending" {
             return WalletFormatting.sats(amountSat)
@@ -351,29 +176,7 @@ extension Entry {
     var activityAmountColor: Color {
         if isAwaitingIncomingPayment || isExpiredInvoice { return .secondary }
         if isCredit, status == "pending" { return .primary }
-        return isCredit ? .green : .primary
-    }
-}
-
-struct StatusLabel: View {
-    let status: String
-
-    var body: some View {
-        Text(status.capitalized)
-        .font(.caption2.weight(.medium))
-        .foregroundStyle(color)
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
-        .background(color.opacity(0.12), in: Capsule())
-    }
-
-    private var color: Color {
-        switch status {
-        case "complete": return .green
-        case "failed": return .red
-        case "expired": return .secondary
-        default: return .orange
-        }
+        return WalletTheme.foreground
     }
 }
 

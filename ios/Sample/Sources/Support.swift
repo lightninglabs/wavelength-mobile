@@ -157,6 +157,17 @@ enum KeychainStore {
         guard status == errSecSuccess else { throw KeychainError(status: status) }
         return Data(bytes)
     }
+
+    static func delete(account: String) throws {
+        let status = SecItemDelete([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ] as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw KeychainError(status: status)
+        }
+    }
 }
 
 struct KeychainError: LocalizedError {
@@ -164,6 +175,11 @@ struct KeychainError: LocalizedError {
     var errorDescription: String? {
         SecCopyErrorMessageString(status, nil) as String? ?? "Keychain error \(status)"
     }
+}
+
+struct WalletActionError: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
 }
 
 extension Error {

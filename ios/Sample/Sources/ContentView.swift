@@ -9,6 +9,7 @@ struct ContentView: View {
         ZStack {
             content
                 .environmentObject(store)
+                .disabled(store.isWorking)
 
             if store.isWorking {
                 Color.black.opacity(0.18).ignoresSafeArea()
@@ -31,6 +32,7 @@ struct ContentView: View {
         .onChange(of: scenePhase) { phase in
             switch phase {
             case .background:
+                store.lockForBackground()
                 enteredBackground = true
             case .active where enteredBackground:
                 enteredBackground = false
@@ -48,12 +50,14 @@ struct ContentView: View {
 
     @ViewBuilder
     private var content: some View {
-        if let mnemonic = store.pendingMnemonic {
+        if store.isSessionLocked {
+            UnlockWalletView()
+        } else if let mnemonic = store.pendingMnemonic {
             SeedBackupView(words: mnemonic)
         } else {
             switch store.phase {
             case .idle, .starting:
-                LaunchView(message: "Starting your wallet…")
+                LaunchView(message: "Connecting")
             case .needsSetup:
                 WalletSetupView()
             case .needsUnlock:
@@ -82,11 +86,12 @@ private struct LaunchView: View {
         VStack(spacing: 24) {
             WavelengthMark(size: 74)
             ProgressView(message)
-                .tint(.orange)
+                .tint(WalletTheme.action)
             NetworkSelectionButton()
         }
+        .padding(.horizontal, 24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(.systemGroupedBackground))
+        .background(WalletTheme.background)
     }
 }
 
@@ -109,6 +114,6 @@ private struct FailureView: View {
         }
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(.systemGroupedBackground))
+        .background(WalletTheme.background)
     }
 }

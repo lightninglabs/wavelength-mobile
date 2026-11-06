@@ -32,13 +32,15 @@ final class WavelengthUITests: XCTestCase {
         let app = try launchRegtestApp()
         app.buttons["wallet.receive"].tap()
 
-        let onchain = app.buttons["On-chain"]
+        let onchain = app.buttons["Bitcoin address"]
         XCTAssertTrue(onchain.waitForExistence(timeout: 5))
         onchain.tap()
 
         let create = app.buttons["receive.create"]
         XCTAssertTrue(create.waitForExistence(timeout: 5))
         create.tap()
+        XCTAssertTrue(app.buttons["Details"].waitForExistence(timeout: 45))
+        app.buttons["Details"].tap()
 
         let request = app.staticTexts["receive.request"]
         XCTAssertTrue(request.waitForExistence(timeout: 20))
@@ -62,6 +64,8 @@ final class WavelengthUITests: XCTestCase {
             app.swipeUp()
         }
         create.tap()
+        XCTAssertTrue(app.buttons["Details"].waitForExistence(timeout: 45))
+        app.buttons["Details"].tap()
 
         let request = app.staticTexts["receive.request"]
         XCTAssertTrue(request.waitForExistence(timeout: 20))
@@ -77,27 +81,23 @@ final class WavelengthUITests: XCTestCase {
         let app = try launchRegtestApp()
 
         app.buttons["wallet.receive"].tap()
-        let onchain = app.buttons["On-chain"]
+        let onchain = app.buttons["Bitcoin address"]
         XCTAssertTrue(onchain.waitForExistence(timeout: 5))
         onchain.tap()
         app.buttons["receive.create"].tap()
+        XCTAssertTrue(app.buttons["Details"].waitForExistence(timeout: 45))
+        app.buttons["Details"].tap()
         let request = app.staticTexts["receive.request"]
         XCTAssertTrue(request.waitForExistence(timeout: 20))
         print("WAVELENGTH_FUND_THIS_ADDRESS=\(request.label)")
-        app.buttons["Done"].tap()
+        app.buttons["Close"].tap()
 
-        let balance = app.staticTexts["wallet.balance"]
-        XCTAssertTrue(balance.waitForExistence(timeout: 30))
-        let deadline = Date().addingTimeInterval(240)
-        while Date() < deadline && balance.label.contains("Incoming, 0 sats") {
-            RunLoop.current.run(until: Date().addingTimeInterval(2))
-        }
-        XCTAssertFalse(balance.label.contains("Incoming, 0 sats"), balance.label)
-
-        app.tabBars.buttons["Activity"].tap()
+        let entryPredicate = NSPredicate(format: "label CONTAINS %@", "Receiving")
+        let incoming = app.buttons.matching(identifier: "activity.entry").matching(entryPredicate).firstMatch
+        XCTAssertTrue(incoming.waitForExistence(timeout: 240), "No funded incoming activity appeared")
         let entry = app.descendants(matching: .any)["activity.entry"].firstMatch
         XCTAssertTrue(entry.waitForExistence(timeout: 30))
         entry.tap()
-        XCTAssertTrue(app.navigationBars["Activity Details"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.navigationBars["Payment"].waitForExistence(timeout: 10))
     }
 }

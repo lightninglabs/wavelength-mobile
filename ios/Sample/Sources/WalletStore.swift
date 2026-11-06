@@ -1,11 +1,26 @@
 import Combine
 import Foundation
 import WalletKit
+import LocalAuthentication
+import Security
 
 private struct ReceiveCreationUncertainError: LocalizedError {
     var errorDescription: String? {
         "The receive request ended before Wavelength could confirm the result. Wavelength couldn’t find a newly created invoice in Activity. Check Activity before trying again."
     }
+}
+
+struct PendingDispatch: Codable {
+    let intentID: String
+    let amountSat: Int64
+    let paymentHash: String
+}
+
+struct RefreshOperation: Codable {
+    let outpoints: [String]
+    let amountSat: Int64
+    var status: String
+    var canRetry: Bool? = nil
 }
 
 @MainActor
@@ -17,6 +32,17 @@ final class WalletStore: ObservableObject {
     @Published private(set) var isWorking = false
     @Published var pendingMnemonic: [String]?
     @Published var alertMessage: String?
+    @Published private(set) var isSessionLocked = false
+    @Published private(set) var biometricUnlockEnabled = false
+    @Published private(set) var pendingDispatch: PendingDispatch?
+    @Published private(set) var refreshOperation: RefreshOperation?
+    @Published private(set) var recoveryInventory: [WalletVTXO] = []
+    @Published private(set) var onchainHistory: [OnchainTx] = []
+    @Published private(set) var recoveryJobs: [ExitSummaryEntry] = []
+    @Published private(set) var maxCreditSat: UInt64 = 10_000
+    @Published private(set) var maxCreditTopupSat: UInt64 = 10_000
+    private var sessionPassword: Data?
+
 
     @Published private(set) var network: WalletNetwork
     @Published var operatorAddress: String
@@ -28,7 +54,7 @@ final class WalletStore: ObservableObject {
     private var refreshTask: Task<Void, Never>?
     private var activityTask: Task<Void, Never>?
     private var generation = 0
-    private var stateCreatingCallCount = 0
+    @Published private var stateCreatingCallCount = 0
     private var foregroundRestartPending = false
 
     init(defaults: UserDefaults = .standard) {
@@ -46,6 +72,7 @@ final class WalletStore: ObservableObject {
         swapServerAddress = ""
         esploraURL = ""
         loadEndpointOverrides()
+        loadNetworkPreferences()
         #if DEBUG
         if debugRegtest {
             let environment = ProcessInfo.processInfo.environment
@@ -55,6 +82,8 @@ final class WalletStore: ObservableObject {
         }
         #endif
     }
+
+    var canChangeNetwork: Bool { stateCreatingCallCount == 0 && !isWorking }
 
     var isReady: Bool { phase == .ready }
     var isSyncing: Bool { phase == .syncing }
@@ -127,14 +156,18 @@ final class WalletStore: ObservableObject {
     }
 
     func switchNetwork(to selected: WalletNetwork) async {
-        guard selected != network else { return }
+        guard selected != network, canChangeNetwork else { return }
         network = selected
         defaults.set(selected.rawValue, forKey: "selectedNetwork")
         loadEndpointOverrides()
+        sessionPassword = nil
+        isSessionLocked = false
+        loadNetworkPreferences()
         await start()
     }
 
     func saveEndpointOverrides() async {
+        guard canChangeNetwork else { return }
         defaults.set(operatorAddress.trimmingCharacters(in: .whitespacesAndNewlines),
                      forKey: endpointKey("operator"))
         defaults.set(swapServerAddress.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -144,7 +177,7 @@ final class WalletStore: ObservableObject {
         await start()
     }
 
-    func createWallet(mnemonic: [String] = [], showBackup: Bool = true) async {
+    func createWallet(mnemonic: [String] = [], showBackup: Bool = true, password suppliedPassword: String = "") async {
         guard phase == .needsSetup else { return }
         beginStateCreatingCall()
         defer { endStateCreatingCall() }
@@ -156,13 +189,15 @@ final class WalletStore: ObservableObject {
             // daemon succeeds but its response is lost, a later unlock must
             // use this same durable secret rather than creating a new one.
             let account = keychainAccount
-            let password = try KeychainStore.read(account: account) ?? KeychainStore.randomSecret()
+            let password = try KeychainStore.read(account: account) ??
+                (suppliedPassword.isEmpty ? KeychainStore.randomSecret() : Data(suppliedPassword.utf8))
             try KeychainStore.save(password, account: account)
 
             let result = try await client.createWallet(
                 walletPassword: password,
                 mnemonic: mnemonic
             )
+            sessionPassword = password
             pendingMnemonic = showBackup ? result.mnemonic : nil
             try await activateWallet()
         } catch {
@@ -172,15 +207,25 @@ final class WalletStore: ObservableObject {
     }
 
     func unlockWallet(password: String) async {
-        guard phase == .needsUnlock, !password.isEmpty else { return }
+        guard (phase == .needsUnlock || isSessionLocked), !password.isEmpty, stateCreatingCallCount == 0 else { return }
         beginStateCreatingCall()
         defer { endStateCreatingCall() }
         isWorking = true
         defer { isWorking = false }
         do {
             let secret = Data(password.utf8)
+            // A background lock can leave the daemon running to finish a
+            // payment. Verify a typed password by opening the encrypted wallet,
+            // never by accepting it against an already-unlocked daemon.
+            if isSessionLocked {
+                stopMonitoring()
+                if await client.isRunning { try await client.stop() }
+                try await client.start(walletConfig())
+            }
             _ = try await client.unlockWallet(walletPassword: secret)
-            try KeychainStore.save(secret, account: keychainAccount)
+            if !biometricUnlockEnabled { try KeychainStore.save(secret, account: keychainAccount) }
+            sessionPassword = secret
+            isSessionLocked = false
             try await activateWallet()
         } catch {
             alertMessage = "Couldn’t unlock this wallet: \(error.walletMessage)"
@@ -204,6 +249,7 @@ final class WalletStore: ObservableObject {
                 async let balanceRefresh: Void = refreshBalanceSnapshot()
                 async let activityRefresh: Void = refreshActivitySnapshot()
                 _ = await (balanceRefresh, activityRefresh)
+                await refreshMaintenanceState()
             }
         } catch {
             // A transient refresh failure does not mean the daemon stopped or
@@ -216,29 +262,44 @@ final class WalletStore: ObservableObject {
         destination: String,
         amountSat: Int64,
         note: String,
-        maxFeeSat: Int64
+        maxFeeSat: Int64,
+        sweepAll: Bool = false
     ) async throws -> PrepareSendResult {
         if destination.lowercased().hasPrefix("ln") {
             return try await client.prepareSend(
                 invoice: destination,
                 note: note,
-                maxFeeSat: maxFeeSat
+                maxFeeSat: maxFeeSat,
+                maxCreditSat: maxCreditSat,
+                maxCreditTopupSat: maxCreditTopupSat
             )
         }
         return try await client.prepareSend(
             onchainAddress: destination,
             amountSat: amountSat,
-            note: note
+            note: note,
+            sweepAll: sweepAll
         )
     }
 
-    func sendPrepared(intentID: String) async throws -> SendResult {
+    func sendPrepared(_ quote: PrepareSendResult) async throws -> SendResult {
+        guard pendingDispatch == nil else { throw WalletActionError(message: "Check the existing payment in Activity.") }
         beginStateCreatingCall()
         defer { endStateCreatingCall() }
-        let result = try await client.send(intentID)
-        upsert(result.entry)
-        await refresh()
-        return result
+        let pending = PendingDispatch(intentID: quote.sendIntentID, amountSat: quote.amountSat,
+                                      paymentHash: quote.paymentHash)
+        defaults.set(try JSONEncoder().encode(pending), forKey: preferenceKey("pendingDispatch"))
+        pendingDispatch = pending
+        do {
+            let result = try await client.send(quote.sendIntentID)
+            upsert(result.entry)
+            clearPendingDispatch()
+            await refresh()
+            return result
+        } catch {
+            await refresh()
+            throw error
+        }
     }
 
     func receiveLightning(amountSat: Int64, memo: String) async throws -> ReceiveResult {
@@ -296,7 +357,10 @@ final class WalletStore: ObservableObject {
         case .none:
             phase = .needsSetup
         case .locked:
-            if let password = try KeychainStore.read(account: keychainAccount) {
+            if biometricUnlockEnabled && sessionPassword == nil {
+                isSessionLocked = true
+                phase = .needsUnlock
+            } else if let password = try sessionPassword ?? KeychainStore.read(account: keychainAccount) {
                 do {
                     _ = try await client.unlockWallet(walletPassword: password)
                     try await activateWallet()
@@ -411,6 +475,13 @@ final class WalletStore: ObservableObject {
         // view in most-recent-first order. Replacing the snapshot also removes
         // terminal or request-only rows that are no longer wallet activity.
         activity = entries
+        if let pending = pendingDispatch,
+           entries.contains(where: { entry in
+               (entry.kind == "send" || entry.kind == "exit") && (entry.id == pending.intentID || (!pending.paymentHash.isEmpty &&
+                   (entry.progress?.paymentHash == pending.paymentHash || entry.request?.paymentHash == pending.paymentHash)))
+           }) {
+            clearPendingDispatch()
+        }
     }
 
     private func beginStateCreatingCall() {
@@ -429,11 +500,207 @@ final class WalletStore: ObservableObject {
     }
 
     private func restartForForegroundIfSafe() async {
-        guard foregroundRestartPending, stateCreatingCallCount == 0 else {
+        guard foregroundRestartPending, stateCreatingCallCount == 0, !isSessionLocked else {
             return
         }
         foregroundRestartPending = false
+        // A healthy daemon can keep an accepted round alive across a short
+        // background transition. Restart only when the transport needs it;
+        // unconditional teardown discards an assembling refresh round.
+        if let snapshot = try? await client.getInfo(), snapshot.walletReady,
+           snapshot.serverConnected {
+            await refresh()
+            return
+        }
         await start()
+    }
+
+    func lockForBackground() {
+        guard biometricUnlockEnabled, phase.isWalletAvailable else { return }
+        sessionPassword = nil
+        isSessionLocked = true
+    }
+
+    func unlockWithBiometrics() async {
+        guard biometricUnlockEnabled, !isWorking else { return }
+        isWorking = true
+        defer { isWorking = false }
+        let account = keychainAccount
+        do {
+            let secret = try await Task.detached { try WalletAuthentication.read(account: account) }.value
+            sessionPassword = secret
+            let state = try await client.getInfo()
+            if state.walletState == .locked { _ = try await client.unlockWallet(walletPassword: secret) }
+            isSessionLocked = false
+            try await activateWallet()
+            await restartForForegroundIfSafe()
+        } catch {
+            sessionPassword = nil
+            // Cancellation leaves the wallet locked and is not an app error.
+            if (error as? KeychainError)?.status != errSecUserCanceled &&
+                (error as? KeychainError)?.status != errSecAuthFailed {
+                alertMessage = error.walletMessage
+            }
+        }
+    }
+
+    func setBiometricUnlock(_ enabled: Bool) async {
+        guard enabled != biometricUnlockEnabled, !isWorking else { return }
+        isWorking = true
+        defer { isWorking = false }
+        let account = keychainAccount
+        do {
+            if enabled {
+                guard WalletAuthentication.available,
+                      let secret = try KeychainStore.read(account: account) else {
+                    throw WalletActionError(message: "Enable Face ID or Touch ID and a device passcode first.")
+                }
+                try WalletAuthentication.save(secret, account: account)
+                do {
+                    let verified = try await Task.detached { try WalletAuthentication.read(account: account) }.value
+                    guard verified == secret else { throw KeychainError(status: errSecDecode) }
+                } catch {
+                    try? WalletAuthentication.delete(account: account)
+                    throw error
+                }
+                // Only remove the old item after the protected copy has been
+                // read successfully. A cancelled prompt cannot lose the key.
+                try KeychainStore.delete(account: account)
+                sessionPassword = secret
+            } else {
+                let secret = try await Task.detached { try WalletAuthentication.read(account: account) }.value
+                try KeychainStore.save(secret, account: account)
+                try WalletAuthentication.delete(account: account)
+                sessionPassword = secret
+            }
+        } catch { alertMessage = error.walletMessage }
+        biometricUnlockEnabled = WalletAuthentication.contains(account: account)
+    }
+
+    func saveCreditLimits(use: UInt64, topup: UInt64) {
+        maxCreditSat = use
+        maxCreditTopupSat = topup
+        defaults.set(String(use), forKey: preferenceKey("maxCredit"))
+        defaults.set(String(topup), forKey: preferenceKey("maxCreditTopup"))
+    }
+
+    func inventory() async throws -> [WalletVTXO] {
+        try await client.list(view: .vtxos, limit: 1_000).vtxos?.vtxos ?? []
+    }
+
+    func recoveryFunds() async throws -> [WalletVTXO] {
+        try await client.recoveryInventory().vtxos
+    }
+
+    func exitPlan(outpoint: String) async throws -> ExitPlan {
+        try await client.getExitPlan(outpoints: [outpoint])
+    }
+
+    func exitFunds(outpoint: String, destination: String, unilateral: Bool) async throws -> ExitResult {
+        beginStateCreatingCall()
+        defer { endStateCreatingCall() }
+        let result = try await client.exit(outpoint: outpoint, destination: unilateral ? "" : destination,
+            forceUnrollAck: unilateral ? "I_KNOW_WHAT_I_AM_DOING" : "")
+        await refresh()
+        return result
+    }
+
+    func recoveryStatus(outpoint: String) async throws -> ExitStatusResult {
+        try await client.exitStatus(outpoint: outpoint)
+    }
+
+    func sweep(destination: String, broadcast: Bool) async throws -> SweepPreview {
+        if broadcast { beginStateCreatingCall() }
+        defer { if broadcast { endStateCreatingCall() } }
+        return try await client.sweepWallet(destination: destination, broadcast: broadcast)
+    }
+
+    func exportRecovery(outpoints: [String]) async throws -> Data {
+        try await client.exportRecovery(outpoints: outpoints)
+    }
+
+    func previewRefresh() async throws -> RefreshResult {
+        try await client.refreshFunds(dryRun: true)
+    }
+
+    func startRefresh(outpoints: [String], amountSat: Int64) async throws {
+        guard refreshOperation == nil || refreshOperation?.status == "Complete" else {
+            throw WalletActionError(message: "Check the existing refresh before starting another.")
+        }
+        beginStateCreatingCall()
+        defer { endStateCreatingCall() }
+        refreshOperation = RefreshOperation(outpoints: outpoints, amountSat: amountSat, status: "Checking status")
+        persistRefresh()
+        do {
+            let result = try await client.refreshFunds(outpoints: outpoints, dryRun: false)
+            refreshOperation = RefreshOperation(outpoints: result.queuedOutpoints ?? [], amountSat: amountSat,
+                                               status: (result.queuedOutpoints ?? []).isEmpty ? "Complete" : "In progress")
+            persistRefresh()
+            await refresh()
+        } catch {
+            // A failed round join may already have reserved these inputs.
+            // Preserve the operation instead of silently queuing another.
+            refreshOperation?.status = "Action needed"
+            persistRefresh()
+            throw error
+        }
+    }
+
+    func clearCompletedRefresh() {
+        guard refreshOperation?.status == "Complete" || refreshOperation?.canRetry == true else { return }
+        refreshOperation = nil
+        defaults.removeObject(forKey: preferenceKey("refresh"))
+    }
+
+    var recoverableAmountSat: Int64 {
+        let height = info?.blockHeight ?? 0
+        return recoveryInventory.filter { $0.status == "expired" ||
+            ($0.status == "live" && ($0.batchExpiry ?? 0) > 0 && ($0.batchExpiry ?? 0) <= height) }
+            .reduce(0) { $0 + $1.amountSat }
+    }
+
+    private func refreshMaintenanceState() async {
+        if let inventory = try? await client.recoveryInventory() { recoveryInventory = inventory.vtxos }
+        if let history = try? await client.list(view: .onchain, limit: 100) { onchainHistory = history.onchain?.txs ?? [] }
+
+        if let summary = try? await client.exitSummary() { recoveryJobs = summary.exits ?? [] }
+        if let operation = refreshOperation, operation.status != "Complete",
+           let observation = try? await client.observeRefresh(outpoints: operation.outpoints) {
+            if observation.complete {
+                refreshOperation?.status = "Complete"
+            } else if observation.retryAllowed == true {
+                refreshOperation?.status = "Action needed"
+                refreshOperation?.canRetry = true
+            }
+            persistRefresh()
+        }
+    }
+
+    private func persistRefresh() {
+        defaults.set(try? JSONEncoder().encode(refreshOperation), forKey: preferenceKey("refresh"))
+    }
+
+    private func clearPendingDispatch() {
+        pendingDispatch = nil
+        defaults.removeObject(forKey: preferenceKey("pendingDispatch"))
+    }
+
+    private func preferenceKey(_ name: String) -> String { "\(network.rawValue).\(name)" }
+
+    private func loadNetworkPreferences() {
+        biometricUnlockEnabled = WalletAuthentication.contains(account: keychainAccount)
+        isSessionLocked = biometricUnlockEnabled
+        maxCreditSat = UInt64(defaults.string(forKey: preferenceKey("maxCredit")) ?? "") ?? 10_000
+        maxCreditTopupSat = UInt64(defaults.string(forKey: preferenceKey("maxCreditTopup")) ?? "") ?? 10_000
+        pendingDispatch = defaults.data(forKey: preferenceKey("pendingDispatch")).flatMap {
+            try? JSONDecoder().decode(PendingDispatch.self, from: $0)
+        }
+        refreshOperation = defaults.data(forKey: preferenceKey("refresh")).flatMap {
+            try? JSONDecoder().decode(RefreshOperation.self, from: $0)
+        }
+        recoveryJobs = []
+        recoveryInventory = []
+        onchainHistory = []
     }
 
     private func walletConfig() throws -> WalletConfig {

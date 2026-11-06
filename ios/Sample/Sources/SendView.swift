@@ -4,268 +4,179 @@ import WalletKit
 struct SendView: View {
     @EnvironmentObject private var store: WalletStore
     @Environment(\.presentationMode) private var presentationMode
-
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var destination = ""
     @State private var amount = ""
     @State private var note = ""
     @State private var maxFee = ""
+    @State private var sweepAll = false
     @State private var quote: PrepareSendResult?
     @State private var sentResult: SendResult?
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var showsScanner = false
+    @State private var showOptions = false
+    @State private var showDetails = false
 
-    private var normalizedDestination: String {
-        PaymentRequestParser.normalizedDestination(from: destination)
-    }
-
+    private var normalizedDestination: String { PaymentRequestParser.normalizedDestination(from: destination) }
     private var isLightning: Bool { normalizedDestination.lowercased().hasPrefix("ln") }
-    private var amountSat: Int64 { Int64(amount) ?? 0 }
-    private var maxFeeSat: Int64 { Int64(maxFee) ?? 0 }
+    private var resultEntry: Entry? {
+        guard let result = sentResult else { return nil }
+        return store.activity.first { $0.id == result.entry.id } ?? result.entry
+    }
+    private var stage: String {
+        if resultEntry != nil { return "result" }
+        if store.pendingDispatch != nil { return "checking" }
+        return quote == nil ? "input" : "review"
+    }
 
     var body: some View {
         NavigationView {
-            Form {
-                if let sentResult {
-                    successSection(sentResult)
+            WalletPage {
+                if let entry = resultEntry {
+                    WalletAmount(amount: abs(entry.amountSat))
+                    Text(entry.note.isEmpty ? "Payment" : entry.note).foregroundStyle(WalletTheme.secondary)
+                    WalletStatus(text: entry.displayStatus, pending: entry.status == "pending",
+                                 complete: entry.status == "complete", failed: entry.status == "failed")
+                    NavigationLink(destination: ActivityDetailView(entry: entry)) { Text("Details") }
+                    Button("Done") { presentationMode.wrappedValue.dismiss() }
+                        .buttonStyle(WalletButtonStyle())
+                } else if let pending = store.pendingDispatch {
+                    WalletAmount(amount: pending.amountSat)
+                    WalletStatus(text: "Checking payment", pending: true)
+                    Text("Check Activity before sending again.").foregroundStyle(WalletTheme.secondary)
+                    DisclosureGroup("Details", isExpanded: $showDetails) {
+                        ValueRow(label: "Payment reference", value: pending.intentID, copyable: true)
+                        if let errorMessage { Text(errorMessage).font(.footnote).foregroundStyle(WalletTheme.secondary) }
+                    }
+                    Button("Check status") { Task { await store.refresh() } }
+                        .buttonStyle(WalletButtonStyle())
                 } else if let quote {
-                    reviewSections(quote)
+                    review(quote)
                 } else {
-                    inputSections
+                    input
                 }
             }
-            .navigationTitle(sentResult == nil ? "Send Bitcoin" : "Payment Sent")
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: stage)
+            .navigationTitle("Send")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(sentResult == nil ? "Cancel" : "Done") {
-                        presentationMode.wrappedValue.dismiss()
-                    }
+                    Button("Close") { presentationMode.wrappedValue.dismiss() }
                 }
             }
-            .alert("Couldn’t Send", isPresented: errorIsPresented) {
-                Button("OK", role: .cancel) { errorMessage = nil }
-            } message: {
-                Text(errorMessage ?? "")
-            }
-            .onChange(of: destination) { _ in quote = nil }
-            .onChange(of: amount) { _ in quote = nil }
-            .onChange(of: maxFee) { _ in quote = nil }
+            .interactiveDismissDisabled(isLoading)
             .sheet(isPresented: $showsScanner) {
-                PaymentQRCodeScannerView { scannedDestination in
-                    destination = scannedDestination
-                }
+                PaymentQRCodeScannerView { destination = $0 }
+            }
+            .alert("Payment", isPresented: Binding(get: { errorMessage != nil && store.pendingDispatch == nil },
+                                                   set: { if !$0 { errorMessage = nil } })) {
+                Button("OK", role: .cancel) { errorMessage = nil }
+            } message: { Text(errorMessage ?? "") }
+            .onChange(of: resultEntry?.status) { status in
+                if status == "complete" { WalletFeedback.completed() }
             }
         }
+        .navigationViewStyle(.stack)
     }
 
-    @ViewBuilder
-    private var inputSections: some View {
-        Section {
-            ZStack(alignment: .topLeading) {
-                if destination.isEmpty {
-                    Text("Lightning invoice or Bitcoin address")
-                        .foregroundStyle(Color(.placeholderText))
-                        .padding(.top, 8)
-                        .padding(.leading, 5)
-                }
-                TextEditor(text: $destination)
-                    .frame(height: 110)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled(true)
+    private var input: some View {
+        Group {
+            WalletField(title: "Invoice or Bitcoin address") {
+                TextField("Scan or paste", text: $destination)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled(true)
                     .accessibilityIdentifier("send.destination")
             }
             HStack {
-                Button {
-                    showsScanner = true
-                } label: {
-                    Label("Scan QR Code", systemImage: "viewfinder")
-                }
-                .accessibilityIdentifier("send.scan")
-
+                Button { showsScanner = true } label: { Label("Scan", systemImage: "viewfinder") }
+                    .accessibilityIdentifier("send.scan")
                 Spacer()
-
-                pasteButton
-            }
-            // Form rows give automatic buttons a shared row-wide action.
-            // Keep scanning and pasting independently tappable.
-            .buttonStyle(.borderless)
-        } header: {
-            Text("Pay to")
-        } footer: {
-            Text(destinationHint)
-        }
-
-        if !isLightning {
-            Section("Amount") {
-                HStack {
-                    TextField("0", text: $amount)
-                        .keyboardType(.numberPad)
-                    Text("sats").foregroundStyle(.secondary)
+                if #available(iOS 16.0, *) {
+                    PasteButton(payloadType: String.self) { values in
+                        if let value = values.first { destination = value }
+                    }
+                    .accessibilityIdentifier("send.paste")
+                } else {
+                    Button("Paste") { destination = UIPasteboard.general.string ?? "" }
                 }
             }
-        }
-
-        Section("Optional") {
-            TextField("Note", text: $note)
-            if isLightning {
-                HStack {
-                    TextField("Maximum fee", text: $maxFee)
-                        .keyboardType(.numberPad)
-                    Text("sats").foregroundStyle(.secondary)
+            if !isLightning {
+                WalletField(title: "Amount") {
+                    HStack {
+                        TextField("0", text: $amount).keyboardType(.numberPad)
+                            .accessibilityIdentifier("send.amount")
+                        Text("sats").foregroundStyle(WalletTheme.secondary)
+                    }
                 }
+                Toggle("Use available balance", isOn: $sweepAll)
             }
-        }
-
-        if !store.offchainAvailable {
-            Section {
-                Label(
-                    "\(store.network.title) sending requires operator and swap endpoints in Settings.",
-                    systemImage: "exclamationmark.triangle.fill"
-                )
-                .foregroundStyle(.orange)
+            DisclosureGroup("Options", isExpanded: $showOptions) {
+                VStack(spacing: 18) {
+                    WalletField(title: "Note") { TextField("Optional", text: $note) }
+                    if isLightning {
+                        WalletField(title: "Maximum fee (sats)") {
+                            TextField("Automatic", text: $maxFee).keyboardType(.numberPad)
+                        }
+                    }
+                }.padding(.top, 18)
             }
-        }
-
-        Section {
-            Button {
-                prepare()
-            } label: {
-                HStack {
-                    Spacer()
-                    if isLoading { ProgressView().padding(.trailing, 6) }
-                    Text("Review Payment")
-                    Spacer()
-                }
+            if !store.operatorAvailable || (isLightning && !store.offchainAvailable) {
+                Text("Configure a connection in Settings.").foregroundStyle(WalletTheme.secondary)
             }
-            .disabled(!canPrepare || isLoading)
+            Button(action: prepare) {
+                if isLoading { ProgressView() } else { Text("Review") }
+            }
+            .buttonStyle(WalletButtonStyle())
+            .disabled(isLoading || !store.isReady || !store.operatorAvailable ||
+                      (isLightning && !store.offchainAvailable) || normalizedDestination.isEmpty ||
+                      (!isLightning && !sweepAll && (Int64(amount) ?? 0) <= 0))
             .accessibilityIdentifier("send.review")
-        } footer: {
-            Text("Preparing validates the destination and quotes fees. It does not move funds.")
         }
     }
 
-    @ViewBuilder
-    private var pasteButton: some View {
-        if #available(iOS 16.0, *) {
-            // The system control authorizes this user-initiated paste without
-            // blocking the app on a direct pasteboard-read permission dialog.
-            PasteButton(payloadType: String.self) { values in
-                if let value = values.first { destination = value }
-            }
-            .accessibilityIdentifier("send.paste")
-        } else {
-            Button {
-                if let value = UIPasteboard.general.string { destination = value }
-            } label: {
-                Label("Paste", systemImage: "doc.on.clipboard")
-            }
-            .accessibilityIdentifier("send.paste")
-        }
-    }
-
-    @ViewBuilder
-    private func reviewSections(_ quote: PrepareSendResult) -> some View {
-        Section {
-            VStack(spacing: 12) {
-                Image(systemName: isLightning ? "bolt.fill" : "bitcoinsign")
-                    .font(.title2.bold())
-                    .foregroundStyle(.orange)
-                    .frame(width: 54, height: 54)
-                    .background(Color.orange.opacity(0.12), in: Circle())
-                Text(WalletFormatting.sats(quote.amountSat))
-                    .font(.title2.bold())
-                Text(quote.rail.replacingOccurrences(of: "_", with: " ").capitalized)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
-        }
-
-        Section("Quote") {
-            ValueRow(label: "Amount", value: WalletFormatting.sats(quote.amountSat))
-            ValueRow(
-                label: "Expected fee",
-                value: quote.feeKnown ? WalletFormatting.sats(quote.expectedFeeSat) : "Finalized during payment"
-            )
-            if quote.totalOutflowKnown ?? quote.feeKnown {
-                ValueRow(
-                    label: quote.creditPreview == nil ? "Expected total" : "New Ark outflow",
-                    value: WalletFormatting.sats(quote.expectedTotalOutflowSat)
-                )
-            }
-            if let credit = quote.creditPreview {
-                ValueRow(label: "From existing credit", value: WalletFormatting.sats(credit.creditAppliedSat))
-                ValueRow(label: "Credit top-up", value: WalletFormatting.sats(credit.creditTopupSat))
+    @ViewBuilder private func review(_ prepared: PrepareSendResult) -> some View {
+        WalletAmount(amount: prepared.amountSat)
+        Text(prepared.invoiceDescription?.isEmpty == false ? prepared.invoiceDescription! : prepared.destinationSummary)
+            .foregroundStyle(WalletTheme.secondary).lineLimit(2)
+        VStack(spacing: 18) {
+            WalletDivider()
+            receiptLine("Fee", prepared.feeKnown ? WalletFormatting.sats(prepared.expectedFeeSat) : "Unavailable")
+            if let credit = prepared.creditPreview {
+                if credit.creditAppliedSat > 0 {
+                    receiptLine("Credit used", WalletFormatting.sats(credit.creditAppliedSat))
+                }
                 if credit.creditTopupSat > 0 {
-                    Text("The top-up becomes server-held credit. Any amount left after this payment stays in your credit balance for later payments.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    receiptLine("Credit top-up", WalletFormatting.sats(credit.creditTopupSat))
                 }
+                Text("Provider-held credit").font(.caption).foregroundStyle(WalletTheme.secondary)
             }
-            ValueRow(label: "Destination", value: quote.destinationSummary, copyable: true)
-            if let description = quote.invoiceDescription, !description.isEmpty {
-                ValueRow(label: "Invoice note", value: description)
+            if (prepared.totalOutflowKnown ?? prepared.feeKnown),
+               prepared.creditPreview == nil || prepared.expectedTotalOutflowSat > 0 {
+                receiptLine(prepared.creditPreview == nil ? "Total" : "Balance debit",
+                            WalletFormatting.sats(prepared.expectedTotalOutflowSat))
             }
-            if !note.isEmpty { ValueRow(label: "Your note", value: note) }
+            WalletDivider()
         }
-
-        if !quote.warning.isEmpty {
-            Section {
-                Label(quote.warning, systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-            }
+        DisclosureGroup("Details", isExpanded: $showDetails) {
+            VStack(alignment: .leading, spacing: 16) {
+                ValueRow(label: "Destination", value: prepared.destinationSummary, copyable: true)
+                ValueRow(label: "Network", value: prepared.rail)
+                if !note.isEmpty { ValueRow(label: "Note", value: note) }
+            }.padding(.top, 16)
         }
-
-        Section {
-            Button(role: .destructive) {
-                send(quote)
-            } label: {
-                HStack {
-                    Spacer()
-                    if isLoading { ProgressView().padding(.trailing, 6) }
-                    Text("Confirm and Send")
-                    Spacer()
-                }
-            }
-            .disabled(isLoading)
-
-            Button("Edit Payment") { self.quote = nil }
-                .disabled(isLoading)
-        } footer: {
-            Text("This quote is single-use. Wavelength will never automatically retry a failed dispatch with a new payment identity.")
+        if !prepared.warning.isEmpty {
+            Text(prepared.warning).font(.footnote).foregroundStyle(WalletTheme.secondary)
         }
+        Button { send(prepared) } label: {
+            if isLoading { ProgressView() } else { Text("Confirm") }
+        }
+        .buttonStyle(WalletButtonStyle()).disabled(isLoading)
+        .accessibilityIdentifier("send.confirm")
+        Button("Edit") { quote = nil }.disabled(isLoading)
     }
 
-    private func successSection(_ result: SendResult) -> some View {
-        Section {
-            VStack(spacing: 14) {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 58))
-                    .foregroundStyle(.green)
-                Text("Payment submitted").font(.title2.bold())
-                Text(WalletFormatting.sats(result.actualAmountSat))
-                    .font(.title3.weight(.semibold))
-                Text("Track settlement in Activity.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 24)
-        }
-    }
-
-    private var destinationHint: String {
-        if destination.isEmpty { return "Scan or paste a BOLT 11 invoice or a network-matching on-chain address." }
-        return isLightning ? "Lightning invoice detected" : "On-chain Bitcoin address detected"
-    }
-
-    private var canPrepare: Bool {
-        guard store.isReady, store.offchainAvailable,
-              !normalizedDestination.isEmpty else { return false }
-        if isLightning { return true }
-        return amountSat > 0
+    private func receiptLine(_ label: String, _ value: String) -> some View {
+        HStack { Text(label).foregroundStyle(WalletTheme.secondary); Spacer(); Text(value).monospacedDigit() }
     }
 
     private func prepare() {
@@ -273,37 +184,21 @@ struct SendView: View {
         Task {
             defer { isLoading = false }
             do {
-                quote = try await store.prepareSend(
-                    destination: normalizedDestination,
-                    amountSat: amountSat,
-                    note: note.trimmingCharacters(in: .whitespacesAndNewlines),
-                    maxFeeSat: maxFeeSat
-                )
-            } catch {
-                errorMessage = error.walletMessage
-            }
+                quote = try await store.prepareSend(destination: normalizedDestination,
+                    amountSat: Int64(amount) ?? 0, note: note.trimmingCharacters(in: .whitespacesAndNewlines),
+                    maxFeeSat: Int64(maxFee) ?? 0, sweepAll: sweepAll)
+            } catch { errorMessage = error.walletMessage }
         }
     }
 
     private func send(_ prepared: PrepareSendResult) {
+        guard !isLoading else { return }
         isLoading = true
-        // Consume the local quote before dispatch. The intent is single-use;
-        // an error requires an explicit fresh prepare rather than replaying it.
         quote = nil
         Task {
             defer { isLoading = false }
-            do {
-                sentResult = try await store.sendPrepared(intentID: prepared.sendIntentID)
-            } catch {
-                errorMessage = "The payment result is not confirmed. Review Activity, then prepare a fresh quote if you still need to pay. \(error.walletMessage)"
-            }
+            do { sentResult = try await store.sendPrepared(prepared) }
+            catch { errorMessage = error.walletMessage }
         }
-    }
-
-    private var errorIsPresented: Binding<Bool> {
-        Binding(
-            get: { errorMessage != nil },
-            set: { if !$0 { errorMessage = nil } }
-        )
     }
 }

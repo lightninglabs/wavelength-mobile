@@ -1,131 +1,103 @@
 import SwiftUI
 
 struct WalletSetupView: View {
-    @EnvironmentObject private var store: WalletStore
-    @State private var showingRestore = false
-
+    @State private var setup: SetupRoute?
     var body: some View {
         NavigationView {
-            VStack(spacing: 24) {
-                Spacer()
-                WavelengthMark(size: 86)
-                VStack(spacing: 8) {
-                    Text("Your bitcoin, in your hands")
-                        .font(.title2.bold())
-                    Text("A self-custodial Wavelength wallet, synced with Esplora and secured on this device.")
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-
+            WalletPage {
+                WavelengthWordmark()
+                Text("Wallet").font(.largeTitle.weight(.medium))
+                Spacer(minLength: 180)
                 NetworkSelectionButton()
-
-                Spacer()
-
-                VStack(spacing: 12) {
-                    Button {
-                        Task { await store.createWallet() }
-                    } label: {
-                        Text("Create New Wallet")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-
-                    Button("Restore from Recovery Words") {
-                        showingRestore = true
-                    }
-                    .controlSize(.large)
-                }
-
-                Text("Wavelength never sends your seed or wallet password off this device.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
+                Button("Create wallet") { setup = .create }.buttonStyle(WalletButtonStyle())
+                Button("Restore wallet") { setup = .restore }.buttonStyle(WalletButtonStyle(secondary: true))
             }
-            .padding(28)
-            .background(Color(.systemGroupedBackground).ignoresSafeArea())
-            .sheet(isPresented: $showingRestore) {
-                RestoreWalletView()
-                    .environmentObject(store)
-            }
-        }
-        .navigationViewStyle(.stack)
+            .sheet(item: $setup) { route in SetupWalletForm(restore: route == .restore) }
+        }.navigationViewStyle(.stack)
+    }
+    private enum SetupRoute: String, Identifiable {
+        case create, restore
+        var id: String { rawValue }
     }
 }
 
-private struct RestoreWalletView: View {
+private struct SetupWalletForm: View {
     @EnvironmentObject private var store: WalletStore
     @Environment(\.presentationMode) private var presentationMode
+    let restore: Bool
     @State private var words = ""
-
-    private var mnemonic: [String] {
-        words.lowercased().split(whereSeparator: { $0.isWhitespace }).map(String.init)
-    }
+    @State private var password = ""
+    @State private var confirmation = ""
+    private var mnemonic: [String] { words.lowercased().split(whereSeparator: \.isWhitespace).map(String.init) }
 
     var body: some View {
         NavigationView {
-            Form {
-                Section {
-                    TextEditor(text: $words)
-                        .frame(minHeight: 150)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled(true)
-                        .privacySensitive()
-                } header: {
-                    Text("Recovery words")
-                } footer: {
-                    Text("Enter the words in order, separated by spaces. The wallet will recover addresses using the selected \(store.network.title) network.")
-                }
-
-                Section {
-                    Button("Restore Wallet") {
-                        Task {
-                            await store.createWallet(mnemonic: mnemonic, showBackup: false)
-                            if store.phase.isWalletAvailable {
-                                presentationMode.wrappedValue.dismiss()
-                            }
-                        }
+            WalletPage {
+                if restore {
+                    WalletField(title: "24 recovery words") {
+                        TextEditor(text: $words).frame(minHeight: 140)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled(true).privacySensitive()
                     }
-                    .disabled(mnemonic.count < 12 || store.isWorking)
                 }
+                WalletField(title: "Password") {
+                    SecureField("At least 8 characters", text: $password).textContentType(.newPassword)
+                }
+                WalletField(title: "Confirm password") {
+                    SecureField("Password", text: $confirmation).textContentType(.newPassword)
+                }
+                Button {
+                    Task {
+                        await store.createWallet(mnemonic: restore ? mnemonic : [], showBackup: !restore, password: password)
+                        if store.phase.isWalletAvailable { presentationMode.wrappedValue.dismiss() }
+                    }
+                } label: {
+                    if store.isWorking { ProgressView() } else { Text(restore ? "Restore wallet" : "Create wallet") }
+                }
+                .buttonStyle(WalletButtonStyle())
+                .disabled(store.isWorking || password.count < 8 || password != confirmation || (restore && mnemonic.count != 24))
             }
-            .navigationTitle("Restore Wallet")
-            .navigationBarTitleDisplayMode(.inline)
+            .navigationTitle(restore ? "Restore" : "Create wallet").navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { presentationMode.wrappedValue.dismiss() }
-                }
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { presentationMode.wrappedValue.dismiss() } }
             }
-        }
+            .interactiveDismissDisabled(store.isWorking)
+        }.navigationViewStyle(.stack)
     }
 }
 
 struct UnlockWalletView: View {
     @EnvironmentObject private var store: WalletStore
     @State private var password = ""
-
+    @State private var showPassword = false
     var body: some View {
-        VStack(spacing: 22) {
-            WavelengthMark(size: 72)
-            Text("Unlock Wallet").font(.title2.bold())
-            Text("This wallet database was found, but its device key is unavailable. Enter the password originally used to create it.")
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            NetworkSelectionButton()
-            SecureField("Wallet password", text: $password)
-                .textContentType(.password)
-                .padding(13)
-                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
-            Button("Unlock") {
-                Task { await store.unlockWallet(password: password) }
+        WalletPage {
+            WavelengthWordmark()
+            Text("Unlock").font(.largeTitle.weight(.medium))
+            Spacer(minLength: 100)
+            if store.biometricUnlockEnabled {
+                Image(systemName: WalletAuthentication.name == "Touch ID" ? "touchid" : "faceid")
+                    .font(.system(size: 64, weight: .ultraLight))
+                    .frame(maxWidth: .infinity).padding(.vertical, 32)
+                Button {
+                    Task { await store.unlockWithBiometrics() }
+                } label: {
+                    if store.isWorking { ProgressView() } else { Text("Unlock with \(WalletAuthentication.name)") }
+                }
+                .buttonStyle(WalletButtonStyle()).disabled(store.isWorking)
+                .accessibilityIdentifier("wallet.unlock.biometric")
+                Button(showPassword ? "Hide password" : "Use password") { showPassword.toggle() }
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(password.isEmpty || store.isWorking)
+            if !store.biometricUnlockEnabled || showPassword {
+                WalletField(title: "Password") {
+                    SecureField("Wallet password", text: $password).textContentType(.password)
+                        .accessibilityIdentifier("wallet.unlock.password")
+                }
+                Button("Unlock") { Task { await store.unlockWallet(password: password) } }
+                    .buttonStyle(WalletButtonStyle()).disabled(password.isEmpty || store.isWorking)
+            }
+            NetworkSelectionButton()
         }
-        .padding(30)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(.systemGroupedBackground))
+        .accessibilityIdentifier("wallet.locked")
     }
 }
 
@@ -133,55 +105,25 @@ struct SeedBackupView: View {
     @EnvironmentObject private var store: WalletStore
     let words: [String]
     @State private var acknowledged = false
-
-    private let columns = [GridItem(.flexible()), GridItem(.flexible())]
-
+    @State private var revealed = false
     var body: some View {
         NavigationView {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    Label("Write these words down", systemImage: "exclamationmark.shield.fill")
-                        .font(.title2.bold())
-                        .foregroundStyle(.orange)
-
-                    Text("They are the only backup for your wallet. Keep them offline and never share them with anyone.")
-                        .foregroundStyle(.secondary)
-
-                    LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
-                        ForEach(Array(words.enumerated()), id: \.offset) { index, word in
-                            HStack(spacing: 8) {
-                                Text("\(index + 1)")
-                                    .font(.caption.monospacedDigit())
-                                    .foregroundStyle(.secondary)
-                                    .frame(width: 22, alignment: .trailing)
-                                Text(word)
-                                    .font(.body.monospaced())
-                            }
-                            .padding(11)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10))
-                        }
+            WalletPage {
+                Text("Store offline. Keep private.").foregroundStyle(WalletTheme.secondary)
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 20) {
+                    ForEach(Array(words.enumerated()), id: \.offset) { index, word in
+                        HStack(spacing: 12) {
+                            Text("\(index + 1)").font(.caption).foregroundStyle(WalletTheme.secondary)
+                            Text(revealed ? word : "••••••").font(.body.monospaced())
+                        }.frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .privacySensitive()
-
-                    Toggle("I saved these recovery words", isOn: $acknowledged)
-                        .font(.body.weight(.medium))
-
-                    Button {
-                        store.acknowledgeSeedBackup()
-                    } label: {
-                        Text("Continue to Wallet").frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    .disabled(!acknowledged)
-                }
-                .padding(22)
+                }.privacySensitive()
+                Button(revealed ? "Hide words" : "Reveal words") { revealed.toggle() }
+                Toggle("I saved my recovery words", isOn: $acknowledged)
+                Button("Done") { store.acknowledgeSeedBackup() }
+                    .buttonStyle(WalletButtonStyle()).disabled(!acknowledged)
             }
-            .background(Color(.systemGroupedBackground))
-            .navigationTitle("Wallet Backup")
-            .navigationBarTitleDisplayMode(.inline)
-        }
-        .navigationViewStyle(.stack)
+            .navigationTitle("Recovery words").navigationBarTitleDisplayMode(.inline)
+        }.navigationViewStyle(.stack)
     }
 }

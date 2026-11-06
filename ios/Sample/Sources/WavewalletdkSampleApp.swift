@@ -3,16 +3,18 @@ import SwiftUI
 @main
 struct WavelengthApp: App {
     @Environment(\.scenePhase) private var scenePhase
+    @AppStorage("appearance") private var appearance = "system"
 
     var body: some Scene {
         WindowGroup {
             ZStack {
                 ContentView()
                 if scenePhase != .active {
-                    PrivacyCover()
+                    PrivacyCover().accessibilityHidden(true)
                 }
             }
-            .tint(.orange)
+            .tint(WalletTheme.action)
+            .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         }
     }
 }
@@ -20,12 +22,11 @@ struct WavelengthApp: App {
 private struct PrivacyCover: View {
     var body: some View {
         ZStack {
-            Color(.systemBackground).ignoresSafeArea()
+            WalletTheme.background.ignoresSafeArea()
             VStack(spacing: 16) {
                 WavelengthMark(size: 70)
-                Text("Wavelength").font(.title2.bold())
+                Text("wavelength").font(.title3.weight(.medium))
             }
         }
-        .accessibilityHidden(true)
     }
 }

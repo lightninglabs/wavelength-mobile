@@ -1,6 +1,6 @@
 import XCTest
 
-/// Opt-in smoke coverage against the released binding and public signet services.
+/// Opt-in smoke coverage against the pinned binding and configured signet services.
 /// Requests are created, but this test never funds the wallet or sends a payment.
 final class SignetWalletTests: XCTestCase {
     func testRequestsSurviveForegroundAndProcessRestart() throws {
@@ -16,12 +16,15 @@ final class SignetWalletTests: XCTestCase {
         waitForWallet(app)
 
         app.buttons["wallet.receive"].tap()
-        app.buttons["On-chain"].tap()
+        XCTAssertTrue(app.buttons["Bitcoin address"].waitForExistence(timeout: 10))
+        app.buttons["Bitcoin address"].tap()
         app.buttons["receive.create"].tap()
+        XCTAssertTrue(app.buttons["Details"].waitForExistence(timeout: 45))
+        app.buttons["Details"].tap()
         let request = app.staticTexts["receive.request"]
         XCTAssertTrue(request.waitForExistence(timeout: 30))
         XCTAssertTrue(request.label.hasPrefix("tb1"))
-        app.buttons["Done"].tap()
+        app.buttons["Close"].tap()
 
         app.buttons["wallet.receive"].tap()
         let amount = app.textFields["receive.amount"]
@@ -29,11 +32,14 @@ final class SignetWalletTests: XCTestCase {
         amount.tap()
         amount.typeText("50000")
         let memo = "Signet smoke \(UUID().uuidString)"
-        app.textFields["Memo"].tap()
-        app.textFields["Memo"].typeText(memo)
+        app.buttons["Note"].tap()
+        app.textFields["receive.memo"].tap()
+        app.textFields["receive.memo"].typeText(memo)
         let create = app.buttons["receive.create"]
         if !create.isHittable { app.swipeUp() }
         create.tap()
+        XCTAssertTrue(app.buttons["Details"].waitForExistence(timeout: 45))
+        app.buttons["Details"].tap()
         XCTAssertTrue(request.waitForExistence(timeout: 45))
         XCTAssertTrue(request.label.lowercased().hasPrefix("lntb"))
         let invoice = request.label
@@ -41,13 +47,13 @@ final class SignetWalletTests: XCTestCase {
         for _ in 0..<5 where !copy.exists || !copy.isHittable { app.swipeUp() }
         XCTAssertTrue(copy.waitForExistence(timeout: 5))
         copy.tap()
-        app.buttons["Done"].tap()
+        app.buttons["Close"].tap()
 
         // Pasting must not also trigger the scanner in the same Form row.
         // A long invoice stays inside the editor so review remains visible.
         app.buttons["wallet.send"].tap()
         app.buttons["send.paste"].tap()
-        let destination = app.textViews.firstMatch
+        let destination = app.textFields["send.destination"]
         XCTAssertTrue(destination.waitForExistence(timeout: 5))
         let pasted = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "value == %@", invoice),
@@ -56,7 +62,7 @@ final class SignetWalletTests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [pasted], timeout: 5), .completed,
                        "The pasted request did not match the copied invoice")
         XCTAssertTrue(app.buttons["send.review"].isHittable)
-        app.buttons["Cancel"].tap()
+        app.buttons["Close"].tap()
 
         // A UI lifecycle transition tests foreground recovery, not OS wake or
         // guaranteed execution while suspended.
@@ -87,21 +93,21 @@ final class SignetWalletTests: XCTestCase {
     }
 
     private func assertInvoice(_ app: XCUIApplication, memo: String, invoice: String) {
-        app.tabBars.buttons["Activity"].tap()
-        app.swipeDown()
-        let search = app.searchFields.firstMatch
-        XCTAssertTrue(search.waitForExistence(timeout: 5))
-        search.tap()
-        search.typeText(memo)
-        let entry = app.buttons.matching(identifier: "activity.entry").firstMatch
+        // Activity is on Home. Match the durable request by its unique note.
+        let matching = app.buttons.matching(identifier: "activity.entry").matching(
+            NSPredicate(format: "label CONTAINS %@", memo)
+        )
+        let entry = matching.firstMatch
         XCTAssertTrue(entry.waitForExistence(timeout: 30), "Receive was not recovered")
         entry.tap()
+        XCTAssertTrue(app.buttons["Details"].waitForExistence(timeout: 45))
+        app.buttons["Details"].tap()
         let original = app.staticTexts.matching(
             NSPredicate(format: "label CONTAINS %@", invoice)
         ).firstMatch
         for _ in 0..<5 where !original.exists { app.swipeUp() }
         XCTAssertTrue(original.waitForExistence(timeout: 10),
                       "Recovered receive did not retain its original invoice")
-        app.tabBars.buttons["Wallet"].tap()
+        app.navigationBars.buttons.element(boundBy: 0).tap()
     }
 }
