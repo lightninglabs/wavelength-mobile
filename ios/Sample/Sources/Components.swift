@@ -118,6 +118,21 @@ private struct NetworkSelectionView: View {
     }
 }
 
+struct WalletNavigationRow: View {
+    let title: String
+    var icon: String? = nil
+    var body: some View {
+        HStack(spacing: 14) {
+            if let icon { Image(systemName: icon).frame(width: 24) }
+            Text(title)
+            Spacer()
+            Image(systemName: "chevron.right").font(.caption).foregroundStyle(WalletTheme.secondary)
+        }
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+    }
+}
+
 struct ActivityRow: View {
     let entry: Entry
     var body: some View {

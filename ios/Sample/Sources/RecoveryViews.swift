@@ -5,21 +5,27 @@ struct RecoveryOptionsView: View {
     @EnvironmentObject private var store: WalletStore
     var body: some View {
         WalletPage {
-            NavigationLink("Unilateral exit", destination: ExitWalletView(unilateral: true))
+            NavigationLink(destination: ExitWalletView(unilateral: true)) {
+                WalletNavigationRow(title: "Unilateral exit", icon: "arrow.up.right.square")
+            }
                 .accessibilityIdentifier("recovery.unilateral")
             WalletDivider()
-            NavigationLink("Send on-chain funds", destination: SweepWalletView())
+            NavigationLink(destination: SweepWalletView()) {
+                WalletNavigationRow(title: "Send on-chain funds", icon: "arrow.up.right")
+            }
             WalletDivider()
-            NavigationLink("Export recovery data", destination: RecoveryExportView())
+            NavigationLink(destination: RecoveryExportView()) {
+                WalletNavigationRow(title: "Export recovery data", icon: "square.and.arrow.up")
+            }
             if !store.recoveryJobs.isEmpty {
                 Text("In progress").font(.headline)
                 ForEach(store.recoveryJobs) { job in
                     NavigationLink(destination: RecoveryStatusView(outpoint: job.outpoint, amount: job.vtxoAmountSat)) {
-                        HStack { Text(WalletFormatting.sats(job.vtxoAmountSat)); Spacer(); Image(systemName: "chevron.right") }
+                        WalletNavigationRow(title: WalletFormatting.sats(job.vtxoAmountSat))
                     }
                 }
             }
-        }.navigationTitle("Recovery").navigationBarTitleDisplayMode(.inline)
+        }.buttonStyle(.plain).navigationTitle("Recovery").navigationBarTitleDisplayMode(.inline)
     }
 }
 
@@ -85,7 +91,7 @@ struct ExitWalletView: View {
                             Text(WalletFormatting.sats(item.amountSat))
                             Spacer()
                             Image(systemName: selected == item.outpoint ? "checkmark.circle.fill" : "circle")
-                        }.padding(.vertical, 12)
+                        }.padding(.vertical, 12).contentShape(Rectangle())
                     }.buttonStyle(.plain)
                     WalletDivider()
                 }
@@ -302,7 +308,7 @@ struct RecoveryExportView: View {
                     HStack {
                         Text(WalletFormatting.sats(fund.amountSat)); Spacer()
                         Image(systemName: selected.contains(fund.outpoint) ? "checkmark.circle.fill" : "circle")
-                    }
+                    }.frame(minHeight: 44).contentShape(Rectangle())
                 }.buttonStyle(.plain)
                 WalletDivider()
             }

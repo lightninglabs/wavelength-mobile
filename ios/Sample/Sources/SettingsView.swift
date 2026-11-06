@@ -37,12 +37,7 @@ struct SettingsView: View {
         .navigationTitle("Settings").navigationBarTitleDisplayMode(.inline)
     }
     private func settingsRow(_ title: String, _ icon: String) -> some View {
-        HStack(spacing: 14) {
-            Image(systemName: icon).frame(width: 24)
-            Text(title)
-            Spacer()
-            Image(systemName: "chevron.right").font(.caption).foregroundStyle(WalletTheme.secondary)
-        }.padding(.vertical, 7).contentShape(Rectangle())
+        WalletNavigationRow(title: title, icon: icon)
     }
 }
 
