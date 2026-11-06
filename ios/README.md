@@ -11,15 +11,22 @@ self-custodial wallet.
 
 The app includes:
 
-- separate signet, testnet3, and mainnet wallets;
-- an Esplora-synced confirmed balance and pending amounts;
-- Lightning and on-chain receive requests with QR codes, copy, and share;
-- Lightning and on-chain sends with camera QR scanning and a quote-and-confirm
-  step;
-- live, searchable activity and a detailed inspection screen;
-- recovery-word creation and restore;
-- a per-network wallet password stored in the device-bound Keychain; and
-- a privacy cover that hides wallet data in app-switcher snapshots.
+- isolated signet, testnet3, mainnet, and development regtest wallets;
+- one spendable balance, provider-held credit, and activity on Home;
+- Lightning and Bitcoin receive requests with QR codes, copy, and share;
+- invoice and Bitcoin address sends with QR scanning and quote confirmation;
+- cooperative exit, unilateral recovery plans and progress, on-chain sweeps,
+  signed portable recovery export, and explicit refresh;
+- password-based creation and restore, recovery-word backup, and optional
+  Face ID or Touch ID unlock;
+- Signal Dark, Porcelain Light, and the system appearance; and
+- an app-switcher privacy cover and immediate auto-lock when biometrics is on.
+
+Ordinary payment screens show Receiving, Sending, In progress, or Complete.
+Protocol stages and identifiers are behind Details. Recovery retains the
+funding, transaction, and block-wait information needed to act safely.
+Animations emphasize amount changes, new activity, and completion; Reduce
+Motion disables movement and replaces progress animation with a static icon.
 
 The Send screen's AVFoundation scanner recognizes raw BOLT-11 invoices,
 `lightning:` URIs, on-chain BIP-21 requests, and BIP-21 requests containing a
@@ -41,21 +48,30 @@ returning an error. If the invoice was durably created just before the response
 was lost, the app recovers and displays that exact invoice; it never blindly
 creates a second one after ambiguous cancellation.
 
-After iOS has actually backgrounded the process, returning to the foreground
-restarts and unlocks the same embedded wallet so its external gRPC transports
-are re-dialled on the current network path. Teardown waits for any in-flight
-state-creating call to return first; it is never used as a cancellation
-shortcut for a payment or receive request with an uncertain outcome.
+After backgrounding, the app checks the embedded wallet and refreshes a
+healthy session. It restarts only when that health check fails, after any
+state-creating call finishes. It does not interrupt a healthy assembling round
+just to re-dial transports. With biometric unlock enabled, Keychain access
+control protects the actual wallet password. Password fallback reopens and
+unlocks the encrypted wallet rather than accepting a UI-only authentication
+flag. Existing devices can enable biometrics in Settings > Security.
 
-Activity follows the same lifecycle vocabulary as `wavecli activity`: issuing
-an invoice is shown as a pending request, while “received” is reserved for a
-completed receive. Merely allocating an on-chain address is not activity; its
-deposit row appears only after Esplora observes a payment, using the observed
-amount rather than the optional amount hint. Transaction IDs and on-chain
-request addresses in the detail view link to the selected network's
-mempool.space explorer, or to a custom configured Esplora deployment. Pending
-Lightning receive details can reopen, copy, and share the original invoice as
-a QR code without creating a replacement request.
+An invoice stays Awaiting payment until money is detected; completion alone
+produces Received. Allocating a Bitcoin address creates no activity. A deposit
+appears when the wallet observes a transaction. Pending invoice details reopen
+the exact original QR. Optional notes and protocol details stay collapsed.
+
+Send quotes are consumed once. A durable pending-dispatch marker reconciles
+an uncertain response against Activity before another send is allowed. Refresh
+also persists its selected inputs: completion requires confirmed forfeits for
+all of them. Only positive evidence that every input is available again allows
+Review again. A missing row or failed read never means success.
+
+Unilateral exit is an explicit advanced action with a funding plan and a
+separate acknowledgment. No cooperative failure automatically starts it.
+Recovery export is read-only and does not start an exit. Recovery words alone
+are not a backup of all off-chain state; preserve the wallet data and recovery
+package as appropriate for the underlying protocol.
 
 Signet and testnet use the service and Esplora defaults compiled into the
 Wavelength binding. Mainnet must be selected through an explicit warning. Its
@@ -71,12 +87,22 @@ network with unavailable endpoints from locking the user out of Settings.
 
 ## Build and run
 
-The build requires Xcode, an iOS Simulator runtime, Python 3, and `xcodegen`
-(`brew install xcodegen`). The fetch script downloads `Wavewalletdk.xcframework`
-from the release pinned in `.wavelength-ios-version` at the repository root
-(currently `v0.2.1`), or builds one from a local Wavelength checkout.
+The build requires macOS, Xcode, an iOS Simulator runtime, Python 3,
+`xcodegen` (`brew install xcodegen`), authenticated `gh`, and the Go/gomobile
+toolchain used by Wavelength's `make mobile-ios` target. Install gomobile and
+gobind with `go install golang.org/x/mobile/cmd/gomobile@latest` and
+`go install golang.org/x/mobile/cmd/gobind@latest`, then run `gomobile init`.
+Put `$(go env GOPATH)/bin` on PATH. Xcode must use the full developer directory,
+not only Command Line Tools.
+
+`.wavelength-ios-version` pins Wavelength main at
+`43c517cf6fefe9aae3f9c2a879d0b11f6ff407a2`. The fetch script builds that exact
+commit with `scripts/wavelength-ios-recovery.patch`. The narrow bridge exposes
+refresh, refresh observation, full recovery inventory, and signed portable
+recovery export through gomobile. Android keeps its separate existing pin.
+
 The Swift wrapper retains the
-bounded-read and uncertain receive-outcome contracts and exposes v0.2.1's
+bounded-read and uncertain receive-outcome contracts and exposes
 independent `maxCreditSat` and `maxCreditTopupSat` send limits. Both default to
 10,000 sats per payment, enabling small payments through credit. These caps
 bound credit reservation and new Ark value moved into credit; they do not
@@ -90,22 +116,22 @@ Complete Xcode's first-launch system-component installation before building.
 `xcodebuild -checkFirstLaunchStatus` must succeed; if it reports pending setup,
 run `sudo xcodebuild -runFirstLaunch` from your terminal and authenticate there.
 
-Build, test, and run commands check the staged framework's release receipt.
-A missing receipt or a different release triggers a fresh download. An explicit
-`WAVELENGTH_VERSION` overrides the pin. An explicit `WAVELENGTH_DIR` rebuilds
-from source on each invocation, including local edits; the next normal release
-build replaces that source artifact. Run the fetch script directly to force a
-download even when the receipt matches.
+Build, test, and run check a receipt containing the source commit and bridge
+patch digest. A matching artifact is reusable offline. Otherwise the script
+clones the pin into `~/.cache/wavelength-mobile-ios/<commit>`, applies the
+checked-in bridge, and builds the framework. An explicit `WAVELENGTH_DIR`
+must already contain exactly that commit and bridge diff, with no unexpected
+untracked source. It rebuilds each time. Source or patch mismatches fail before
+replacing the staged SDK. Framework binaries stay ignored.
 
 ```bash
-# Released binding. Requires an authenticated gh CLI with repository access.
-./scripts/fetch-xcframework.sh
+# Clone and build the pinned source plus mobile bridge.
+./scripts/fetch-xcframework.sh --if-needed
 
-# Or build from a local Wavelength checkout.
+# Or use an already prepared checkout at the exact pin with the bridge applied.
 WAVELENGTH_DIR=/path/to/wavelength ./scripts/fetch-xcframework.sh
 
-# Generate, build, install, and launch the app on an automatically selected
-# iPhone Simulator.
+# Generate, build, install, and launch on an iPhone Simulator.
 make run
 ```
 

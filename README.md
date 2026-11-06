@@ -47,9 +47,9 @@ embedded wallet, create a key, sync the chain from Esplora, and read balances.
 | `android/walletkit/` | Idiomatic Kotlin wrapper (`suspend` + `Flow` + typed models) over the generated bindings. The Android library other apps depend on. |
 | `android/app/` | Sample Android app (Jetpack Compose, AGP 9) that drives `walletkit`. |
 | `ios/WalletKit/` | Idiomatic Swift wrapper (`actor` + `async` + `AsyncThrowingStream` + `Codable`). Mirrors the Kotlin library. |
-| `ios/Sample/` | Native SwiftUI Wavelength wallet with onboarding, balance, send, receive, activity, details, and per-network settings. |
+| `ios/Sample/` | Native SwiftUI wallet with dark/light themes, Face ID, balance and activity, send/receive, refresh, exit, and recovery. |
 | `scripts/fetch-aar.sh` | Downloads `Wavewalletdk.aar` from the `wavelength` GitHub release (or builds it from a `WAVELENGTH_DIR` checkout) and stages it under `android/walletkit/libs`. |
-| `scripts/fetch-xcframework.sh` | Same for the iOS `Wavewalletdk.xcframework`. |
+| `scripts/fetch-xcframework.sh` | Builds the pinned Wavelength source with the carried iOS recovery bridge and stages `Wavewalletdk.xcframework`; verifies source/patch provenance. |
 | `Makefile` | One-command iOS Simulator build, test, run, and opt-in live regtest workflows. |
 | `docs/` | Architecture, the Android workflow, and signet setup. |
 

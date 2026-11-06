@@ -203,3 +203,57 @@ credit-funding row did not identify a rail, so the app called it "On-chain
 sent". Unknown send rails now use the neutral "Bitcoin sent" title and
 "Not reported" in details. Explicit Lightning, on-chain, and Ark requests
 retain their corresponding rail labels; no amount or settlement state changes.
+
+## Wallet redesign and main SDK — 2026-11-06
+
+This supersedes the stable SDK pin above. iOS now builds Wavelength main at
+`43c517cf6fefe9aae3f9c2a879d0b11f6ff407a2` plus the mobile bridge carried in
+`scripts/wavelength-ios-recovery.patch`. The bridge adds refresh, positive
+refresh observation, nonterminal Bitcoin recovery inventory, and the complete
+signed portable recovery export. Source staging verifies the exact commit and
+whole patch diff; Android is unchanged.
+
+The app now has one balance and activity on Home, separate provider-held
+credit, Signal Dark and Porcelain Light, the wave wordmark and app icon, and
+optional Keychain-enforced Face ID/Touch ID unlock. Ordinary payment screens
+keep protocol stages behind Details. The network selector uses the same
+plain rows, spacing, and checkmark selection as the rest of the interface.
+
+Recovery screens expose cooperative exit, an explicit unilateral exit with
+funding/CSV progress, on-chain sweep preview, and signed recovery export.
+Export and unilateral selection include expired and reserved funds rather
+than only the spendable inventory. Export does not broadcast or start an exit.
+Refresh persists the exact selected inputs; only confirmed forfeits complete
+it. Positive evidence that all inputs returned to LIVE allows a new review.
+
+The funded staging wallet retained its 19,000 spendable sats and 980 credit
+sats across the SDK/UI upgrade. A further 10-sat credit-only payment completed
+with zero payment fee, no new top-up, and no change to the spendable balance.
+Available credit became 970 sats. Cold launch and biometric unlock retained
+these amounts and the same activity.
+
+A manual refresh test exposed unconditional foreground teardown interrupting
+an assembling round. Foreground recovery now keeps a healthy daemon alive;
+only an unhealthy connection triggers restart after state-creating calls finish.
+The interrupted refresh correctly offers Action needed after the daemon
+positively reports its original inputs as available again. A newly reviewed
+refresh was accepted with a 269-sat advisory estimate. A brief background and
+biometric-unlock transition retained the process and pending operation; final
+round confirmation was not yet observed. A queued refresh is
+not labeled Complete merely because its inputs leave the spendable balance.
+
+Device compilation and signing pass. Physical-device installation, camera
+behavior, and OS background wake remain unverified. Cooperative/unilateral exit
+and on-chain sweep settlement require separate funded acceptance; their UI and
+native APIs are implemented, but compilation alone does not prove settlement.
+
+Final validation on Xcode 26.6 / iOS 26.5:
+
+| Check | Result |
+|---|---|
+| Swift and live signet tests | 20 passed, 0 failed; the separate opt-in storage probe skipped |
+| Credit quote | 10-sat invoice quoted a top-up within the independent caps; zero-cap authorization was rejected |
+| Receive/copy/lifecycle UI | Bitcoin address, Lightning invoice, exact copy/paste, foreground, and cold relaunch passed again after hiding raw requests behind Details (51.6 seconds) |
+| Native bridge | SDK and mobile package tests passed; changed-source formatting and local lint passed |
+| Framework provenance | Release cache, source pin/patch checks, offline reuse, and failed replacement preservation passed |
+| Device build | Generic iPhone Debug build signed successfully; no connected phone was available for installation |
