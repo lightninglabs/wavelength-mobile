@@ -16,10 +16,8 @@ TEST_ARGS ?=
 help: ## Show the available developer commands.
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-framework: ## Fetch or build Wavewalletdk.xcframework when it is missing.
-	@if [[ ! -d "$(REPO_ROOT)/ios/WalletKit/Frameworks/Wavewalletdk.xcframework" ]]; then \
-		"$(REPO_ROOT)/scripts/fetch-xcframework.sh"; \
-	fi
+framework: ## Ensure Wavewalletdk.xcframework matches the requested release.
+	@"$(REPO_ROOT)/scripts/fetch-xcframework.sh" --if-needed
 
 generate: ## Generate the Xcode project with xcodegen.
 	@cd "$(SAMPLE_DIR)" && xcodegen generate

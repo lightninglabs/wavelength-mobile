@@ -143,3 +143,33 @@ activity into an app's business database is a separate, narrower integration.
 The [storage and lifecycle investigation](ios-storage.md) records the proposed
 host contract, source audit, and executable probe for independent app storage
 and relocation of a closed wallet directory.
+
+## Stable SDK refresh — 2026-11-06
+
+The iOS wrapper now uses the published Wavelength v0.2.1 framework, pinned in
+`.wavelength-ios-version`. The Android pin remains separate. Build, test, and
+run check the staged framework's release receipt, replacing an older or
+unidentified artifact before compiling. The native storage probe reported
+SDK version `0.2.1`.
+
+Swift invoice sends default to a 10,000-sat credit reservation cap and an
+independent 10,000-sat Ark-to-credit top-up cap. The quote determines actual
+spending. The review screen shows existing credit use, the required top-up,
+and new Ark outflow; the dashboard shows available and reserved server-held
+credit separately from the wallet's available Ark balance.
+
+Validation used Xcode 26.6 (17F113) and a new iPhone 17 Pro Simulator on iOS
+26.5. It did not open the earlier funded Simulator wallet.
+
+| Check | Observed result |
+|---|---|
+| Unit tests | 15 passed, including independent credit caps and explicit opt-outs |
+| Live micro payment quote | A 10-sat invoice selected credit and quoted a 1,000-sat top-up; zero caps rejected the same sub-floor invoice |
+| Native storage | Identity and the exact invoice survived closing, directory relocation, reopen, and unlock; idle stop took 0.297 seconds and reopen/readiness took 2.754 seconds |
+| Signet UI | Request creation, copy/paste, foreground recovery, and process relaunch passed in 94.7 seconds |
+| Framework staging | Changing the pin or explicit override replaced the SDK; a matching receipt worked offline; a failed download preserved the installed SDK |
+
+The micro payment probe uses two disposable, unfunded wallets and never calls
+`Send`. It proves quote routing and authorization forwarding, not funded
+micro payment settlement. Physical-device behavior, OS background wake, and
+upgrading the earlier funded wallet remain unverified in this refresh.

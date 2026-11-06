@@ -109,6 +109,22 @@ private struct WalletDashboardView: View {
                 pendingValue(title: "Incoming", value: store.pendingInSat, icon: "arrow.down.left")
                 pendingValue(title: "Outgoing", value: store.pendingOutSat, icon: "arrow.up.right")
             }
+
+            if let credit = store.balance?.creditAvailableSat {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Server-held credit")
+                        Spacer()
+                        Text(WalletFormatting.sats(credit))
+                    }
+                    if let reserved = store.balance?.creditReservedSat, reserved > 0 {
+                        Text("\(WalletFormatting.sats(reserved)) reserved for pending payments")
+                            .foregroundStyle(.white.opacity(0.76))
+                    }
+                }
+                .font(.caption)
+                .accessibilityIdentifier("wallet.credit")
+            }
         }
         .foregroundStyle(.white)
         .padding(22)

@@ -2,7 +2,7 @@
 #
 # run-ios-sample.sh builds and runs the iOS sample on a booted simulator,
 # entirely from the command line (no Xcode GUI). It:
-#   1. stages the Wavewalletdk.xcframework (via fetch-xcframework.sh) if missing,
+#   1. stages the requested Wavewalletdk.xcframework (via fetch-xcframework.sh),
 #   2. generates the Xcode project from project.yml with xcodegen,
 #   3. boots a simulator (creating one if none exists),
 #   4. builds, installs, and launches the app.
@@ -18,10 +18,7 @@ BUNDLE_ID="engineering.lightning.wavelength.wallet"
 SCHEME="Wavelength"
 
 # 1. Stage the bindings.
-if [[ ! -d "${REPO_ROOT}/ios/WalletKit/Frameworks/Wavewalletdk.xcframework" ]]; then
-	echo "==> staging Wavewalletdk.xcframework"
-	"${REPO_ROOT}/scripts/fetch-xcframework.sh"
-fi
+"${REPO_ROOT}/scripts/fetch-xcframework.sh" --if-needed
 
 # 2. Generate the project.
 echo "==> xcodegen generate"

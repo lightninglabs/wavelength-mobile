@@ -36,6 +36,13 @@ public struct WalletError: LocalizedError, CustomStringConvertible, Sendable {
     }
 }
 
+/// Per-payment credit limits for small Lightning payments. These are ceilings;
+/// the prepared quote determines the actual credit use and required top-up.
+public enum SendCreditDefaults {
+    public static let maxCreditSat: UInt64 = 10_000
+    public static let maxCreditTopupSat: UInt64 = 10_000
+}
+
 /// An idiomatic Swift facade over the gomobile bindings.
 ///
 /// Every call is `async throws`, runs the blocking binding off the main actor,
@@ -126,17 +133,22 @@ public actor WalletClient {
     /// Quote an outbound payment without moving funds. Set exactly one of
     /// `invoice` or `onchainAddress`. The result carries a single-use intent id
     /// to pass to `send(_:)`. `sweepAll` drains every VTXO to the address.
+    /// Credit use and top-ups default to independent 10,000-sat caps. Pass zero
+    /// to disable either permission. These limits apply to invoice sends only.
     public func prepareSend(
         invoice: String? = nil,
         onchainAddress: String? = nil,
         amountSat: Int64 = 0,
         note: String = "",
         maxFeeSat: Int64 = 0,
-        sweepAll: Bool = false
+        sweepAll: Bool = false,
+        maxCreditSat: UInt64 = SendCreditDefaults.maxCreditSat,
+        maxCreditTopupSat: UInt64 = SendCreditDefaults.maxCreditTopupSat
     ) async throws -> PrepareSendResult {
         let req = PrepareSendReq(
             invoice: invoice, onchainAddress: onchainAddress, amountSat: amountSat,
-            note: note, maxFeeSat: maxFeeSat, sweepAll: sweepAll
+            note: note, maxFeeSat: maxFeeSat, sweepAll: sweepAll,
+            maxCreditSat: maxCreditSat, maxCreditTopupSat: maxCreditTopupSat
         )
         let body = try encoder.encode(req)
         return try decode(await bg { try Bindings.prepareSend(body) })
@@ -150,8 +162,16 @@ public actor WalletClient {
 
     /// Pay a Lightning invoice in one call, skipping the explicit quote step.
     /// Use `prepareSend` + `send` when you want to show the fee before paying.
-    public func payInvoice(_ invoice: String, maxFeeSat: Int64 = 0) async throws -> SendResult {
-        let quote = try await prepareSend(invoice: invoice, maxFeeSat: maxFeeSat)
+    public func payInvoice(
+        _ invoice: String,
+        maxFeeSat: Int64 = 0,
+        maxCreditSat: UInt64 = SendCreditDefaults.maxCreditSat,
+        maxCreditTopupSat: UInt64 = SendCreditDefaults.maxCreditTopupSat
+    ) async throws -> SendResult {
+        let quote = try await prepareSend(
+            invoice: invoice, maxFeeSat: maxFeeSat,
+            maxCreditSat: maxCreditSat, maxCreditTopupSat: maxCreditTopupSat
+        )
         return try await send(quote.sendIntentID)
     }
 
@@ -317,13 +337,15 @@ private struct DepositReq: Encodable {
     }
 }
 
-private struct PrepareSendReq: Encodable {
+struct PrepareSendReq: Encodable {
     let invoice: String?
     let onchainAddress: String?
     let amountSat: Int64
     let note: String
     let maxFeeSat: Int64
     let sweepAll: Bool
+    var maxCreditSat: UInt64 = SendCreditDefaults.maxCreditSat
+    var maxCreditTopupSat: UInt64 = SendCreditDefaults.maxCreditTopupSat
     enum CodingKeys: String, CodingKey {
         case invoice = "Invoice"
         case onchainAddress = "OnchainAddress"
@@ -331,6 +353,8 @@ private struct PrepareSendReq: Encodable {
         case note = "Note"
         case maxFeeSat = "MaxFeeSat"
         case sweepAll = "SweepAll"
+        case maxCreditSat = "MaxCreditSat"
+        case maxCreditTopupSat = "MaxCreditTopupSat"
     }
 }
 

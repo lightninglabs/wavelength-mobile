@@ -73,16 +73,29 @@ network with unavailable endpoints from locking the user out of Settings.
 
 The build requires Xcode, an iOS Simulator runtime, Python 3, and `xcodegen`
 (`brew install xcodegen`). The fetch script downloads `Wavewalletdk.xcframework`
-from the release pinned in `../.wavelength-version`, currently `v0.1.2`, or
-builds one from a local Wavelength checkout. v0.1.2 includes the bounded mobile
-reads and uncertain receive-outcome contract used by this app.
+from the release pinned in `.wavelength-ios-version` at the repository root
+(currently `v0.2.1`), or builds one from a local Wavelength checkout.
+The Swift wrapper retains the
+bounded-read and uncertain receive-outcome contracts and exposes v0.2.1's
+independent `maxCreditSat` and `maxCreditTopupSat` send limits. Both default to
+10,000 sats per payment, enabling small payments through credit. These caps
+bound credit reservation and new Ark value moved into credit; they do not
+request a 10,000-sat top-up. The daemon quotes the required amount, including
+any rounding to the minimum Ark output. The confirmation screen shows existing
+credit use, the top-up, and the new Ark outflow before dispatch. Remaining
+top-up value stays in the server-held credit balance for future payments.
+Wrapper callers can override either cap, including zero to disable it.
 
 Complete Xcode's first-launch system-component installation before building.
 `xcodebuild -checkFirstLaunchStatus` must succeed; if it reports pending setup,
 run `sudo xcodebuild -runFirstLaunch` from your terminal and authenticate there.
 
-Rerun the fetch script when updating an existing checkout to replace its
-previously staged framework. The Makefile reuses a framework already on disk.
+Build, test, and run commands check the staged framework's release receipt.
+A missing receipt or a different release triggers a fresh download. An explicit
+`WAVELENGTH_VERSION` overrides the pin. An explicit `WAVELENGTH_DIR` rebuilds
+from source on each invocation, including local edits; the next normal release
+build replaces that source artifact. Run the fetch script directly to force a
+download even when the receipt matches.
 
 ```bash
 # Released binding. Requires an authenticated gh CLI with repository access.
@@ -261,7 +274,7 @@ ios/WalletKit/
 ## Stage the framework
 
 ```bash
-# Downloads the release pinned in ../.wavelength-version (needs the gh CLI
+# Downloads the release pinned in .wavelength-ios-version (needs the gh CLI
 # authenticated to an account with read access to wavelength). Set
 # WAVELENGTH_VERSION=<tag> to override the pin.
 ./scripts/fetch-xcframework.sh

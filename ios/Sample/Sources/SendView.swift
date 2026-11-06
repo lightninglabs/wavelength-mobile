@@ -190,7 +190,19 @@ struct SendView: View {
                 value: quote.feeKnown ? WalletFormatting.sats(quote.expectedFeeSat) : "Finalized during payment"
             )
             if quote.totalOutflowKnown ?? quote.feeKnown {
-                ValueRow(label: "Expected total", value: WalletFormatting.sats(quote.expectedTotalOutflowSat))
+                ValueRow(
+                    label: quote.creditPreview == nil ? "Expected total" : "New Ark outflow",
+                    value: WalletFormatting.sats(quote.expectedTotalOutflowSat)
+                )
+            }
+            if let credit = quote.creditPreview {
+                ValueRow(label: "From existing credit", value: WalletFormatting.sats(credit.creditAppliedSat))
+                ValueRow(label: "Credit top-up", value: WalletFormatting.sats(credit.creditTopupSat))
+                if credit.creditTopupSat > 0 {
+                    Text("The top-up becomes server-held credit. Any amount left after this payment stays in your credit balance for later payments.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
             ValueRow(label: "Destination", value: quote.destinationSummary, copyable: true)
             if let description = quote.invoiceDescription, !description.isEmpty {

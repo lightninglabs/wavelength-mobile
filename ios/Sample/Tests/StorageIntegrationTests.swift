@@ -36,6 +36,7 @@ final class StorageIntegrationTests: XCTestCase {
         let password = Data(UUID().uuidString.utf8)
         try await client.start(.signet(dataDir: original.path))
         let initial = try await client.getInfo()
+        print("Storage probe SDK: \(initial.version) commit \(initial.commit)")
         XCTAssertEqual(initial.walletState, .none)
         _ = try await client.createWallet(walletPassword: password)
         let before = try await waitForServices(client)

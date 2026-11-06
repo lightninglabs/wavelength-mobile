@@ -16,7 +16,7 @@ just means sends and rounds are unavailable.
 ## Endpoints
 
 Empty endpoint overrides in `WalletConfig.signet(...)` use the defaults compiled
-into the Wavelength binding. For the pinned v0.1.2 release these are:
+into the Wavelength binding. For the iOS v0.2.1 pin these are:
 
 | Parameter | Meaning | Default |
 |-----------|---------|---------|

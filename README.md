@@ -56,9 +56,11 @@ embedded wallet, create a key, sync the chain from Esplora, and read balances.
 Both the Android and iOS wrappers and their sample apps run end to end — Android
 on an emulator, iOS on the Simulator — booting the embedded wallet, creating a
 wallet, and syncing signet to the chain tip. wavelength CI builds the bindings
-on release tags. Both fetch scripts use the release pinned in
-`.wavelength-version` (currently `v0.1.2`). After changing that pin, rerun
-the appropriate fetch script to replace any previously staged framework or AAR.
+on release tags. iOS uses `.wavelength-ios-version` (currently `v0.2.1`);
+Android uses `.wavelength-version` (currently `v0.1.2`). The separate pins let
+each host wrapper adopt SDK changes after its own validation. iOS build, test,
+and run commands replace a staged framework when its recorded release differs
+from the iOS pin. For Android, rerun the fetch script after changing its pin.
 
 ## Quick start (Android)
 
