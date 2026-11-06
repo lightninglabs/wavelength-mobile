@@ -1,0 +1,2 @@
+# Preserve whitespace in unified-diff context lines.
+scripts/wavelength-ios-recovery.patch -whitespace

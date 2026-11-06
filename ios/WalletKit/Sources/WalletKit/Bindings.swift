@@ -98,6 +98,41 @@ enum Bindings {
         return try unwrap(MobileExitStatus(req, &err), err)
     }
 
+    static func recoveryInventory() throws -> Data {
+        var err: NSError?
+        return try unwrap(MobileRecoveryInventory(&err), err)
+    }
+
+    static func observeRefresh(_ req: Data) throws -> Data {
+        var err: NSError?
+        return try unwrap(MobileObserveRefresh(req, &err), err)
+    }
+
+    static func refresh(_ req: Data) throws -> Data {
+        var err: NSError?
+        return try unwrap(MobileRefresh(req, &err), err)
+    }
+
+    static func getExitPlan(_ req: Data) throws -> Data {
+        var err: NSError?
+        return try unwrap(MobileGetExitPlan(req, &err), err)
+    }
+
+    static func exitSummary(_ req: Data) throws -> Data {
+        var err: NSError?
+        return try unwrap(MobileExitSummary(req, &err), err)
+    }
+
+    static func sweepWallet(_ req: Data) throws -> Data {
+        var err: NSError?
+        return try unwrap(MobileSweepWallet(req, &err), err)
+    }
+
+    static func exportExits(_ req: Data) throws -> Data {
+        var err: NSError?
+        return try unwrap(MobileExportExits(req, &err), err)
+    }
+
     static func subscribe(_ req: Data) throws -> BindingsSubscription {
         var err: NSError?
         let sub = MobileSubscribe(req, &err)
@@ -138,6 +173,13 @@ enum Bindings {
     static func list(_ req: Data) throws -> Data { throw missing() }
     static func exit(_ req: Data) throws -> Data { throw missing() }
     static func exitStatus(_ req: Data) throws -> Data { throw missing() }
+    static func recoveryInventory() throws -> Data { throw missing() }
+    static func observeRefresh(_ req: Data) throws -> Data { throw missing() }
+    static func refresh(_ req: Data) throws -> Data { throw missing() }
+    static func getExitPlan(_ req: Data) throws -> Data { throw missing() }
+    static func exitSummary(_ req: Data) throws -> Data { throw missing() }
+    static func sweepWallet(_ req: Data) throws -> Data { throw missing() }
+    static func exportExits(_ req: Data) throws -> Data { throw missing() }
     static func subscribe(_ req: Data) throws -> BindingsSubscription { throw missing() }
 }
 

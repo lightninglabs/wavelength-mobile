@@ -1,99 +1,102 @@
-# iOS — WalletKit
+# iOS WalletKit SDK
 
-`WalletKit` is the idiomatic Swift wrapper over the gomobile bindings: an
-`actor`-based `WalletClient` with `async`/`throws` methods, an
-`AsyncThrowingStream` for wallet activity, and `Codable` models. It mirrors the
-Kotlin `walletkit` library.
+`WalletKit` is the Swift wrapper around the embedded Wavelength wallet. It
+provides typed network configuration, asynchronous wallet calls, and resumable
+activity through `AsyncThrowingStream`. The existing `WavewalletdkSample`
+diagnostic demo remains unchanged in this SDK change. The native wallet UI is
+a separate change.
 
-Building requires the `Wavewalletdk.xcframework`. `scripts/fetch-xcframework.sh`
-downloads it from the `wavelength` GitHub release by default (or builds it from
-a `WAVELENGTH_DIR` checkout); it is not committed here.
+The embedded Bitcoin wallet uses `lwwallet` and Esplora. Lightning payments use
+Wavelength's operator and swap services. Select signet, testnet3, mainnet, or
+regtest through `WalletConfig`; mainnet requires explicit opt-in. Empty service
+endpoints defer to the SDK's compiled defaults.
 
-Verified end to end on the iOS Simulator: the Swift wrapper boots the embedded
-daemon, creates a wallet, connects to the signet operator mailbox, and syncs to
-the chain tip (`operator=connected`, `state=ready`).
+## Build and test
 
-> Linker note: the embedded daemon's Go networking references `res_9_*` symbols
-> from **libresolv**, so the app target links `-lresolv` (set in
-> `Sample/project.yml`). Without it the link fails with "Undefined symbols
-> _res_9_ninit / _nclose / _nsearch".
-
-## Run the sample (command line, no Xcode GUI)
+Use macOS with Xcode, an iOS Simulator runtime, Python 3, `xcodegen`, authenticated
+`gh`, Go, and gomobile. Complete Xcode's first-launch setup. Install the Go
+mobile tools and place `$(go env GOPATH)/bin` on PATH:
 
 ```bash
-# One time: a simulator runtime (the SDK ships with Xcode; the runtime is a
-# separate download) and the project generator.
-xcodebuild -downloadPlatform iOS
-brew install xcodegen
+go install golang.org/x/mobile/cmd/gomobile@latest
+go install golang.org/x/mobile/cmd/gobind@latest
+gomobile init
 
-# Build the bindings, generate the project, build, install, and launch.
-./scripts/run-ios-sample.sh
-
-# Then drive the simulator like the Android emulator:
-xcrun simctl io booted screenshot ui.png
-
-# Or run headless (no taps): autostart boots + creates a wallet on launch.
-SIMCTL_CHILD_WAVEWALLETDK_AUTOSTART=1 \
-  xcrun simctl launch booted engineering.lightning.wavewalletdk.sample
+./scripts/fetch-xcframework.sh --if-needed
+make build
+make test
+make run
 ```
 
-`run-ios-sample.sh` stages the xcframework, runs `xcodegen generate` on
-`ios/Sample/project.yml`, boots a simulator (creating one if needed), then
-`xcodebuild` + `xcrun simctl install`/`launch`. The classic
-`xcodebuild` + `xcrun simctl` stack is the foundation; on Xcode 26.3+ the
-official `xcrun mcpbridge` MCP server can drive a live Xcode for agents, and
-`getsentry/XcodeBuildMCP` is a headless alternative.
+`.wavelength-ios-version` pins Wavelength source at
+`43c517cf6fefe9aae3f9c2a879d0b11f6ff407a2`. The fetch script applies
+`scripts/wavelength-ios-recovery.patch`, builds the iOS/device and Simulator
+slices, and stages the ignored framework under `ios/WalletKit/Frameworks`.
+The patch exposes refresh, confirmed-input observation, recovery
+inventory, and complete signed recovery export. It also carries the metadata
+fix in [Wavelength #1530](https://github.com/lightninglabs/wavelength/pull/1530),
+which correlates credit funding after self-change.
 
-## Layout
+The staged receipt includes the exact source commit and bridge digest. A
+matching artifact is reusable offline; a different pin or bridge requires a
+rebuild. The default source cache is
+`~/.cache/wavelength-mobile-ios/<commit>-<bridge-sha256>` (or under
+`XDG_CACHE_HOME` when set). Cache initialization is atomic, so an interrupted
+clone or patch application can be retried without manual cleanup.
+An explicit `WAVELENGTH_DIR` must contain that exact commit and whole bridge
+diff, with no unexpected untracked source. Verification compares file content
+and does not depend on local Git diff formatting.
+Apply the bridge to a clean pinned checkout with
+`git -C /path/to/wavelength apply --index /path/to/wavelength-mobile/scripts/wavelength-ios-recovery.patch`;
+`--index` tracks the new bridge files for provenance verification.
 
-```
-ios/WalletKit/
-  Package.swift                 SwiftPM package; binaryTarget -> Wavewalletdk.xcframework
-  Sources/WalletKit/
-    Bindings.swift              the only file that touches generated symbols
-    WalletClient.swift          actor: async/throws API + AsyncThrowingStream
-    WalletConfig.swift          Encodable config + signet() factory
-    Models.swift                Codable result models
-  Frameworks/                   Wavewalletdk.xcframework goes here (gitignored)
-```
+Release-tag overrides retain the packaged-release download path, but the
+release must expose all binding functions used by this wrapper, including
+`MobileRecoveryInventory`, `MobileObserveRefresh`, `MobileRefresh`, and
+`MobileExportExits`. Published releases through v0.2.1 lack this bridge and
+cannot build the current Swift wrapper. Use the repository's source pin until
+a compatible release is published. Android keeps its independent release pin in
+`.wavelength-version`.
 
-## Stage the framework
+`make test` runs the SDK tests. The live quote and storage tests skip unless
+explicitly enabled:
 
 ```bash
-# Downloads the latest wavelength release by default (needs the gh CLI
-# authenticated to an account with read access to wavelength). Set
-# WAVELENGTH_VERSION=<tag> to pin a release.
-./scripts/fetch-xcframework.sh
-
-# Or build from a local checkout against an unreleased daemon (macOS + Xcode).
-# Produces sdk/wavewalletdk/mobile/build/ios/Wavewalletdk.xcframework:
-WAVELENGTH_DIR=/path/to/wavelength ./scripts/fetch-xcframework.sh
+make test-signet
+make test-storage-signet
+bash scripts/tests/fetch-xcframework.sh
 ```
 
-The source build (`make mobile-ios`) runs on macOS with Xcode installed and
-cross-compiles the embedded daemon for device + simulator slices.
+The signet quote probe creates disposable, unfunded wallets and never sends a
+payment. The storage probe checks host SQLite coexistence and relocation of a
+closed wallet directory. Use `SIMULATOR_UDID` to select a specific simulator.
+`make device-logs` attaches to an already installed diagnostic sample; its
+bundle identifier can be overridden with `BUNDLE_ID`.
 
-## The generated symbol prefix
+## Integration contracts
 
-gomobile names the generated free functions after the Go package, so they are
-`MobileStart`, `MobileGetInfo`, `MobileSubscribe`, and a `MobileSubscription`
-class, all in a `Wavewalletdk` module. Every reference to those symbols lives in
-`Bindings.swift`; if the prefix changes (the `gomobile bind -prefix` flag in
-`gen_bindings.sh`), that one file is the only edit.
+Wallet reads use bounded native contexts. A receive deadline or lifecycle
+cancellation can occur after durable invoice creation: reconcile existing
+activity before creating another request. Send quotes are single-use. Callers
+must retain payment identity and reconcile uncertain dispatch outcomes.
 
-## Usage
+Credit use and credit top-up have independent per-payment limits. Both default
+to 10,000 sats in the Swift wrapper; explicit zero disables that authorization.
+These are ceilings, not requested top-up amounts. Display the actual quote and
+keep provider-held credit distinct from wallet funds.
 
-```swift
-import WalletKit
+Cooperative exit and explicit unilateral recovery use separate paths. Recovery
+export signs a portable package without broadcasting or starting an exit.
+Refresh observation completes only after all selected inputs have confirmed
+forfeits; absence from live inventory is not success. Retry permission requires
+positive evidence that all original inputs are available again.
 
-let client = WalletClient()
-try await client.start(.signet(dataDir: dataDir))
-_ = try await client.createWallet(walletPassword: Data("demo-password".utf8))
+Activity helpers group only explicitly linked credit funding under an invoice
+payment. They preserve raw SDK records, unrelated transfers, unmatched funding,
+and failed funding. Original request data, fees, hashes, and lifecycle states
+remain available for inspection.
 
-let info = try await client.getInfo()
-print("height \(info.blockHeight), ready \(info.walletReady)")
-
-for try await entry in client.activity(includeExisting: true) {
-    print("\(entry.kind) \(entry.amountSat) sat \(entry.status)")
-}
-```
+Keep wallet keys and the managed data directory under the host application's
+ownership. A seed alone does not back up all off-chain state. See the
+[storage investigation](../docs/ios-storage.md) and
+[integration checks](../docs/ios-integration.md).
