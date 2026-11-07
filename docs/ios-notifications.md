@@ -46,7 +46,15 @@ Enrollment persists the pending key and deterministic installation ID first.
 After a lost response, the next client probes that ID before re-attesting.
 Persist relay grants before binding them to producers. The operator receives
 wake authority only; the swap service may receive generic alert authority.
-Neither receives Apple credentials, wallet keys, notification amounts or a URL
+Apple's specific `invalidKey` error replaces an installation after reinstall.
+The app retains old subscription IDs and removes still-live bindings with the
+matching wallet's signature before binding the new grant. A transport failure
+or HTTP 401 never resets a confirmed installation. If the old wallet cannot
+sign removal, a destroyed Apple key cannot revoke that installation's grants;
+the app retains metadata and reports their expiry instead of claiming they
+were revoked. Old queued hints may still arrive during their bounded lifetime.
+
+Neither producer receives Apple credentials, wallet keys, notification amounts or a URL
 chosen by the push. An HTTP 401 does not establish successful revocation.
 
 A tap resolves a known local opaque route, waits for the matching network and

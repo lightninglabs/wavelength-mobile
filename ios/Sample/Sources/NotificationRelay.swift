@@ -38,7 +38,13 @@ struct NotificationRelayConfiguration: Equatable, Sendable, Codable {
     }
 }
 
+struct NotificationPreviousSubscription: Codable, Sendable {
+    let id: String
+    let expiresAt: Int64
+}
+
 struct NotificationRelayGrant: Codable, Sendable {
+    var previousSubscriptions: [NotificationPreviousSubscription]? = nil
     let subscriptionId: String
     let wakeCapability: String
     let alertCapability: String?
@@ -71,6 +77,7 @@ struct NotificationRelayHTTPError: Error {
 
 enum NotificationRelayError: Error {
     case unsupportedDevice, invalidResponse, unavailableCredentials
+    case previousInstallationExpires(Int64)
 }
 
 /// This adapter has no runtime bypass. Tests may inject a protocol fixture;
@@ -131,6 +138,7 @@ struct NotificationInstallation: Codable {
     var confirmed: Bool
     var token: String
     var grants: [String: NotificationRelayGrant]
+    var retired: [String: [NotificationPreviousSubscription]]? = nil
 }
 
 private struct NotificationManagementResult: Decodable {
@@ -184,6 +192,22 @@ actor NotificationRelayClient {
         defer { release() }
         try Task.checkCancellation()
         guard attester.supported else { throw NotificationRelayError.unsupportedDevice }
+        do {
+            return try await subscribeLocked(token: token, routeId: routeId, alerts: alerts)
+        } catch let error as DCError where error.code == .invalidKey {
+            // Apple destroys App Attest keys on uninstall while Keychain can
+            // survive. Only this precise device error permits replacement;
+            // an HTTP 401 or transient attestation error retains authority.
+            var retired = installation?.retired ?? [:]
+            for (route, grant) in installation?.grants ?? [:] {
+                retired[route, default: []].append(.init(id: grant.subscriptionId, expiresAt: grant.expiresAt))
+            }
+            try await enroll(token: token, retired: retired)
+            return try await subscribeLocked(token: token, routeId: routeId, alerts: alerts)
+        }
+    }
+
+    private func subscribeLocked(token: String, routeId: String, alerts: Bool) async throws -> NotificationRelayGrant {
         try await ensureInstallation(token: token)
         guard let current = installation else { throw NotificationRelayError.unavailableCredentials }
         if let grant = current.grants[routeId], grant.alerts == alerts,
@@ -199,7 +223,7 @@ actor NotificationRelayClient {
               !alerts || result.alertCapability.map(Self.validCapability) == true else {
             throw NotificationRelayError.invalidResponse
         }
-        let grant = NotificationRelayGrant(subscriptionId: id, wakeCapability: wake,
+        let grant = NotificationRelayGrant(previousSubscriptions: current.retired?[routeId], subscriptionId: id, wakeCapability: wake,
                                           alertCapability: result.alertCapability,
                                           expiresAt: expiry, alerts: alerts)
         var saved = try requireInstallation()
@@ -208,16 +232,35 @@ actor NotificationRelayClient {
         return grant
     }
 
+    func acknowledgeReplacedSubscriptions(routeId: String) throws {
+        var saved = try requireInstallation()
+        saved.retired?.removeValue(forKey: routeId)
+        saved.grants[routeId]?.previousSubscriptions = nil
+        try save(saved)
+    }
+
     func revoke(routeId: String) async throws {
         await acquire()
         defer { release() }
         try Task.checkCancellation()
         try load()
+        let now = Int64(Date().timeIntervalSince1970)
+        if let retired = installation?.retired?[routeId], let expiry = retired.map(\.expiresAt).max(), expiry > now {
+            throw NotificationRelayError.previousInstallationExpires(expiry)
+        }
         guard let grant = installation?.grants[routeId] else { return }
+        if grant.expiresAt <= now {
+            var saved = try requireInstallation()
+            saved.grants.removeValue(forKey: routeId)
+            try save(saved)
+            return
+        }
         do {
             _ = try await manage(["action": "revoke_subscription", "subscription_id": grant.subscriptionId])
         } catch let error as NotificationRelayHTTPError where error.status == 404 {
             // An absent grant is already unable to authorize another delivery.
+        } catch let error as DCError where error.code == .invalidKey {
+            throw NotificationRelayError.previousInstallationExpires(grant.expiresAt)
         }
         var saved = try requireInstallation()
         saved.grants.removeValue(forKey: routeId)
@@ -267,6 +310,10 @@ actor NotificationRelayClient {
                 // Confirmed installations never discard authority on a 401.
             }
         }
+        try await enroll(token: token, retired: installation?.retired ?? [:])
+    }
+
+    private func enroll(token: String, retired: [String: [NotificationPreviousSubscription]]) async throws {
         let key = try await attester.generateKey()
         guard let decoded = Data(base64Encoded: key), decoded.count == 32 else {
             throw NotificationRelayError.invalidResponse
@@ -276,7 +323,7 @@ actor NotificationRelayClient {
         identity.append(decoded)
         let id = NotificationRelayConfiguration.digest(identity)
         try save(NotificationInstallation(keyId: key, installationId: id,
-                                          confirmed: false, token: "", grants: [:]))
+                                          confirmed: false, token: "", grants: [:], retired: retired))
         let challenge = try await challenge(operation: "enroll", installationId: nil)
         let payload = try JSONSerialization.data(withJSONObject: ["device_token": token], options: [.sortedKeys])
         let proof = try await attester.attest(key: key, hash: challenge.clientDataHash(payload: payload))

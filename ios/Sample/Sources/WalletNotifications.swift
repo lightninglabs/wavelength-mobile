@@ -23,6 +23,15 @@ struct WalletNotificationRoute: Codable, Equatable {
     let relay: NotificationRelayConfiguration
     var configuration: String { relay.storageAccount }
     let source: NotificationSource
+    var boundGrant: String? = nil
+
+    func isBound(_ grant: NotificationRelayGrant) -> Bool {
+        boundGrant == Self.fingerprint(grant) && (grant.previousSubscriptions ?? []).isEmpty
+    }
+    static func fingerprint(_ grant: NotificationRelayGrant) -> String {
+        grant.subscriptionId + ":" + String(grant.expiresAt) + ":" +
+            NotificationRelayConfiguration.digest(Data((grant.wakeCapability + "\0" + (grant.alertCapability ?? "")).utf8))
+    }
 
     static func parsePush(_ userInfo: [AnyHashable: Any]) -> String? {
         guard let payload = userInfo["wavelength"] as? [String: Any],
@@ -111,12 +120,24 @@ final class WalletNotifications: ObservableObject {
                 // Revoke using the original bundled origin even after an
                 // endpoint or publisher configuration change. A signed 401 is
                 // not proof that a route has been revoked.
+                let identity = store.notificationIdentity
                 let obsolete = routes().filter {
-                    $0.network == network && (!desired || $0.configuration != configuration?.storageAccount)
+                    !defaults.bool(forKey: preference($0.network)) ||
+                        ($0.network == network &&
+                            ($0.configuration != configuration?.storageAccount ||
+                                (identity != nil && $0.identity != identity)))
                 }
+                var previousExpiry: Int64?
                 for route in obsolete {
-                    try await relay(route.relay).revoke(routeId: route.id)
-                    removeRoute(route.id)
+                    do {
+                        try await relay(route.relay).revoke(routeId: route.id)
+                        removeRoute(route.id)
+                    } catch NotificationRelayError.previousInstallationExpires(let expiry) where desired {
+                        // A destroyed key cannot revoke another installation.
+                        // Keep its metadata until expiry while setting up the
+                        // current wallet with a new attested key.
+                        previousExpiry = max(previousExpiry ?? 0, expiry)
+                    }
                 }
                 if !desired { status = "Notifications are off."; return }
                 guard let configuration else {
@@ -146,10 +167,25 @@ final class WalletNotifications: ObservableObject {
                         removeRoute(route.id)
                         return
                     }
+                    if route.isBound(grant) { continue }
+                    // Replacement of an Apple-destroyed installation key does
+                    // not revoke its old grants. Remove the old wallet-owned
+                    // producer routes before activating the replacement.
+                    for previous in grant.previousSubscriptions ?? [] where previous.expiresAt > Int64(Date().timeIntervalSince1970) {
+                        try await store.removeNotification(previous.id, source: source, network: network, identity: identity)
+                    }
+                    try await client.acknowledgeReplacedSubscriptions(routeId: route.id)
                     try await store.bindNotification(grant, source: source, configuration: configuration,
                                                      network: network, identity: identity)
+                    var bound = route
+                    bound.boundGrant = WalletNotificationRoute.fingerprint(grant)
+                    try updateRoute(bound)
                 }
-                status = "Notifications are on. Payment alerts show no amounts."
+                status = previousExpiry == nil ? "Notifications are on. Payment alerts show no amounts." :
+                    "Notifications are on. Previous installation grants are waiting to expire."
+            } catch NotificationRelayError.previousInstallationExpires(let expiry) {
+                status = "Previous installation keys were removed by iOS. Turning off completes by " +
+                    Date(timeIntervalSince1970: TimeInterval(expiry)).formatted(date: .abbreviated, time: .omitted) + "."
             } catch is CancellationError {
                 status = "Notification setup will resume when you open the wallet."
             } catch {
@@ -220,6 +256,10 @@ final class WalletNotifications: ObservableObject {
         saved.append(route)
         defaults.set(try JSONEncoder().encode(saved), forKey: "notifications.routes")
         return route
+    }
+    private func updateRoute(_ route: WalletNotificationRoute) throws {
+        let saved = routes().map { $0.id == route.id ? route : $0 }
+        defaults.set(try JSONEncoder().encode(saved), forKey: "notifications.routes")
     }
     private func removeRoute(_ id: String) {
         if let data = try? JSONEncoder().encode(routes().filter { $0.id != id }) {

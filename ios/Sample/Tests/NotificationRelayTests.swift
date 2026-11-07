@@ -1,4 +1,5 @@
 import CryptoKit
+import DeviceCheck
 import Foundation
 import XCTest
 import WalletKit
@@ -13,10 +14,14 @@ private final class MemoryNotificationCredentials: NotificationCredentialStorage
 
 private struct FixtureNotificationAttester: NotificationAttesting {
     var supported = true
+    var invalidKey: String? = nil
     let key = Data(repeating: 4, count: 32).base64EncodedString()
     func generateKey() async throws -> String { key }
     func attest(key: String, hash: Data) async throws -> Data { hash }
-    func assert(key: String, hash: Data) async throws -> Data { hash }
+    func assert(key: String, hash: Data) async throws -> Data {
+        if key == invalidKey { throw DCError(.invalidKey) }
+        return hash
+    }
 }
 
 private final class NotificationURLProtocol: URLProtocol {
@@ -64,6 +69,74 @@ final class NotificationRelayTests: XCTestCase {
                                                                                        "url": "https://evil.invalid"]]), "local-route")
     }
 
+    func testReinstallReplacesOnlyAppleInvalidKeyAndRetainsOldSubscriptionForRemoval() async throws {
+        let configuration = try configuration()
+        let credentials = MemoryNotificationCredentials()
+        let oldGrant = NotificationRelayGrant(subscriptionId: "old-subscription", wakeCapability: String(repeating: "A", count: 43),
+                                              alertCapability: nil, expiresAt: 2_000_000_000, alerts: true)
+        let old = NotificationInstallation(keyId: "lost-key", installationId: "old-installation", confirmed: true,
+                                            token: "old-token", grants: ["route": oldGrant])
+        try credentials.save(JSONEncoder().encode(old), account: "")
+        let attester = FixtureNotificationAttester(invalidKey: "lost-key")
+        var identity = Data("test\0".utf8)
+        identity.append(try XCTUnwrap(Data(base64Encoded: attester.key)))
+        let newID = NotificationRelayConfiguration.digest(identity)
+        var enrollments = 0
+        let settings = URLSessionConfiguration.ephemeral
+        settings.protocolClasses = [NotificationURLProtocol.self]
+        let session = URLSession(configuration: settings)
+        defer { NotificationURLProtocol.handler = nil; session.invalidateAndCancel() }
+        NotificationURLProtocol.handler = { request in
+            let object = try JSONSerialization.jsonObject(with: Self.body(request)) as! [String: Any]
+            var result: [String: Any] = [:]
+            switch request.url!.path {
+            case "/v1/challenges":
+                result = ["id": "challenge", "nonce": "nonce", "app_id": "test", "operation": object["operation"]!,
+                          "expires_at": Int64(Date().timeIntervalSince1970) + 300]
+                result["installation_id"] = object["installation_id"]
+            case "/v1/installations":
+                enrollments += 1
+                result = ["installation_id": newID]
+            case "/v1/installations/\(newID)/manage":
+                result = ["subscription_id": "new-subscription", "wake_capability": String(repeating: "A", count: 43),
+                          "alert_capability": String(repeating: "A", count: 43), "expires_at": 2_000_000_000]
+            default: XCTFail("Unexpected request: \(request.url!.path)")
+            }
+            return (200, try JSONSerialization.data(withJSONObject: result))
+        }
+        let client = NotificationRelayClient(configuration: configuration, attester: attester, session: session, credentials: credentials)
+        do { try await client.revoke(routeId: "route"); XCTFail("A destroyed key cannot revoke an old grant") }
+        catch NotificationRelayError.previousInstallationExpires(let expiry) { XCTAssertEqual(expiry, oldGrant.expiresAt) }
+        let grant = try await client.subscribe(token: "new-token", routeId: "route", alerts: true)
+        XCTAssertEqual(enrollments, 1)
+        XCTAssertEqual(grant.subscriptionId, "new-subscription")
+        XCTAssertEqual(grant.previousSubscriptions?.map(\.id), ["old-subscription"])
+        let route = WalletNotificationRoute(id: "route", network: "signet", identity: "wallet", relay: configuration, source: .swapServer,
+                                            boundGrant: WalletNotificationRoute.fingerprint(oldGrant))
+        XCTAssertFalse(route.isBound(grant))
+        try await client.acknowledgeReplacedSubscriptions(routeId: "route")
+        let reused = try await client.subscribe(token: "new-token", routeId: "route", alerts: true)
+        XCTAssertNil(reused.previousSubscriptions)
+        var bound = route
+        bound.boundGrant = WalletNotificationRoute.fingerprint(reused)
+        XCTAssertTrue(bound.isBound(reused))
+    }
+
+    private static func body(_ request: URLRequest) -> Data {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { return Data() }
+        stream.open()
+        defer { stream.close() }
+        var result = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            if count <= 0 { break }
+            result.append(buffer, count: count)
+        }
+        return result
+    }
+
     func testLostEnrollmentResponseRecoversBeforeRequestingAnotherAttestation() async throws {
         let configuration = try configuration()
         let credentials = MemoryNotificationCredentials()
@@ -77,30 +150,20 @@ final class NotificationRelayTests: XCTestCase {
         var subscriptions = 0
         var revoked = false
         var rejectRevoke = true
+        var rejectManageChallenge = false
         let sessionConfiguration = URLSessionConfiguration.ephemeral
         sessionConfiguration.protocolClasses = [NotificationURLProtocol.self]
         let session = URLSession(configuration: sessionConfiguration)
         defer { NotificationURLProtocol.handler = nil; session.invalidateAndCancel() }
         NotificationURLProtocol.handler = { request in
-            var body = request.httpBody ?? Data()
-            if let stream = request.httpBodyStream {
-                stream.open()
-                defer { stream.close() }
-                var buffer = [UInt8](repeating: 0, count: 4096)
-                while stream.hasBytesAvailable {
-                    let count = stream.read(&buffer, maxLength: buffer.count)
-                    if count <= 0 { break }
-                    body.append(buffer, count: count)
-                }
-            }
-            let object = try JSONSerialization.jsonObject(with: body) as! [String: Any]
+            let object = try JSONSerialization.jsonObject(with: Self.body(request)) as! [String: Any]
             func json(_ value: [String: Any], _ status: Int = 200) throws -> (Int, Data) {
                 (status, try JSONSerialization.data(withJSONObject: value))
             }
             switch request.url!.path {
             case "/v1/challenges":
                 let operation = object["operation"] as! String
-                if operation == "manage" && !enrolled { return try json([:], 401) }
+                if operation == "manage" && (!enrolled || rejectManageChallenge) { return try json([:], 401) }
                 var result: [String: Any] = ["id": "challenge", "nonce": "nonce", "app_id": "test", "operation": operation,
                                            "expires_at": Int64(Date().timeIntervalSince1970) + 300]
                 if operation == "manage" { result["installation_id"] = installation }
@@ -146,6 +209,11 @@ final class NotificationRelayTests: XCTestCase {
         XCTAssertNotNil(disk.grants["route"])
         _ = try await restarted.subscribe(token: "abcd", routeId: "route", alerts: true)
         XCTAssertEqual(subscriptions, 1, "Persisted grant should be reusable")
+        rejectManageChallenge = true
+        do { _ = try await restarted.subscribe(token: "new-token", routeId: "route", alerts: true); XCTFail("Expected 401") }
+        catch { XCTAssertEqual((error as? NotificationRelayHTTPError)?.status, 401) }
+        XCTAssertEqual(attestations, 1, "HTTP authorization failures must not discard a confirmed installation")
+        rejectManageChallenge = false
         do { try await restarted.revoke(routeId: "route"); XCTFail("A 401 is not revocation evidence") }
         catch { XCTAssertEqual((error as? NotificationRelayHTTPError)?.status, 401) }
         let pending = try JSONDecoder().decode(NotificationInstallation.self, from: XCTUnwrap(credentials.read(account: "")))

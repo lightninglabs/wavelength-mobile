@@ -45,11 +45,13 @@ struct ContentView: View {
                 store.lockForBackground()
                 enteredBackground = true
             case .active:
-                notifications.reconcile()
                 if store.phase == .idle { Task { await store.start() }; break }
-                guard enteredBackground else { break }
+                guard enteredBackground else { notifications.reconcile(); break }
                 enteredBackground = false
-                Task { await store.resumeAfterBackground() }
+                Task {
+                    await store.resumeAfterBackground()
+                    notifications.reconcile()
+                }
             default:
                 break
             }

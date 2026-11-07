@@ -959,6 +959,14 @@ final class WalletStore: ObservableObject {
               result.expiresAtUnix <= grant.expiresAt else { throw NotificationRelayError.invalidResponse }
     }
 
+    func removeNotification(_ subscription: String, source: NotificationSource,
+                            network: String, identity: String) async throws {
+        guard self.network.rawValue == network, notificationIdentity == identity else { throw CancellationError() }
+        beginStateCreatingCall()
+        defer { endStateCreatingCall() }
+        _ = try await client.setNotificationSubscription(.remove(source: source, subscriptionID: subscription))
+    }
+
     private func walletConfig() throws -> WalletConfig {
         let support = try dataRoot ?? FileManager.default.url(
             for: .applicationSupportDirectory,
