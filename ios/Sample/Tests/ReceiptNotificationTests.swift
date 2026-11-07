@@ -58,6 +58,25 @@ final class ReceiptNotificationTests: XCTestCase {
         XCTAssertNil(try restored.enrolled(routeID: "route", eventHash: event, now: 104))
     }
 
+    func testConcurrentEventsKeepIndependentPresentationOwnership() throws {
+        let ledger = ReceiptNotificationLedger(storage: ReceiptMemoryCredentials())
+        let consent = try ledger.ensureConsent(network: "signet", now: 100)
+        try ledger.enroll(enrolled(consent), now: 101)
+        XCTAssertTrue(ledger.reservePresentation(routeID: "route", eventHash: event))
+        XCTAssertFalse(ledger.reservePresentation(routeID: "route", eventHash: event),
+                       "Duplicate must not consume the first callback's enrolled proof")
+        // A maintenance window or another invoice does not own this event.
+        XCTAssertTrue(ledger.reservePresentation(routeID: "route", eventHash: "other-invoice"))
+        XCTAssertTrue(try ledger.claim(routeID: "route", eventHash: "other-invoice", now: 102))
+        ledger.releasePresentation(routeID: "route", eventHash: "other-invoice")
+        XCTAssertNotNil(try ledger.enrolled(routeID: "route", eventHash: event, now: 103))
+        XCTAssertTrue(try ledger.claim(routeID: "route", eventHash: event, now: 103))
+        ledger.releasePresentation(routeID: "route", eventHash: event)
+        XCTAssertTrue(ledger.reservePresentation(routeID: "route", eventHash: event))
+        XCTAssertFalse(try ledger.claim(routeID: "route", eventHash: event, now: 104),
+                       "Releasing in-memory ownership never releases the durable claim")
+    }
+
     func testEpochChangeRejectsHistoricalEnrollmentAndStorageFailureDoesNotClaim() throws {
         let storage = ReceiptMemoryCredentials()
         let ledger = ReceiptNotificationLedger(storage: storage)

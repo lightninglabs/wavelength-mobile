@@ -77,9 +77,20 @@ final class ReceiptNotificationLedger {
     private let account = "notification-receipt-presentations.v1"
     private let lifetime: Int64 = 2 * 24 * 60 * 60
     private let capacity = 1024
+    private var presenting: Set<String> = []
 
     init(storage: any NotificationCredentialStorage = NotificationKeychainStorage()) {
         self.storage = storage
+    }
+
+    /// Own one event across awaits. An unrelated maintenance window must not
+    /// suppress its generic banner, and a duplicate must not steal its proof.
+    func reservePresentation(routeID: String, eventHash: String) -> Bool {
+        presenting.insert(routeID + ":" + eventHash).inserted
+    }
+
+    func releasePresentation(routeID: String, eventHash: String) {
+        presenting.remove(routeID + ":" + eventHash)
     }
 
     func consent(network: String) throws -> ReceiptConsent? {

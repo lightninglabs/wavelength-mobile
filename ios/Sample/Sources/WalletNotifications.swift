@@ -431,10 +431,11 @@ extension WalletNotifications {
             guard let id = WalletNotificationRoute.parsePush(userInfo), validWakeRoute(id) != nil else { return false }
             return await runMaintenance(windowID: windowID, lease: lease)
         }
-        // The first callback owns its result. A duplicate or another window
-        // must not consume its enrollment with an early generic claim.
-        guard activeReceiptWindow == nil, let store,
-              let route = validPaymentRoute(hint.routeID) else { return false }
+        guard let store, let route = validPaymentRoute(hint.routeID),
+              receiptLedger.reservePresentation(routeID: hint.routeID, eventHash: hint.eventHash) else { return false }
+        defer { receiptLedger.releasePresentation(routeID: hint.routeID, eventHash: hint.eventHash) }
+        // One callback owns this event across awaits. Other events can still
+        // use generic presentation while the native window belongs elsewhere.
         let currentRoute = isCurrentPaymentRoute(route, store: store)
         let id = hint.routeID
         let eventHash = hint.eventHash

@@ -110,8 +110,9 @@ receipt window. Only complete matching local source/canonical proof with the
 original principal can show "You received X sats". A lock, consent/account change,
 timeout or incomplete proof removes amount authority. A valid payment hint may
 instead show fixed generic activity text. Ordinary wake messages, foreground hints and already
-visible remote alerts never create another local banner. A busy window leaves
-a concurrent hint unclaimed so it cannot downgrade the first callback. Known
+visible remote alerts never create another local banner. Per-event presentation ownership leaves
+a duplicate hint unclaimed so it cannot downgrade the first callback. An
+unrelated native window still permits a generic banner for another event. Known
 subscribed routes for another saved network retain generic presentation; amount
 work remains restricted to the current matching wallet and configuration. A device-only Keychain
 ledger claims the event before notification insertion, preventing later replay
