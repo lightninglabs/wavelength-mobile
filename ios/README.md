@@ -29,7 +29,7 @@ make run
 ```
 
 `.wavelength-ios-version` pins Wavelength source at
-`ed745bdcebf4a0a263258b7cb710fcfdfe969ee3`. The fetch script applies
+`80ef7d08c121e6f68deeb76ecd7d554d10cd6788`. The fetch script applies
 `scripts/wavelength-ios-recovery.patch`, builds the iOS/device and Simulator
 slices, and stages the ignored framework under `ios/WalletKit/Frameworks`.
 The patch exposes refresh, confirmed-input observation, recovery
@@ -52,7 +52,10 @@ Apply the bridge to a clean pinned checkout with
 Release-tag overrides retain the packaged-release download path, but the
 release must expose all binding functions used by this wrapper, including
 `MobileRecoveryInventory`, `MobileObserveRefresh`, `MobileRefresh`, and
-`MobileExportExits` and `MobileSetNotificationSubscription`. Published releases through v0.2.1 lack this bridge and
+`MobileExportExits`, `MobileSetNotificationSubscription`,
+`MobileSetHostForeground`, `MobileRunReceiptWindow`,
+`MobileRunMaintenanceWindow`, and `MobileCancelReceiptWindow`.
+Published releases through v0.2.1 lack this bridge and
 cannot build the current Swift wrapper. Use the repository's source pin until
 a compatible release is published. Android keeps its independent release pin in
 `.wavelength-version`.
@@ -128,3 +131,25 @@ No unpublished release asset or invented checksum is used.
 replay missed transitions. Persist it only after processing that entry. `list`
 accepts the opaque `ActivityList.nextCursor` for complete keyset pagination.
 Notification recovery must not truncate its catch-up to the UI’s latest page.
+
+## Warm receipt and maintenance windows
+
+Set `WalletConfig.durableRoundRuntime = true` before adopting these host APIs.
+Keep it enabled independently of notification consent. `setHostForeground(false)`
+joins continuous ingress while retaining the daemon and domain workers. The host
+must serialize against state-creating wallet calls. `runReceiptWindow` checks one
+locally enrolled invoice; only complete source/canonical proof may supply an
+amount, after the host validates consent, identity and event correlation.
+
+`runMaintenanceWindow` needs no invoice. It attempts current-tip expiry for a
+bounded page of existing VTXO owners and pumps native round work. It returns no
+receipts and never authorizes a payment banner. Use it for ordinary protocol wakes
+and scheduled background opportunities. Both windows accept 1 through 20 seconds
+and share `cancelReceiptWindow` with a unique invocation ID. Cancellation signals
+expiry; the original call retains native ownership until its actual return.
+
+Resume with `setHostForeground(true)` before ordinary foreground calls. Do not
+stop, reopen or unlock a wallet from an expiry handler. These APIs require an
+already-unlocked retained runtime; they do not promise global catchup, safe
+suspension or a hard wall-clock bound for uncooperative dependencies. Preserve the
+wallet files and use a compatible forward fix after durable-runtime adoption.

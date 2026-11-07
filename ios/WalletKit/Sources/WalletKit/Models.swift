@@ -177,15 +177,31 @@ public struct EntryRequest: Decodable, Sendable {
 public struct ReceiveResult: Decodable, Sendable {
     public let invoice: String
     public let entry: Entry
+    public let receiptReference: LightningReceiptReference?
 
-    public init(invoice: String, entry: Entry) {
+    /// Recovered historical entries intentionally have no enrollment reference.
+    public init(invoice: String, entry: Entry,
+                receiptReference: LightningReceiptReference? = nil) {
         self.invoice = invoice
         self.entry = entry
+        self.receiptReference = receiptReference
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        invoice = try values.decode(String.self, forKey: .invoice)
+        entry = try values.decode(Entry.self, forKey: .entry)
+        // Optional notification metadata must never turn an already-created
+        // invoice into an apparent failed state-creating call.
+        receiptReference = try? values.decodeIfPresent(
+            LightningReceiptReference.self, forKey: .receiptReference
+        )
     }
 
     enum CodingKeys: String, CodingKey {
         case invoice = "Invoice"
         case entry = "Entry"
+        case receiptReference = "ReceiptReference"
     }
 }
 
