@@ -33,6 +33,13 @@ struct WalletNotificationRoute: Codable, Equatable {
             NotificationRelayConfiguration.digest(Data((grant.wakeCapability + "\0" + (grant.alertCapability ?? "")).utf8))
     }
 
+    /// A restored wallet can reconstruct its route after reinstall even when
+    /// UserDefaults was removed but Keychain's prior grants survived.
+    static func routeID(network: String, identity: String, relay: NotificationRelayConfiguration, source: NotificationSource) -> String {
+        let fields = ["wavelength.ios.notification-route.v1", relay.storageAccount, network, identity, source.rawValue]
+        return NotificationRelayConfiguration.digest(Data(fields.joined(separator: "\0").utf8))
+    }
+
     static func parsePush(_ userInfo: [AnyHashable: Any]) -> String? {
         guard let payload = userInfo["wavelength"] as? [String: Any],
               let version = payload["version"] as? NSNumber,
@@ -251,7 +258,7 @@ final class WalletNotifications: ObservableObject {
             $0.network == network && $0.identity == identity &&
                 $0.configuration == configuration.storageAccount && $0.source == source
         }) { return route }
-        let route = WalletNotificationRoute(id: UUID().uuidString.lowercased(), network: network,
+        let route = WalletNotificationRoute(id: WalletNotificationRoute.routeID(network: network, identity: identity, relay: configuration, source: source), network: network,
                                            identity: identity, relay: configuration, source: source)
         saved.append(route)
         defaults.set(try JSONEncoder().encode(saved), forKey: "notifications.routes")

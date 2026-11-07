@@ -72,10 +72,17 @@ final class NotificationRelayTests: XCTestCase {
     func testReinstallReplacesOnlyAppleInvalidKeyAndRetainsOldSubscriptionForRemoval() async throws {
         let configuration = try configuration()
         let credentials = MemoryNotificationCredentials()
+        let routeID = WalletNotificationRoute.routeID(network: "signet", identity: "wallet", relay: configuration, source: .swapServer)
+        // No UserDefaults route survives. A restored matching wallet derives
+        // the same opaque route; other networks/identities/sources cannot.
+        XCTAssertEqual(routeID, WalletNotificationRoute.routeID(network: "signet", identity: "wallet", relay: configuration, source: .swapServer))
+        XCTAssertNotEqual(routeID, WalletNotificationRoute.routeID(network: "mainnet", identity: "wallet", relay: configuration, source: .swapServer))
+        XCTAssertNotEqual(routeID, WalletNotificationRoute.routeID(network: "signet", identity: "other", relay: configuration, source: .swapServer))
+        XCTAssertNotEqual(routeID, WalletNotificationRoute.routeID(network: "signet", identity: "wallet", relay: configuration, source: .arkOperator))
         let oldGrant = NotificationRelayGrant(subscriptionId: "old-subscription", wakeCapability: String(repeating: "A", count: 43),
                                               alertCapability: nil, expiresAt: 2_000_000_000, alerts: true)
         let old = NotificationInstallation(keyId: "lost-key", installationId: "old-installation", confirmed: true,
-                                            token: "old-token", grants: ["route": oldGrant])
+                                            token: "old-token", grants: [routeID: oldGrant])
         try credentials.save(JSONEncoder().encode(old), account: "")
         let attester = FixtureNotificationAttester(invalidKey: "lost-key")
         var identity = Data("test\0".utf8)
@@ -105,17 +112,17 @@ final class NotificationRelayTests: XCTestCase {
             return (200, try JSONSerialization.data(withJSONObject: result))
         }
         let client = NotificationRelayClient(configuration: configuration, attester: attester, session: session, credentials: credentials)
-        do { try await client.revoke(routeId: "route"); XCTFail("A destroyed key cannot revoke an old grant") }
+        do { try await client.revoke(routeId: routeID); XCTFail("A destroyed key cannot revoke an old grant") }
         catch NotificationRelayError.previousInstallationExpires(let expiry) { XCTAssertEqual(expiry, oldGrant.expiresAt) }
-        let grant = try await client.subscribe(token: "new-token", routeId: "route", alerts: true)
+        let grant = try await client.subscribe(token: "new-token", routeId: routeID, alerts: true)
         XCTAssertEqual(enrollments, 1)
         XCTAssertEqual(grant.subscriptionId, "new-subscription")
         XCTAssertEqual(grant.previousSubscriptions?.map(\.id), ["old-subscription"])
-        let route = WalletNotificationRoute(id: "route", network: "signet", identity: "wallet", relay: configuration, source: .swapServer,
+        let route = WalletNotificationRoute(id: routeID, network: "signet", identity: "wallet", relay: configuration, source: .swapServer,
                                             boundGrant: WalletNotificationRoute.fingerprint(oldGrant))
         XCTAssertFalse(route.isBound(grant))
-        try await client.acknowledgeReplacedSubscriptions(routeId: "route")
-        let reused = try await client.subscribe(token: "new-token", routeId: "route", alerts: true)
+        try await client.acknowledgeReplacedSubscriptions(routeId: routeID)
+        let reused = try await client.subscribe(token: "new-token", routeId: routeID, alerts: true)
         XCTAssertNil(reused.previousSubscriptions)
         var bound = route
         bound.boundGrant = WalletNotificationRoute.fingerprint(reused)

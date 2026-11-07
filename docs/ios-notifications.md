@@ -57,6 +57,10 @@ were revoked. Old queued hints may still arrive during their bounded lifetime.
 Neither producer receives Apple credentials, wallet keys, notification amounts or a URL
 chosen by the push. An HTTP 401 does not establish successful revocation.
 
+Route IDs are deterministic hashes of publisher scope, network, wallet identity
+and source. A restored wallet reconstructs the same route after reinstall even
+when UserDefaults was removed. A different wallet or network cannot inherit it.
+
 A tap resolves a known local opaque route, waits for the matching network and
 unlocked wallet, refreshes wallet activity and opens Activity. Unknown routes
 are ignored. Cross-network taps ask the user to open that network. They never
