@@ -38,6 +38,11 @@ enum Bindings {
         if !ok { throw WalletError(message: "MobileStop returned false") }
     }
 
+    static func setNotificationSubscription(_ req: Data) throws -> Data {
+        var err: NSError?
+        return try unwrap(MobileSetNotificationSubscription(req, &err), err)
+    }
+
     static func getInfo() throws -> Data {
         var err: NSError?
         return try unwrap(MobileGetInfo(&err), err)
@@ -161,6 +166,7 @@ enum Bindings {
     static func isRunning() -> Bool { false }
     static func start(_ cfg: String) throws { throw missing() }
     static func stop() throws { throw missing() }
+    static func setNotificationSubscription(_ req: Data) throws -> Data { throw missing() }
     static func getInfo() throws -> Data { throw missing() }
     static func status() throws -> Data { throw missing() }
     static func balance() throws -> Data { throw missing() }
