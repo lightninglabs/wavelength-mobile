@@ -43,6 +43,7 @@ struct ContentView: View {
             switch phase {
             case .background:
                 store.lockForBackground()
+                notifications.enteredBackground()
                 enteredBackground = true
             case .active:
                 if store.phase == .idle { Task { await store.start() }; break }

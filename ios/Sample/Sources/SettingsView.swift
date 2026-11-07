@@ -162,8 +162,12 @@ private struct NotificationSettingsView: View {
                 set: { value in Task { await notifications.setEnabled(value) } }))
                 .disabled(notifications.working || (!notifications.available && !notifications.enabled))
                 .accessibilityIdentifier("settings.notifications")
+            Toggle("Show received amounts", isOn: Binding(get: { notifications.amountsEnabled },
+                set: { notifications.setAmountsEnabled($0) }))
+                .disabled(notifications.working || !notifications.enabled || !notifications.amountsAvailable)
+                .accessibilityIdentifier("settings.notificationAmounts")
             Text(notifications.status).font(.footnote).foregroundStyle(WalletTheme.secondary)
-            Text("Alerts show payment activity. Open and unlock your wallet to check the result. Amounts stay private.")
+            Text("Amounts are off by default. When enabled, new invoices can show received sats if this wallet updates in the background. Locked wallets and incomplete updates show payment activity. Delivery may be skipped when iOS does not allow background time.")
                 .font(.footnote).foregroundStyle(WalletTheme.secondary)
             Button("Retry setup") { notifications.reconcile() }.disabled(notifications.working)
             Button("iOS notification settings") {

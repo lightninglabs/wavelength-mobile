@@ -8,8 +8,9 @@ struct NotificationRelayConfiguration: Equatable, Sendable, Codable {
     let appAlias: String
     let producerAlias: String
     let swapIssuer: String
+    let receiptHints: Bool?
 
-    init?(origin: String, appAlias: String, producerAlias: String, swapIssuer: String) {
+    init?(origin: String, appAlias: String, producerAlias: String, swapIssuer: String, receiptHints: Bool = false) {
         guard let url = URL(string: origin), url.scheme == "https", url.host != nil,
               url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
               url.path.isEmpty || url.path == "/",
@@ -20,6 +21,7 @@ struct NotificationRelayConfiguration: Equatable, Sendable, Codable {
         self.appAlias = appAlias
         self.producerAlias = producerAlias
         self.swapIssuer = swapIssuer
+        self.receiptHints = receiptHints ? true : nil
     }
 
     var storageAccount: String {
@@ -50,6 +52,7 @@ struct NotificationRelayGrant: Codable, Sendable {
     let alertCapability: String?
     let expiresAt: Int64
     let alerts: Bool
+    var presentation: String? = nil
 }
 
 struct NotificationRelayChallenge: Decodable, Sendable {
@@ -142,6 +145,7 @@ struct NotificationInstallation: Codable {
 }
 
 private struct NotificationManagementResult: Decodable {
+    let alertPresentation: String?
     let subscriptionId: String?
     let wakeCapability: String?
     let alertCapability: String?
@@ -187,13 +191,13 @@ actor NotificationRelayClient {
         self.session = session ?? URLSession(configuration: settings, delegate: RejectRelayRedirects(), delegateQueue: nil)
     }
 
-    func subscribe(token: String, routeId: String, alerts: Bool) async throws -> NotificationRelayGrant {
+    func subscribe(token: String, routeId: String, alerts: Bool, receiptHints: Bool = false) async throws -> NotificationRelayGrant {
         await acquire()
         defer { release() }
         try Task.checkCancellation()
         guard attester.supported else { throw NotificationRelayError.unsupportedDevice }
         do {
-            return try await subscribeLocked(token: token, routeId: routeId, alerts: alerts)
+            return try await subscribeLocked(token: token, routeId: routeId, alerts: alerts, receiptHints: receiptHints)
         } catch let error as DCError where error.code == .invalidKey {
             // Apple destroys App Attest keys on uninstall while Keychain can
             // survive. Only this precise device error permits replacement;
@@ -203,29 +207,36 @@ actor NotificationRelayClient {
                 retired[route, default: []].append(.init(id: grant.subscriptionId, expiresAt: grant.expiresAt))
             }
             try await enroll(token: token, retired: retired)
-            return try await subscribeLocked(token: token, routeId: routeId, alerts: alerts)
+            return try await subscribeLocked(token: token, routeId: routeId, alerts: alerts, receiptHints: receiptHints)
         }
     }
 
-    private func subscribeLocked(token: String, routeId: String, alerts: Bool) async throws -> NotificationRelayGrant {
+    private func subscribeLocked(token: String, routeId: String, alerts: Bool, receiptHints: Bool) async throws -> NotificationRelayGrant {
         try await ensureInstallation(token: token)
         guard let current = installation else { throw NotificationRelayError.unavailableCredentials }
+        let presentation = alerts && receiptHints ? "receipt_hint" : "generic"
         if let grant = current.grants[routeId], grant.alerts == alerts,
+           (grant.presentation ?? "generic") == presentation,
            grant.expiresAt > Int64(Date().timeIntervalSince1970) + 86_400 {
             return grant
         }
-        let result = try await manage([
+        var payload: [String: Any] = [
             "action": "subscribe", "route_id": routeId, "enable_alerts": alerts,
-        ])
+        ]
+        // Old servers reject this field. Never assume local presentation
+        // replaced their visible alert without an explicit acknowledgement.
+        if alerts && receiptHints { payload["alert_presentation"] = presentation }
+        let result = try await manage(payload)
         guard let id = result.subscriptionId, NotificationRelayConfiguration.identifier(id),
               let wake = result.wakeCapability, Self.validCapability(wake),
               let expiry = result.expiresAt, expiry > Int64(Date().timeIntervalSince1970),
-              !alerts || result.alertCapability.map(Self.validCapability) == true else {
+              !alerts || result.alertCapability.map(Self.validCapability) == true,
+              presentation != "receipt_hint" || result.alertPresentation == "receipt_hint" else {
             throw NotificationRelayError.invalidResponse
         }
         let grant = NotificationRelayGrant(previousSubscriptions: current.retired?[routeId], subscriptionId: id, wakeCapability: wake,
                                           alertCapability: result.alertCapability,
-                                          expiresAt: expiry, alerts: alerts)
+                                          expiresAt: expiry, alerts: alerts, presentation: result.alertPresentation)
         var saved = try requireInstallation()
         saved.grants[routeId] = grant
         try save(saved)
