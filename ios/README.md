@@ -29,13 +29,12 @@ make run
 ```
 
 `.wavelength-ios-version` pins Wavelength source at
-`43c517cf6fefe9aae3f9c2a879d0b11f6ff407a2`. The fetch script applies
+`ed745bdcebf4a0a263258b7cb710fcfdfe969ee3`. The fetch script applies
 `scripts/wavelength-ios-recovery.patch`, builds the iOS/device and Simulator
 slices, and stages the ignored framework under `ios/WalletKit/Frameworks`.
 The patch exposes refresh, confirmed-input observation, recovery
-inventory, and complete signed recovery export. It also carries the metadata
-fix in [Wavelength #1530](https://github.com/lightninglabs/wavelength/pull/1530),
-which correlates credit funding after self-change.
+inventory, complete signed recovery export, and native send-admission errors.
+Credit funding correlation after self-change is already in the source pin.
 
 The staged receipt includes the exact source commit and bridge digest. A
 matching artifact is reusable offline; a different pin or bridge requires a
@@ -53,7 +52,7 @@ Apply the bridge to a clean pinned checkout with
 Release-tag overrides retain the packaged-release download path, but the
 release must expose all binding functions used by this wrapper, including
 `MobileRecoveryInventory`, `MobileObserveRefresh`, `MobileRefresh`, and
-`MobileExportExits`. Published releases through v0.2.1 lack this bridge and
+`MobileExportExits` and `MobileSetNotificationSubscription`. Published releases through v0.2.1 lack this bridge and
 cannot build the current Swift wrapper. Use the repository's source pin until
 a compatible release is published. Android keeps its independent release pin in
 `.wavelength-version`.
@@ -100,3 +99,32 @@ Keep wallet keys and the managed data directory under the host application's
 ownership. A seed alone does not back up all off-chain state. See the
 [storage investigation](../docs/ios-storage.md) and
 [integration checks](../docs/ios-integration.md).
+
+## Notification source registration
+
+The pinned native source includes signed operator and swap notification
+registration and retained shutdown ownership. `WalletClient` accepts a typed
+`NotificationSubscription.register` or `.remove`. Register each configured
+source independently. The operator receives only a wake capability. Supply an
+optional alert capability only to a source that can classify incoming work.
+`WalletConfig.swapNotificationIssuer` pins the swap service's compressed public
+wallet identity; leave it unset to keep that source unsupported. Registration
+uses the existing gRPC connection. Push payloads cannot supply endpoints or pins.
+
+These calls do not enroll a phone with APNs, attest an installation, or run wallet
+recovery. The app owns those platform responsibilities. Capabilities belong in
+Keychain and must not appear in logs or notification payloads.
+
+A `WalletError.isStopPending` result means the native singleton still owns
+cleanup. Retain the client and repeat `stop()` before starting another daemon.
+`isRunning == false` alone does not prove cleanup has finished.
+
+The recovery bridge patch now contains only the remaining additive native APIs;
+the pinned SDK already includes the credit top-up correlation fix and its test.
+The framework is built locally from the exact source and recorded patch digest.
+No unpublished release asset or invented checksum is used.
+
+`activity` and `incomingPayments` accept the last durable `Entry.cursor` to
+replay missed transitions. Persist it only after processing that entry. `list`
+accepts the opaque `ActivityList.nextCursor` for complete keyset pagination.
+Notification recovery must not truncate its catch-up to the UI’s latest page.
