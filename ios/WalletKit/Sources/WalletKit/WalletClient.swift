@@ -121,7 +121,7 @@ public actor WalletClient {
         _ windowID: String, timeoutSeconds: Int64 = 15
     ) async throws -> ReceiptWindowResult {
         let data = try await bg { try Bindings.runMaintenanceWindow(windowID, timeoutSeconds) }
-        return try JSONDecoder().decode(ReceiptWindowResult.self, from: data)
+        return try decode(data)
     }
 
     /// Signal expiry without releasing the running call's retained owner.

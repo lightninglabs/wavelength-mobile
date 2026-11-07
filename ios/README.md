@@ -398,6 +398,11 @@ Publisher configuration is empty by default. See
 [the iOS notification integration](../docs/ios-notifications.md) for build keys,
 credential ownership, revocation and remaining bounded-runtime work.
 
+Release-tag overrides must expose `MobileSetHostForeground`,
+`MobileRunReceiptWindow`, `MobileRunMaintenanceWindow` and
+`MobileCancelReceiptWindow`, as well as the existing recovery and subscription
+bridge symbols. An older release cannot build the current Swift wrapper.
+
 ## Warm receipt and maintenance windows
 
 Set `WalletConfig.durableRoundRuntime = true` before adopting these host APIs.
