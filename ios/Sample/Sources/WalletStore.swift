@@ -1,3 +1,4 @@
+import UIKit
 import Combine
 import Foundation
 import WalletKit
@@ -54,6 +55,8 @@ final class WalletStore: ObservableObject {
     private var generation = 0
     @Published private var stateCreatingCallCount = 0
     private var foregroundRestartPending = false
+    private var receiptBackgroundRequested = false
+    private var receiptWindowWork: Task<ReceiptWindowResult, Error>?
 
     init(defaults: UserDefaults = .standard, client: WalletClient = WalletClient(), dataRoot: URL? = nil) {
         self.defaults = defaults
@@ -157,6 +160,10 @@ final class WalletStore: ObservableObject {
     /// background. If a state-creating call is still returning, defer teardown
     /// until its outcome can be reconciled instead of cancelling it midway.
     func resumeAfterBackground() async {
+        receiptBackgroundRequested = false
+        // Intentional pause must end before GetInfo's transport-health test.
+        // This does not unlock a wallet or bypass the session lock.
+        if await client.isRunning { try? await client.setHostForeground(true) }
         foregroundRestartPending = true
         await restartForForegroundIfSafe()
     }
@@ -189,7 +196,7 @@ final class WalletStore: ObservableObject {
 
     func createWallet(mnemonic: [String] = [], showBackup: Bool = true, password suppliedPassword: String = "") async {
         guard phase == .needsSetup else { return }
-        beginStateCreatingCall()
+        await beginStateCreatingCall()
         defer { endStateCreatingCall() }
         isWorking = true
         defer { isWorking = false }
@@ -222,7 +229,7 @@ final class WalletStore: ObservableObject {
 
     func unlockWallet(password: String) async {
         guard (phase == .needsUnlock || isSessionLocked), !password.isEmpty, stateCreatingCallCount == 0 else { return }
-        beginStateCreatingCall()
+        await beginStateCreatingCall()
         defer { endStateCreatingCall() }
         isWorking = true
         defer { isWorking = false }
@@ -293,6 +300,7 @@ final class WalletStore: ObservableObject {
         maxFeeSat: Int64,
         sweepAll: Bool = false
     ) async throws -> PrepareSendResult {
+        if let work = receiptWindowWork { _ = try? await work.value }
         if destination.lowercased().hasPrefix("ln") {
             return try await client.prepareSend(
                 invoice: destination,
@@ -312,7 +320,7 @@ final class WalletStore: ObservableObject {
 
     func sendPrepared(_ quote: PrepareSendResult) async throws -> SendResult {
         guard pendingDispatch == nil else { throw WalletActionError(message: "Check the existing payment in Activity.") }
-        beginStateCreatingCall()
+        await beginStateCreatingCall()
         defer { endStateCreatingCall() }
         // Read the baseline before dispatch. An earlier failed payment may
         // reuse the same hash or input, but cannot resolve this new attempt.
@@ -344,9 +352,10 @@ final class WalletStore: ObservableObject {
     }
 
     func receiveLightning(amountSat: Int64, memo: String) async throws -> ReceiveResult {
-        beginStateCreatingCall()
+        await beginStateCreatingCall()
         defer { endStateCreatingCall() }
         let existingEntryIDs = Set(activity.map(\.id))
+        let receiptContext = WalletNotifications.shared.receiptCreationContext()
 
         do {
             let result = try await client.receiveLightning(
@@ -355,6 +364,7 @@ final class WalletStore: ObservableObject {
                 timeoutSeconds: 20
             )
             upsert(result.entry)
+            WalletNotifications.shared.enrollCreatedReceive(result, context: receiptContext)
             return result
         } catch {
             guard let walletError = error as? WalletError,
@@ -381,7 +391,7 @@ final class WalletStore: ObservableObject {
     }
 
     func newDepositAddress(amountHintSat: Int64) async throws -> DepositResult {
-        beginStateCreatingCall()
+        await beginStateCreatingCall()
         defer { endStateCreatingCall() }
         // Allocating an address does not mean funds are in flight. The daemon
         // deliberately does not persist Deposit's request-only Entry; it adds
@@ -561,12 +571,20 @@ final class WalletStore: ObservableObject {
         if unresolvedDispatches.count != unresolvedCount { persistUnresolvedChecks() }
     }
 
-    private func beginStateCreatingCall() {
+    private func beginStateCreatingCall() async {
+        if let work = receiptWindowWork { _ = try? await work.value }
         stateCreatingCallCount += 1
+        if receiptBackgroundRequested {
+            receiptBackgroundRequested = false
+            try? await client.setHostForeground(true)
+        }
     }
 
     private func endStateCreatingCall() {
         stateCreatingCallCount = max(0, stateCreatingCallCount - 1)
+        if stateCreatingCallCount == 0, receiptBackgroundRequested {
+            Task { await setReceiptBackgroundMode(enabled: true) }
+        }
         guard stateCreatingCallCount == 0, foregroundRestartPending else {
             return
         }
@@ -725,7 +743,7 @@ final class WalletStore: ObservableObject {
     }
 
     func exitFunds(outpoint: String, destination: String, unilateral: Bool) async throws -> ExitResult {
-        beginStateCreatingCall()
+        await beginStateCreatingCall()
         defer { endStateCreatingCall() }
         let result = try await client.exit(outpoint: outpoint, destination: unilateral ? "" : destination,
             forceUnrollAck: unilateral ? "I_KNOW_WHAT_I_AM_DOING" : "")
@@ -745,7 +763,7 @@ final class WalletStore: ObservableObject {
         guard sweepOperation == nil, preview.canBroadcast, preview.feeRateSatPerVByte > 0 else {
             throw WalletActionError(message: "Check the existing transfer before sending again.")
         }
-        beginStateCreatingCall()
+        await beginStateCreatingCall()
         defer { endStateCreatingCall() }
         sweepOperation = SweepOperation(destination: destination, amountSat: preview.netAmountSat,
                                         feeRate: preview.feeRateSatPerVByte, startedAt: Date())
@@ -802,7 +820,7 @@ final class WalletStore: ObservableObject {
         guard refreshOperation == nil || refreshOperation?.status == "Complete" else {
             throw WalletActionError(message: "Check the existing refresh before starting another.")
         }
-        beginStateCreatingCall()
+        await beginStateCreatingCall()
         defer { endStateCreatingCall() }
         refreshOperation = RefreshOperation(outpoints: outpoints, amountSat: amountSat, status: "Checking status")
         persistRefresh()
@@ -929,6 +947,51 @@ final class WalletStore: ObservableObject {
         onchainHistory = []
     }
 
+    var notificationGeneration: Int { generation }
+    var notificationKnownIdentity: String? { info?.identityPubKey }
+
+    func setReceiptBackgroundMode(enabled: Bool) async {
+        guard enabled else { receiptBackgroundRequested = false; return }
+        guard UIApplication.shared.applicationState != .active else { return }
+        receiptBackgroundRequested = true
+        guard stateCreatingCallCount == 0, phase.isWalletAvailable else { return }
+        try? await client.setHostForeground(false)
+        if !receiptBackgroundRequested { try? await client.setHostForeground(true) }
+    }
+
+    func runReceiptWindow(_ request: ReceiptWindowRequest, identity: String) async throws -> ReceiptWindowResult {
+        guard notificationIdentity == identity, receiptBackgroundRequested,
+              stateCreatingCallCount == 0, receiptWindowWork == nil else { throw CancellationError() }
+        stateCreatingCallCount += 1
+        let work = Task { try await client.runReceiptWindow(request, timeoutSeconds: 15) }
+        receiptWindowWork = work
+        defer {
+            receiptWindowWork = nil
+            endStateCreatingCall()
+        }
+        return try await work.value
+    }
+
+    /// Continues already-unlocked native work even behind the UI privacy lock.
+    /// Cold or cryptographically locked wallets are never started or unlocked.
+    func runMaintenanceWindow(_ id: String) async throws -> ReceiptWindowResult {
+        guard phase.isWalletAvailable, notificationKnownIdentity != nil,
+              receiptBackgroundRequested, UIApplication.shared.applicationState != .active,
+              stateCreatingCallCount == 0, receiptWindowWork == nil else { throw CancellationError() }
+        stateCreatingCallCount += 1
+        let work = Task { try await client.runMaintenanceWindow(id, timeoutSeconds: 15) }
+        receiptWindowWork = work
+        defer {
+            receiptWindowWork = nil
+            endStateCreatingCall()
+        }
+        return try await work.value
+    }
+
+    func cancelReceiptWindow(_ id: String) async {
+        try? await client.cancelReceiptWindow(id)
+    }
+
     var notificationConfiguration: NotificationRelayConfiguration? {
         guard operatorAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               swapServerAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
@@ -948,7 +1011,7 @@ final class WalletStore: ObservableObject {
         guard self.network.rawValue == network, notificationIdentity == identity,
               notificationConfiguration == configuration else { throw CancellationError() }
         let currentGeneration = generation
-        beginStateCreatingCall()
+        await beginStateCreatingCall()
         defer { endStateCreatingCall() }
         let result = try await client.setNotificationSubscription(.register(
             source: source, subscriptionID: grant.subscriptionId, relayID: configuration.producerAlias,
@@ -962,7 +1025,7 @@ final class WalletStore: ObservableObject {
     func removeNotification(_ subscription: String, source: NotificationSource,
                             network: String, identity: String) async throws {
         guard self.network.rawValue == network, notificationIdentity == identity else { throw CancellationError() }
-        beginStateCreatingCall()
+        await beginStateCreatingCall()
         defer { endStateCreatingCall() }
         _ = try await client.setNotificationSubscription(.remove(source: source, subscriptionID: subscription))
     }
@@ -988,6 +1051,7 @@ final class WalletStore: ObservableObject {
             operatorAddress: operatorAddress.trimmingCharacters(in: .whitespacesAndNewlines),
             swapServerAddress: swapServerAddress.trimmingCharacters(in: .whitespacesAndNewlines)
         )
+        config.durableRoundRuntime = true
         config.swapNotificationIssuer = notificationConfiguration?.swapIssuer
         return config
     }

@@ -1,8 +1,9 @@
 # iOS payment activity notifications
 
-The app supports optional generic remote alerts and local Activity navigation.
-It does not yet execute a cold wallet receive in a background callback or show
-exact receipt amounts. A push reports activity, not successful settlement.
+The app supports optional payment-activity alerts, verified receipt amounts and
+local Activity navigation. Valid relay pushes and scheduled background tasks
+attempt native round and refresh work on an already-unlocked retained runtime.
+A push remains a hint; only local wallet proof can supply a received amount.
 
 ## Publisher configuration
 
@@ -31,7 +32,7 @@ modify Apple portal capabilities or provision a profile.
 ## Owners and execution
 
 - `WalletNotificationDelegate` receives APNs tokens and system notification
-  callbacks. Background delivery returns `noData` and leaves the daemon untouched.
+  callbacks and retains their completion lease until return or system expiry.
 - `NotificationRelayClient` serializes complete App Attest operations across
   network awaits. It stores installation identity and grants in device-only
   Keychain, separately from wallet secrets. It rejects redirects.
@@ -67,14 +68,67 @@ are ignored. Cross-network taps ask the user to open that network. They never
 switch an active payment's network automatically. Push event hashes, amounts
 and external links cannot choose navigation targets or authorize a payment.
 
-## Validation and remaining runtime work
+## Verified receipts and background maintenance
 
 Simulator unit tests inject an attester and HTTP fixture. They do not disable
 App Attest in the production client or relay. Real enrollment and push delivery
 require a physical supported device and separately provisioned infrastructure.
 
-The current native source pin provides signed source subscriptions and retained
-shutdown ownership. Exact “received X sats” alerts require canonical completed
-receipt reconciliation, durable notification deduplication and a bounded host
-execution window. None is inferred from an empty mailbox, `isRunning == false`,
-or an advisory remote hint. Biometric user-presence protection remains in force.
+The app always enables the durable native round runtime. Notification consent
+does not disable that runtime after adoption. Background entry pauses mailbox
+intake after state-creating calls finish. The daemon, domain actors, swap workers,
+egress and database stay retained. Foreground entry cancels and joins any bounded
+window before resuming continuous ingress or considering a transport restart.
+
+`WalletBackgroundMaintenance` registers a `BGAppRefreshTask` at launch and
+resubmits at launch, background entry and task handling. The request's earliest
+begin date is fifteen minutes away; iOS chooses actual timing. Both scheduled
+tasks and known current relay routes attempt a fifteen-second native maintenance
+window on an already-unlocked resident wallet. The native runtime samples current
+chain height, applies existing expiry policy to a bounded page of existing VTXO
+owners and pumps native round events. This attempts locally due refresh even
+without a server message, and lets retained signing sessions advance. It never
+starts a cold daemon or reads an unlock credential. The UI privacy lock does not
+cancel previously admitted native work; it still prevents amount presentation.
+
+The project declares `fetch`, `remote-notification` and the exact permitted task
+identifier `engineering.lightning.wavelength.wallet.maintenance`. System expiry
+and a twenty-second outer timer finish OS callbacks exactly once, signal the
+matching unique native window and retain the original native owner until its
+actual return. No expiry callback stops or reopens the wallet directory.
+
+The optional publisher build key `receiptHints: "true"` enables the separate
+"Show received amounts" setting. It is off by default. Opt-in creates a fresh
+consent epoch. Only new successful local invoice admissions with typed source
+references are enrolled. Timed-out invoice recovery cannot enroll an old invoice.
+The app requires the relay's explicit `receipt_hint` acknowledgement before
+selecting silent payment hints instead of generic remote alerts.
+
+A `payment_activity` hint contains an opaque correlator, never an amount. The app
+matches it to a current route and enrolled invoice, then runs a bounded targeted
+receipt window. Only complete matching local source/canonical proof with the
+original principal can show "You received X sats". A lock, consent/account change,
+timeout or incomplete proof removes amount authority. A valid payment hint may
+instead show fixed generic activity text. Ordinary wake messages, foreground hints and already
+visible remote alerts never create another local banner. Per-event presentation ownership leaves
+a duplicate hint unclaimed so it cannot downgrade the first callback. An
+unrelated native window still permits a generic banner for another event. Known
+subscribed routes for another saved network retain generic presentation; amount
+work remains restricted to the current matching wallet and configuration. A device-only Keychain
+ledger claims the event before notification insertion, preventing later replay
+from duplicating a generic banner as an amount banner. Failed insertion may omit
+a banner; wallet activity remains authoritative. Taps use the existing local
+route and authentication flow.
+
+The correlator is deterministic and unkeyed. A relay that already knows a
+candidate wallet identity and invoice hash can confirm the link. Treat the relay
+as the app publisher's trusted processor. Coalescing and deduplication can omit
+individual invoice hints. Push delivery and scheduled tasks do not guarantee a
+wake before a round deadline, refresh completion or expiry protection.
+
+Simulator tests exercise the actual pinned native framework, optional receipt
+metadata, route parsing, explicit mode acknowledgement, mode-sensitive caching,
+consent epochs, proof matching, durable presentation deduplication, cold-wallet
+refusal and exact-once expiration completion. They do not prove physical-device
+APNs delivery or App Attest provisioning. Publisher configuration remains empty;
+this PR changes no Apple portal state and deploys no service.

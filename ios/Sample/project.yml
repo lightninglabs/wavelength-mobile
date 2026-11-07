@@ -38,7 +38,8 @@ targets:
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
           UISceneConfigurations: {}
-        UIBackgroundModes: [remote-notification]
+        UIBackgroundModes: [remote-notification, fetch]
+        BGTaskSchedulerPermittedIdentifiers: [engineering.lightning.wavelength.wallet.maintenance]
         WavelengthNotificationRelays: {}
     settings:
       configs:

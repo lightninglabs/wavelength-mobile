@@ -231,4 +231,59 @@ final class NotificationRelayTests: XCTestCase {
         let removed = try JSONDecoder().decode(NotificationInstallation.self, from: XCTUnwrap(credentials.read(account: "")))
         XCTAssertTrue(removed.grants.isEmpty)
     }
+    func testReceiptModeRequiresServerAckAndInvalidatesCachedGenericGrant() async throws {
+        let configuration = try configuration()
+        let credentials = MemoryNotificationCredentials()
+        let attester = FixtureNotificationAttester()
+        let old = NotificationRelayGrant(subscriptionId: "sub", wakeCapability: String(repeating: "A", count: 43),
+                                        alertCapability: String(repeating: "A", count: 43),
+                                        expiresAt: 2_000_000_000, alerts: true)
+        try credentials.save(JSONEncoder().encode(NotificationInstallation(
+            keyId: attester.key, installationId: "install", confirmed: true,
+            token: "abcd", grants: ["route": old]
+        )), account: "")
+        var ack = false
+        var modes: [String?] = []
+        let settings = URLSessionConfiguration.ephemeral
+        settings.protocolClasses = [NotificationURLProtocol.self]
+        let session = URLSession(configuration: settings)
+        defer { NotificationURLProtocol.handler = nil; session.invalidateAndCancel() }
+        NotificationURLProtocol.handler = { request in
+            let object = try JSONSerialization.jsonObject(with: Self.body(request)) as! [String: Any]
+            var result: [String: Any]
+            if request.url!.path == "/v1/challenges" {
+                result = ["id": "challenge", "nonce": "nonce", "app_id": "test", "operation": "manage",
+                          "installation_id": "install", "expires_at": Int64(Date().timeIntervalSince1970) + 300]
+            } else {
+                let payload = try XCTUnwrap(Data(base64Encoded: object["payload"] as! String))
+                let mutation = try JSONSerialization.jsonObject(with: payload) as! [String: Any]
+                XCTAssertEqual(mutation["action"] as? String, "subscribe")
+                modes.append(mutation["alert_presentation"] as? String)
+                result = ["subscription_id": "sub", "wake_capability": String(repeating: "A", count: 43),
+                          "alert_capability": String(repeating: "A", count: 43), "expires_at": 2_000_000_000]
+                if ack { result["alert_presentation"] = mutation["alert_presentation"] ?? "generic" }
+            }
+            return (200, try JSONSerialization.data(withJSONObject: result))
+        }
+        let client = NotificationRelayClient(configuration: configuration, attester: attester,
+                                             session: session, credentials: credentials)
+        _ = try await client.subscribe(token: "abcd", routeId: "route", alerts: true)
+        XCTAssertTrue(modes.isEmpty, "Old generic cache remains compatible")
+        do {
+            _ = try await client.subscribe(token: "abcd", routeId: "route", alerts: true, receiptHints: true)
+            XCTFail("Missing mode acknowledgement was accepted")
+        } catch { XCTAssertTrue(error is NotificationRelayError) }
+        ack = true
+        let hint = try await client.subscribe(token: "abcd", routeId: "route", alerts: true, receiptHints: true)
+        XCTAssertEqual(hint.presentation, "receipt_hint")
+        _ = try await client.subscribe(token: "abcd", routeId: "route", alerts: true, receiptHints: true)
+        XCTAssertEqual(modes.count, 2, "Matching acknowledged mode should reuse cache")
+        let generic = try await client.subscribe(token: "abcd", routeId: "route", alerts: true)
+        XCTAssertEqual(generic.presentation, "generic")
+        XCTAssertEqual(modes.count, 3)
+        XCTAssertEqual(modes[0], "receipt_hint")
+        XCTAssertEqual(modes[1], "receipt_hint")
+        XCTAssertNil(modes[2], "Generic hosts must remain compatible with old servers")
+    }
+
 }
