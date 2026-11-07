@@ -2,7 +2,8 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
-    @StateObject private var store = WalletStore()
+    @ObservedObject var store: WalletStore
+    @ObservedObject private var notifications = WalletNotifications.shared
     @State private var enteredBackground = false
 
     var body: some View {
@@ -24,7 +25,8 @@ struct ContentView: View {
             // UI tests launch the app in a separate process without this class.
             guard NSClassFromString("XCTestCase") == nil else { return }
             #endif
-            if store.phase == .idle {
+            notifications.attach(store)
+            if scenePhase == .active && store.phase == .idle {
                 await store.start()
                 #if DEBUG
                 if ProcessInfo.processInfo.environment["WAVELENGTH_AUTOCREATE"] == "1",
@@ -35,17 +37,40 @@ struct ContentView: View {
             }
         }
         .onChange(of: scenePhase) { phase in
+            #if DEBUG
+            guard NSClassFromString("XCTestCase") == nil else { return }
+            #endif
             switch phase {
             case .background:
                 store.lockForBackground()
                 enteredBackground = true
-            case .active where enteredBackground:
+            case .active:
+                if store.phase == .idle { Task { await store.start() }; break }
+                guard enteredBackground else { notifications.reconcile(); break }
                 enteredBackground = false
-                Task { await store.resumeAfterBackground() }
+                Task {
+                    await store.resumeAfterBackground()
+                    notifications.reconcile()
+                }
             default:
                 break
             }
         }
+        .sheet(isPresented: $notifications.showsActivity) {
+            NavigationView {
+                List(store.visibleActivity) { entry in
+                    NavigationLink(destination: ActivityDetailView(entry: entry).environmentObject(store)) {
+                        ActivityRow(entry: entry)
+                    }
+                }.navigationTitle("Activity")
+                    .toolbar { Button("Done") { notifications.showsActivity = false } }
+            }.environmentObject(store)
+        }
+        .onChange(of: store.isSessionLocked) { locked in
+            if locked { notifications.showsActivity = false }
+            else { notifications.reconcile() }
+        }
+        .onChange(of: store.network) { _ in notifications.showsActivity = false; notifications.reconcile() }
         .alert("Wavelength", isPresented: alertIsPresented) {
             Button("OK", role: .cancel) { store.alertMessage = nil }
         } message: {

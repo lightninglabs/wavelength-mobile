@@ -2,13 +2,15 @@ import SwiftUI
 
 @main
 struct WavelengthApp: App {
+    @UIApplicationDelegateAdaptor(WalletNotificationDelegate.self) private var delegate
+    @StateObject private var store = WalletStore()
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("appearance") private var appearance = "system"
 
     var body: some Scene {
         WindowGroup {
             ZStack {
-                ContentView()
+                ContentView(store: store)
                 if scenePhase != .active {
                     PrivacyCover().accessibilityHidden(true)
                 }

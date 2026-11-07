@@ -450,6 +450,7 @@ final class WalletStore: ObservableObject {
         phase = snapshot.walletReady ? .ready : .syncing
         await refresh()
         beginMonitoring()
+        WalletNotifications.shared.reconcile()
     }
 
     private func refreshLifecycleAfterAmbiguousSetup() async {
@@ -928,6 +929,44 @@ final class WalletStore: ObservableObject {
         onchainHistory = []
     }
 
+    var notificationConfiguration: NotificationRelayConfiguration? {
+        guard operatorAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              swapServerAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return .bundled(network: network)
+    }
+
+    var notificationIdentity: String? {
+        guard phase.isWalletAvailable, !isSessionLocked,
+              let identity = info?.identityPubKey, !identity.isEmpty else { return nil }
+        return identity
+    }
+
+    /// Source registration owns admission until the signed RPC returns. Network
+    /// switching cannot replace the native singleton during this operation.
+    func bindNotification(_ grant: NotificationRelayGrant, source: NotificationSource,
+                          configuration: NotificationRelayConfiguration, network: String, identity: String) async throws {
+        guard self.network.rawValue == network, notificationIdentity == identity,
+              notificationConfiguration == configuration else { throw CancellationError() }
+        let currentGeneration = generation
+        beginStateCreatingCall()
+        defer { endStateCreatingCall() }
+        let result = try await client.setNotificationSubscription(.register(
+            source: source, subscriptionID: grant.subscriptionId, relayID: configuration.producerAlias,
+            wakeCapability: grant.wakeCapability, alertCapability: source == .swapServer ? grant.alertCapability : nil,
+            expiresAtUnix: grant.expiresAt))
+        guard currentGeneration == generation, result.subscriptionID == grant.subscriptionId,
+              result.expiresAtUnix > Int64(Date().timeIntervalSince1970),
+              result.expiresAtUnix <= grant.expiresAt else { throw NotificationRelayError.invalidResponse }
+    }
+
+    func removeNotification(_ subscription: String, source: NotificationSource,
+                            network: String, identity: String) async throws {
+        guard self.network.rawValue == network, notificationIdentity == identity else { throw CancellationError() }
+        beginStateCreatingCall()
+        defer { endStateCreatingCall() }
+        _ = try await client.setNotificationSubscription(.remove(source: source, subscriptionID: subscription))
+    }
+
     private func walletConfig() throws -> WalletConfig {
         let support = try dataRoot ?? FileManager.default.url(
             for: .applicationSupportDirectory,
@@ -942,13 +981,15 @@ final class WalletStore: ObservableObject {
             at: directory,
             withIntermediateDirectories: true
         )
-        return .network(
+        var config: WalletConfig = .network(
             network,
             dataDir: directory.path,
             esploraURL: esploraURL.trimmingCharacters(in: .whitespacesAndNewlines),
             operatorAddress: operatorAddress.trimmingCharacters(in: .whitespacesAndNewlines),
             swapServerAddress: swapServerAddress.trimmingCharacters(in: .whitespacesAndNewlines)
         )
+        config.swapNotificationIssuer = notificationConfiguration?.swapIssuer
+        return config
     }
 
     private var keychainAccount: String { keychainAccount(for: network) }

@@ -21,12 +21,38 @@ targets:
       - Resources
     dependencies:
       - package: WalletKit
+    entitlements:
+      path: Wavelength.entitlements
+      properties:
+        aps-environment: $(APNS_ENVIRONMENT)
+        com.apple.developer.devicecheck.appattest-environment: $(APP_ATTEST_ENVIRONMENT)
+    info:
+      path: NotificationInfo.plist
+      properties:
+        CFBundleDisplayName: Wavelength
+        NSCameraUsageDescription: Scan Lightning invoices and Bitcoin payment QR codes.
+        NSFaceIDUsageDescription: Unlock your Wavelength wallet.
+        ITSAppUsesNonExemptEncryption: false
+        UILaunchScreen: {}
+        UIApplicationSupportsIndirectInputEvents: true
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+          UISceneConfigurations: {}
+        UIBackgroundModes: [remote-notification]
+        WavelengthNotificationRelays: {}
     settings:
+      configs:
+        Debug:
+          APNS_ENVIRONMENT: development
+          APP_ATTEST_ENVIRONMENT: development
+        Release:
+          APNS_ENVIRONMENT: production
+          APP_ATTEST_ENVIRONMENT: production
       base:
         PRODUCT_BUNDLE_IDENTIFIER: engineering.lightning.wavelength.wallet
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         PRODUCT_NAME: Wavelength
-        GENERATE_INFOPLIST_FILE: YES
+        GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_CFBundleDisplayName: Wavelength
