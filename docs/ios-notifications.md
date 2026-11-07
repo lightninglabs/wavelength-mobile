@@ -109,8 +109,11 @@ matches it to a current route and enrolled invoice, then runs a bounded targeted
 receipt window. Only complete matching local source/canonical proof with the
 original principal can show "You received X sats". A lock, consent/account change,
 timeout or incomplete proof removes amount authority. A valid payment hint may
-instead show fixed generic activity text. Ordinary wake messages and already
-visible remote alerts never create another local banner. A device-only Keychain
+instead show fixed generic activity text. Ordinary wake messages, foreground hints and already
+visible remote alerts never create another local banner. A busy window leaves
+a concurrent hint unclaimed so it cannot downgrade the first callback. Known
+subscribed routes for another saved network retain generic presentation; amount
+work remains restricted to the current matching wallet and configuration. A device-only Keychain
 ledger claims the event before notification insertion, preventing later replay
 from duplicating a generic banner as an amount banner. Failed insertion may omit
 a banner; wallet activity remains authoritative. Taps use the existing local

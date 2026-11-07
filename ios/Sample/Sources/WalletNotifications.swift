@@ -65,10 +65,13 @@ final class WalletNotifications: ObservableObject {
     private var clients: [String: NotificationRelayClient] = [:]
     private var reconcileAgain = false
     private var pendingTap: WalletNotificationRoute?
-    private let receiptLedger = ReceiptNotificationLedger()
+    private let receiptLedger: ReceiptNotificationLedger
     private var activeReceiptWindow: String?
 
-    init(defaults: UserDefaults = .standard) { self.defaults = defaults }
+    init(defaults: UserDefaults = .standard, receiptLedger: ReceiptNotificationLedger? = nil) {
+        self.defaults = defaults
+        self.receiptLedger = receiptLedger ?? ReceiptNotificationLedger()
+    }
 
     var enabled: Bool {
         guard let store else { return false }
@@ -423,12 +426,16 @@ extension WalletNotifications {
     func received(_ userInfo: [AnyHashable: Any], windowID: String,
                   lease: ReceiptFetchLease) async -> Bool {
         received(userInfo)
-        guard !lease.expired else { return false }
+        guard !lease.expired, UIApplication.shared.applicationState != .active else { return false }
         guard let hint = ReceiptPaymentHint(userInfo: userInfo) else {
             guard let id = WalletNotificationRoute.parsePush(userInfo), validWakeRoute(id) != nil else { return false }
             return await runMaintenance(windowID: windowID, lease: lease)
         }
-        guard let store, let route = validPaymentRoute(hint.routeID) else { return false }
+        // The first callback owns its result. A duplicate or another window
+        // must not consume its enrollment with an early generic claim.
+        guard activeReceiptWindow == nil, let store,
+              let route = validPaymentRoute(hint.routeID) else { return false }
+        let currentRoute = isCurrentPaymentRoute(route, store: store)
         let id = hint.routeID
         let eventHash = hint.eventHash
         let generation = store.notificationGeneration
@@ -437,7 +444,7 @@ extension WalletNotifications {
         do { enrollment = try receiptLedger.enrolled(routeID: id, eventHash: eventHash, now: now) }
         catch { return false }
         var result: ReceiptWindowResult?
-        if amountsEnabled, amountsAvailable, route.presentation == "receipt_hint",
+        if currentRoute, amountsEnabled, amountsAvailable, route.presentation == "receipt_hint",
            let enrolled = enrollment, enrolled.identity == store.notificationIdentity,
            enrolled.configuration == route.configuration, activeReceiptWindow == nil {
             activeReceiptWindow = windowID
@@ -447,14 +454,14 @@ extension WalletNotifications {
                 createdAfterUnix: enrolled.consent.createdAfterUnix
             ), identity: enrolled.identity)
             if activeReceiptWindow == windowID { activeReceiptWindow = nil }
-        } else {
+        } else if currentRoute {
             _ = await runMaintenance(windowID: windowID, lease: lease)
         }
         guard !lease.expired, store.notificationGeneration == generation,
               validPaymentRoute(id) != nil else { return false }
         // A lock, consent change or account switch during await removes amount
         // authority. Generic activity still requires current route consent.
-        if !amountsEnabled || !amountsAvailable ||
+        if !isCurrentPaymentRoute(route, store: store) || !amountsEnabled || !amountsAvailable ||
             enrollment?.identity != store.notificationIdentity ||
             (try? receiptLedger.consent(network: route.network)) != enrollment?.consent {
             enrollment = nil
@@ -501,13 +508,18 @@ extension WalletNotifications {
         }
     }
 
-    private func validPaymentRoute(_ id: String) -> WalletNotificationRoute? {
-        guard let store, defaults.bool(forKey: preference(store.network.rawValue)),
-              let configuration = store.notificationConfiguration else { return nil }
-        return routes().first {
+    /// A saved subscribed network keeps generic presentation even when another
+    /// network or custom endpoint is selected. Amount work stays current-only.
+    func validPaymentRoute(_ id: String) -> WalletNotificationRoute? {
+        routes().first {
             $0.id == id && $0.source == .swapServer &&
-            $0.network == store.network.rawValue && $0.configuration == configuration.storageAccount &&
-            (store.notificationKnownIdentity == nil || $0.identity == store.notificationKnownIdentity)
+            defaults.bool(forKey: preference($0.network))
         }
+    }
+
+    private func isCurrentPaymentRoute(_ route: WalletNotificationRoute, store: WalletStore) -> Bool {
+        route.network == store.network.rawValue &&
+        route.configuration == store.notificationConfiguration?.storageAccount &&
+        route.identity == store.notificationKnownIdentity
     }
 }
