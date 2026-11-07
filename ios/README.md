@@ -360,3 +360,32 @@ for try await entry in client.activity(includeExisting: true) {
     print("\(entry.kind) \(entry.amountSat) sat \(entry.status)")
 }
 ```
+
+## Notification source registration
+
+The pinned native source includes signed operator and swap notification
+registration and retained shutdown ownership. `WalletClient` accepts a typed
+`NotificationSubscription.register` or `.remove`. Register each configured
+source independently. The operator receives only a wake capability. Supply an
+optional alert capability only to a source that can classify incoming work.
+`WalletConfig.swapNotificationIssuer` pins the swap service's compressed public
+wallet identity; leave it unset to keep that source unsupported. Registration
+uses the existing gRPC connection. Push payloads cannot supply endpoints or pins.
+
+These calls do not enroll a phone with APNs, attest an installation, or run wallet
+recovery. The app owns those platform responsibilities. Capabilities belong in
+Keychain and must not appear in logs or notification payloads.
+
+A `WalletError.isStopPending` result means the native singleton still owns
+cleanup. Retain the client and repeat `stop()` before starting another daemon.
+`isRunning == false` alone does not prove cleanup has finished.
+
+The recovery bridge patch now contains only the remaining additive native APIs;
+the pinned SDK already includes the credit top-up correlation fix and its test.
+The framework is built locally from the exact source and recorded patch digest.
+No unpublished release asset or invented checksum is used.
+
+`activity` and `incomingPayments` accept the last durable `Entry.cursor` to
+replay missed transitions. Persist it only after processing that entry. `list`
+accepts the opaque `ActivityList.nextCursor` for complete keyset pagination.
+Notification recovery must not truncate its catch-up to the UI’s latest page.
