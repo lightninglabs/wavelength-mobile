@@ -98,6 +98,37 @@ public actor WalletClient {
         return try decode(await bg { try Bindings.setNotificationSubscription(body) })
     }
 
+    /// Join a background window before resuming foreground ingress. False
+    /// pauses intake while retaining the daemon and its domain workers.
+    public func setHostForeground(_ foreground: Bool) async throws {
+        try await bg { try Bindings.setHostForeground(foreground) }
+    }
+
+    /// Reconcile one enrolled invoice within a cooperative 1...20 second
+    /// budget. The host must serialize against state-creating wallet calls.
+    public func runReceiptWindow(
+        _ request: ReceiptWindowRequest, timeoutSeconds: Int64 = 15
+    ) async throws -> ReceiptWindowResult {
+        let body = try encoder.encode(request)
+        return try decode(await bg {
+            try Bindings.runReceiptWindow(body, timeoutSeconds)
+        })
+    }
+
+    /// Attempts current-tip expiry and native round work on a retained warm runtime.
+    /// Uses the same unique-ID cancellation API as receipt windows. Produces no receipt.
+    public func runMaintenanceWindow(
+        _ windowID: String, timeoutSeconds: Int64 = 15
+    ) async throws -> ReceiptWindowResult {
+        let data = try await bg { try Bindings.runMaintenanceWindow(windowID, timeoutSeconds) }
+        return try JSONDecoder().decode(ReceiptWindowResult.self, from: data)
+    }
+
+    /// Signal expiry without releasing the running call's retained owner.
+    public func cancelReceiptWindow(_ windowID: String) async throws {
+        try await bg { try Bindings.cancelReceiptWindow(windowID) }
+    }
+
     /// Daemon readiness snapshot.
     public func getInfo() async throws -> Info {
         try decode(await bg { try Bindings.getInfo() })
