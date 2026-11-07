@@ -43,6 +43,30 @@ enum Bindings {
         return try unwrap(MobileSetNotificationSubscription(req, &err), err)
     }
 
+    static func setHostForeground(_ foreground: Bool) throws {
+        var err: NSError?
+        let ok = MobileSetHostForeground(foreground, &err)
+        if let err { throw WalletError(err) }
+        if !ok { throw WalletError(message: "MobileSetHostForeground returned false") }
+    }
+
+    static func runReceiptWindow(_ req: Data, _ seconds: Int64) throws -> Data {
+        var err: NSError?
+        return try unwrap(MobileRunReceiptWindow(req, seconds, &err), err)
+    }
+
+    static func runMaintenanceWindow(_ id: String, _ seconds: Int64) throws -> Data {
+        var err: NSError?
+        return try unwrap(MobileRunMaintenanceWindow(id, seconds, &err), err)
+    }
+
+    static func cancelReceiptWindow(_ id: String) throws {
+        var err: NSError?
+        let ok = MobileCancelReceiptWindow(id, &err)
+        if let err { throw WalletError(err) }
+        if !ok { throw WalletError(message: "MobileCancelReceiptWindow returned false") }
+    }
+
     static func getInfo() throws -> Data {
         var err: NSError?
         return try unwrap(MobileGetInfo(&err), err)
@@ -167,6 +191,10 @@ enum Bindings {
     static func start(_ cfg: String) throws { throw missing() }
     static func stop() throws { throw missing() }
     static func setNotificationSubscription(_ req: Data) throws -> Data { throw missing() }
+    static func setHostForeground(_ foreground: Bool) throws { throw missing() }
+    static func runReceiptWindow(_ req: Data, _ seconds: Int64) throws -> Data { throw missing() }
+    static func runMaintenanceWindow(_ id: String, _ seconds: Int64) throws -> Data { throw missing() }
+    static func cancelReceiptWindow(_ id: String) throws { throw missing() }
     static func getInfo() throws -> Data { throw missing() }
     static func status() throws -> Data { throw missing() }
     static func balance() throws -> Data { throw missing() }
