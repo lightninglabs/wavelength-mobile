@@ -52,7 +52,10 @@ Apply the bridge to a clean pinned checkout with
 Release-tag overrides retain the packaged-release download path, but the
 release must expose all binding functions used by this wrapper, including
 `MobileRecoveryInventory`, `MobileObserveRefresh`, `MobileRefresh`, and
-`MobileExportExits` and `MobileSetNotificationSubscription`. Published releases through v0.2.1 lack this bridge and
+`MobileExportExits`, `MobileSetNotificationSubscription`,
+`MobileSetHostForeground`, `MobileRunReceiptWindow`,
+`MobileRunMaintenanceWindow`, and `MobileCancelReceiptWindow`.
+Published releases through v0.2.1 lack this bridge and
 cannot build the current Swift wrapper. Use the repository's source pin until
 a compatible release is published. Android keeps its independent release pin in
 `.wavelength-version`.
