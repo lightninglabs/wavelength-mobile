@@ -29,13 +29,12 @@ make run
 ```
 
 `.wavelength-ios-version` pins Wavelength source at
-`43c517cf6fefe9aae3f9c2a879d0b11f6ff407a2`. The fetch script applies
+`ed745bdcebf4a0a263258b7cb710fcfdfe969ee3`. The fetch script applies
 `scripts/wavelength-ios-recovery.patch`, builds the iOS/device and Simulator
 slices, and stages the ignored framework under `ios/WalletKit/Frameworks`.
 The patch exposes refresh, confirmed-input observation, recovery
-inventory, and complete signed recovery export. It also carries the metadata
-fix in [Wavelength #1530](https://github.com/lightninglabs/wavelength/pull/1530),
-which correlates credit funding after self-change.
+inventory, complete signed recovery export, and native send-admission errors.
+Credit funding correlation after self-change is already in the source pin.
 
 The staged receipt includes the exact source commit and bridge digest. A
 matching artifact is reusable offline; a different pin or bridge requires a
@@ -53,7 +52,7 @@ Apply the bridge to a clean pinned checkout with
 Release-tag overrides retain the packaged-release download path, but the
 release must expose all binding functions used by this wrapper, including
 `MobileRecoveryInventory`, `MobileObserveRefresh`, `MobileRefresh`, and
-`MobileExportExits`. Published releases through v0.2.1 lack this bridge and
+`MobileExportExits` and `MobileSetNotificationSubscription`. Published releases through v0.2.1 lack this bridge and
 cannot build the current Swift wrapper. Use the repository's source pin until
 a compatible release is published. Android keeps its independent release pin in
 `.wavelength-version`.

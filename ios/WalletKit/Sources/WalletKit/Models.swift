@@ -111,6 +111,8 @@ public struct Entry: Decodable, Identifiable, Sendable {
     public let updatedAt: String?
     public let failureReason: String?
     public let failureCode: String?
+    /// Native activity event sequence. Persist after processing, then resume
+    /// `activity(cursor:)` strictly after it. Absent on legacy snapshots.
     public let cursor: Int64?
     public let progress: EntryProgress?
     public let request: EntryRequest?
@@ -311,6 +313,7 @@ public struct ActivityList: Decodable, Sendable {
     public let entries: [Entry]
     public let total: Int64
     public let hasMore: Bool?
+    /// Native opaque keyset token for the next canonical activity page.
     public let nextCursor: String?
     enum CodingKeys: String, CodingKey {
         case entries = "Entries"
