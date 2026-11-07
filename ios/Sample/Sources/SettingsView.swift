@@ -6,6 +6,8 @@ struct SettingsView: View {
     @AppStorage("appearance") private var appearance = "system"
     var body: some View {
         WalletPage {
+            NavigationLink(destination: NotificationSettingsView()) { settingsRow("Notifications", "bell") }
+            WalletDivider()
             NavigationLink(destination: SecuritySettingsView()) { settingsRow("Security", "lock") }
             WalletDivider()
             NavigationLink(destination: CreditSettingsView()) { settingsRow("Credit", "circle.grid.2x2") }
@@ -149,5 +151,24 @@ private struct ConnectionSettingsView: View {
         operatorAddress = store.operatorAddress
         swapServerAddress = store.swapServerAddress
         esploraURL = store.esploraURL
+    }
+}
+
+private struct NotificationSettingsView: View {
+    @ObservedObject private var notifications = WalletNotifications.shared
+    var body: some View {
+        WalletPage {
+            Toggle("Payment notifications", isOn: Binding(get: { notifications.enabled },
+                set: { value in Task { await notifications.setEnabled(value) } }))
+                .disabled(notifications.working || (!notifications.available && !notifications.enabled))
+                .accessibilityIdentifier("settings.notifications")
+            Text(notifications.status).font(.footnote).foregroundStyle(WalletTheme.secondary)
+            Text("Alerts show payment activity. Open and unlock your wallet to check the result. Amounts stay private.")
+                .font(.footnote).foregroundStyle(WalletTheme.secondary)
+            Button("Retry setup") { notifications.reconcile() }.disabled(notifications.working)
+            Button("iOS notification settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+            }
+        }.navigationTitle("Notifications").navigationBarTitleDisplayMode(.inline)
     }
 }

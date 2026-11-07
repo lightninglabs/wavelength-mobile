@@ -389,3 +389,11 @@ No unpublished release asset or invented checksum is used.
 replay missed transitions. Persist it only after processing that entry. `list`
 accepts the opaque `ActivityList.nextCursor` for complete keyset pagination.
 Notification recovery must not truncate its catch-up to the UI’s latest page.
+
+## Payment activity alerts
+
+The app's notification settings support App Attest enrollment, private generic
+payment-activity alerts and taps into Activity after wallet authentication.
+Publisher configuration is empty by default. See
+[the iOS notification integration](../docs/ios-notifications.md) for build keys,
+credential ownership, revocation and remaining bounded-runtime work.
