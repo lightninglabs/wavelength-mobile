@@ -205,7 +205,8 @@ public actor WalletClient {
     /// List a unified wallet view: the merged activity history, the live VTXO
     /// inventory, or the on-chain transaction history. Read the `ListResult`
     /// property named by its `view`. `kinds`, `pendingOnly`, `limit`, and
-    /// `offset` apply to the activity view.
+    /// `offset` apply to the activity view. Pass `ActivityList.nextCursor` to
+    /// read the next canonical page; canonical activity ignores `offset`.
     public func list(
         view: ListView = .activity,
         kinds: [String] = [],

@@ -108,7 +108,7 @@ Put `$(go env GOPATH)/bin` on PATH. Xcode must use the full developer directory,
 not only Command Line Tools.
 
 `.wavelength-ios-version` pins Wavelength main at
-`43c517cf6fefe9aae3f9c2a879d0b11f6ff407a2`. The fetch script builds that exact
+`ed745bdcebf4a0a263258b7cb710fcfdfe969ee3`. The fetch script builds that exact
 commit with `scripts/wavelength-ios-recovery.patch`. The narrow bridge exposes
 refresh, refresh observation, full recovery inventory, and signed portable
 recovery export through gomobile. The patch also carries the credit top-up

@@ -34,4 +34,31 @@ final class NotificationRegistrationTests: XCTestCase {
             XCTAssertTrue(error.localizedDescription.contains("not started"))
         }
     }
+    func testDiagnosticsRedactBothCapabilities() {
+        let request = NotificationSubscription.register(
+            source: .swapServer, subscriptionID: "route", relayID: "app",
+            wakeCapability: "synthetic-wake-secret", alertCapability: "synthetic-alert-secret",
+            expiresAtUnix: 2_000_000_000
+        )
+        for description in [String(describing: request), String(reflecting: request)] {
+            XCTAssertFalse(description.contains("synthetic-wake-secret"))
+            XCTAssertFalse(description.contains("synthetic-alert-secret"))
+        }
+        XCTAssertEqual(Set(request.customMirror.children.compactMap(\.label)), ["source", "subscriptionID", "remove"])
+    }
+
+    func testNativeRegistrationAndRemovalResultFixtures() throws {
+        // Produced with encoding/json from the pinned SDK facade DTO. The
+        // gomobile method uses that encoder, not protojson, including zero.
+        let fixtures = [
+            (#"{"subscription_id":"route","expires_at_unix":2000000000}"#, Int64(2_000_000_000)),
+            (#"{"subscription_id":"route","expires_at_unix":0}"#, Int64(0)),
+        ]
+        for (json, expiry) in fixtures {
+            let value = try JSONDecoder().decode(NotificationSubscriptionResult.self, from: Data(json.utf8))
+            XCTAssertEqual(value.subscriptionID, "route")
+            XCTAssertEqual(value.expiresAtUnix, expiry)
+        }
+    }
+
 }

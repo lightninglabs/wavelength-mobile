@@ -10,7 +10,20 @@ public enum NotificationSource: String, Codable, Sendable {
 /// A relay-issued route, bound to this wallet by the native signing bridge.
 /// Bearer capabilities are private credentials. Persist them in secure storage
 /// and do not put this request in diagnostics or notification payloads.
-public struct NotificationSubscription: Encodable, Sendable {
+public struct NotificationSubscription: Encodable, Sendable,
+    CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
+    /// Common diagnostics expose routing metadata without either bearer grant.
+    public var description: String {
+        "NotificationSubscription(source: \(source.rawValue), subscriptionID: \(subscriptionID), remove: \(remove))"
+    }
+    public var debugDescription: String { description }
+    public var customMirror: Mirror {
+        let fields: [Mirror.Child] = [
+            ("source", source.rawValue), ("subscriptionID", subscriptionID), ("remove", remove),
+        ]
+        return Mirror(self, children: fields)
+    }
+
     public let source: NotificationSource
     public let subscriptionID: String
     public let relayID: String?
