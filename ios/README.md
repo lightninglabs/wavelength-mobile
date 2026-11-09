@@ -107,13 +107,18 @@ gobind with `go install golang.org/x/mobile/cmd/gomobile@latest` and
 Put `$(go env GOPATH)/bin` on PATH. Xcode must use the full developer directory,
 not only Command Line Tools.
 
-`.wavelength-ios-version` pins Wavelength source at
-`80ef7d08c121e6f68deeb76ecd7d554d10cd6788`. The fetch script builds that exact
-commit with `scripts/wavelength-ios-recovery.patch`. The narrow bridge exposes
+[`.wavelength-ios-version`](../.wavelength-ios-version) pins Wavelength source.
+The fetch script builds that exact commit with
+`scripts/wavelength-ios-recovery.patch`. The narrow bridge exposes
 refresh, refresh observation, full recovery inventory, and signed portable
-recovery export through gomobile. The patch also carries the credit top-up
-correlation fix in Wavelength PR #1530 until it is available in the pin.
+recovery export through gomobile. The pinned source already includes the
+credit top-up correlation fix.
 Android keeps its separate existing release pin.
+
+The app enables the durable round runtime. Its typed service lookup is separate
+from the persisted mailbox address, so startup and wallet reopening use the
+same durable state. Replacement-round support is disabled for durable clients
+until replacement lineage can be checkpointed; ordinary clients retain support.
 
 Framework provenance includes the source commit and bridge digest. Managed
 source caches are keyed by both, under
@@ -141,8 +146,9 @@ run `sudo xcodebuild -runFirstLaunch` from your terminal and authenticate there.
 
 Build, test, and run check a receipt containing the source commit and bridge
 patch digest. A matching artifact is reusable offline. Otherwise the script
-clones the pin into `~/.cache/wavelength-mobile-ios/<commit>`, applies the
-checked-in bridge, and builds the framework. An explicit `WAVELENGTH_DIR`
+clones the pin into `~/.cache/wavelength-mobile-ios/<commit>-<bridge-sha256>`,
+applies the checked-in bridge, and builds the framework. An explicit
+`WAVELENGTH_DIR`
 must already contain exactly that commit and bridge diff, with no unexpected
 untracked source. It rebuilds each time. Source or patch mismatches fail before
 replacing the staged SDK. Framework binaries stay ignored.
