@@ -5,7 +5,7 @@ import WalletKit
 
 @MainActor
 final class WalletLifecycleTests: XCTestCase {
-    func testBiometricPolicyCoversEveryNetworkAndDisablePreservesDistinctPasswords() async throws {
+    func testBiometricPolicyAndMigrationPreserveDistinctPasswords() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let suite = "wavelength-auth-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -34,16 +34,54 @@ final class WalletLifecycleTests: XCTestCase {
         try KeychainStore.delete(account: mainnet)
         defaults.set("mainnet", forKey: "selectedNetwork")
         let store = WalletStore(defaults: defaults, dataRoot: root)
+        XCTAssertTrue(store.needsPasswordMigration)
         await store.setBiometricUnlock(false)
-        XCTAssertFalse(store.biometricUnlockEnabled, store.alertMessage ?? "")
+        XCTAssertTrue(store.biometricUnlockEnabled, "A locked session cannot disable app authentication")
+        // Successful legacy authentication supplies each network's own secret.
+        defaults.set(true, forKey: "biometricUnlockEnabled")
+        try WalletAuthentication.migrate(signetSecret, account: signet)
+        try WalletAuthentication.migrate(mainnetSecret, account: mainnet)
         XCTAssertEqual(try KeychainStore.read(account: signet), signetSecret)
         XCTAssertEqual(try KeychainStore.read(account: mainnet), mainnetSecret)
+        XCTAssertFalse(store.needsPasswordMigration)
         XCTAssertFalse(WalletAuthentication.contains(account: signet))
         XCTAssertFalse(WalletAuthentication.contains(account: mainnet))
-        XCTAssertFalse(WalletStore(defaults: defaults, dataRoot: root).biometricUnlockEnabled)
+        XCTAssertTrue(WalletStore(defaults: defaults, dataRoot: root).biometricUnlockEnabled)
 
         defaults.set(true, forKey: "biometricUnlockEnabled")
         XCTAssertTrue(WalletStore(defaults: defaults, dataRoot: root).biometricUnlockEnabled)
+    }
+
+    func testColdActivationWaitsForTransientInactiveScene() async throws {
+        guard ProcessInfo.processInfo.environment["WAVELENGTH_UI_SIGNET"] == "1" else {
+            throw XCTSkip("Set WAVELENGTH_UI_SIGNET=1 for the live lifecycle probe")
+        }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let suite = "wavelength-inactive-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.set(false, forKey: "biometricUnlockEnabled")
+        let client = WalletClient()
+        addTeardownBlock {
+            try await client.stop()
+            try? FileManager.default.removeItem(at: root)
+            UserDefaults.standard.removePersistentDomain(forName: suite)
+            try? KeychainStore.delete(account: root.lastPathComponent + ".wallet-password-signet")
+        }
+        let setup = WalletStore(defaults: defaults, client: client, dataRoot: root)
+        await setup.start()
+        await setup.createWallet(showBackup: false)
+        XCTAssertTrue(setup.phase.isWalletAvailable, setup.alertMessage ?? "")
+        try await client.stop()
+        var active = false
+        var waited = false
+        let reopened = WalletStore(defaults: defaults, client: client, dataRoot: root,
+            waitForForeground: { waited = true; active = true },
+            applicationIsActive: { active })
+        await reopened.start()
+        XCTAssertTrue(waited, "Activation must wait through transient inactivity")
+        XCTAssertTrue(reopened.phase.isWalletAvailable)
+        XCTAssertNotNil(reopened.balance)
+        XCTAssertTrue(reopened.activityLoaded)
     }
 
     func testSwitchingToExistingMainnetRequiresAuthentication() async throws {
@@ -54,6 +92,7 @@ final class WalletLifecycleTests: XCTestCase {
         let suite = "wavelength-switch-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defaults.set("mainnet", forKey: "selectedNetwork")
+        defaults.set(false, forKey: "biometricUnlockEnabled")
         let mainnet = root.lastPathComponent + ".wallet-password-mainnet"
         let signet = root.lastPathComponent + ".wallet-password-signet"
         let client = WalletClient()
@@ -102,6 +141,7 @@ final class WalletLifecycleTests: XCTestCase {
         let suite = "wavelength-lifecycle-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defaults.set("signet", forKey: "selectedNetwork")
+        defaults.set(false, forKey: "biometricUnlockEnabled")
         let account = root.lastPathComponent + ".wallet-password-signet"
         let client = WalletClient()
         addTeardownBlock {

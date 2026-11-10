@@ -2,7 +2,8 @@
 
 The app supports optional payment-activity alerts, verified receipt amounts and
 local Activity navigation. Valid relay pushes and scheduled background tasks
-attempt native round and refresh work on an already-unlocked retained runtime.
+attempt native round and refresh work on a retained runtime or a cold wallet
+with a device-managed credential.
 A push remains a hint; only local wallet proof can supply a received amount.
 
 ## Publisher configuration
@@ -83,22 +84,29 @@ window before resuming continuous ingress or considering a transport restart.
 `WalletBackgroundMaintenance` registers a `BGAppRefreshTask` at launch and
 resubmits at launch, background entry and task handling. The request's earliest
 begin date is fifteen minutes away; iOS chooses actual timing. Both scheduled
-tasks and known current relay routes attempt a fifteen-second native maintenance
-window on an already-unlocked resident wallet. The native runtime samples current
-chain height, applies existing expiry policy to a bounded page of existing VTXO
-owners and pumps native round events. This attempts locally due refresh even
-without a server message, and lets retained signing sessions advance. It never
-starts a cold daemon or reads an unlock credential. The UI privacy lock does not
-cancel previously admitted native work; it still prevents amount presentation.
+tasks and known current relay routes may prepare the selected device-managed
+wallet, then attempt a fifteen-second native maintenance window. Startup leaves
+mailbox intake paused. Missing or unmigrated credentials skip the opportunity;
+background execution never prompts, creates wallets or grants UI access. The
+native runtime samples chain height, applies existing expiry policy to a bounded
+page of existing VTXO owners and pumps native round events. Retained signing
+sessions can advance; cold startup must recover from durable state and cannot
+restore lost in-memory signing sessions. The outer twenty-second deadline covers
+preparation too. The UI lock still gates interaction; notification amount consent
+and verified source proof independently control amount presentation.
 
 The project declares `fetch`, `remote-notification` and the exact permitted task
 identifier `engineering.lightning.wavelength.wallet.maintenance`. System expiry
 and a twenty-second outer timer finish OS callbacks exactly once, signal the
 matching unique native window and retain the original native owner until its
-actual return. No expiry callback stops or reopens the wallet directory.
+actual return. During cold preparation, expiration cancels and joins only the
+runtime started by that preparation. Expiration of an established window never
+stops a retained wallet or opens a second owner.
 
 The optional publisher build key `receiptHints: "true"` enables the separate
-"Show received amounts" setting. It is off by default. Opt-in creates a fresh
+"Show received amounts" setting. It is off by default. The updated consent
+explicitly covers locked-app amounts; old consent does not enable this mode.
+Opt-in creates a fresh
 consent epoch. Only new successful local invoice admissions with typed source
 references are enrolled. Timed-out invoice recovery cannot enroll an old invoice.
 The app requires the relay's explicit `receipt_hint` acknowledgement before
@@ -107,7 +115,8 @@ selecting silent payment hints instead of generic remote alerts.
 A `payment_activity` hint contains an opaque correlator, never an amount. The app
 matches it to a current route and enrolled invoice, then runs a bounded targeted
 receipt window. Only complete matching local source/canonical proof with the
-original principal can show "You received X sats". A lock, consent/account change,
+original principal can show "You received X sats", including while the app is
+locked. A consent/account change,
 timeout or incomplete proof removes amount authority. A valid payment hint may
 instead show fixed generic activity text. Ordinary wake messages, foreground hints and already
 visible remote alerts never create another local banner. Per-event presentation ownership leaves
@@ -128,7 +137,8 @@ wake before a round deadline, refresh completion or expiry protection.
 
 Simulator tests exercise the actual pinned native framework, optional receipt
 metadata, route parsing, explicit mode acknowledgement, mode-sensitive caching,
-consent epochs, proof matching, durable presentation deduplication, cold-wallet
-refusal and exact-once expiration completion. They do not prove physical-device
+consent epochs, proof matching, durable presentation deduplication, cold
+device-managed startup, missing-credential refusal, cancelled startup, foreground
+takeover and exact-once expiration completion. They do not prove physical-device
 APNs delivery or App Attest provisioning. Publisher configuration remains empty;
 this PR changes no Apple portal state and deploys no service.

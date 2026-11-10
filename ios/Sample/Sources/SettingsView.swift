@@ -53,6 +53,8 @@ private struct SecuritySettingsView: View {
                 .accessibilityIdentifier("settings.biometric")
             WalletDivider()
             HStack { Text("Auto-lock"); Spacer(); Text(store.biometricUnlockEnabled ? "Immediately" : "Off").foregroundStyle(WalletTheme.secondary) }
+            Text("Your wallet stays encrypted. Background updates can run while the app is locked.")
+                .font(.footnote).foregroundStyle(WalletTheme.secondary)
         }.navigationTitle("Security").navigationBarTitleDisplayMode(.inline)
     }
 }
@@ -167,7 +169,7 @@ private struct NotificationSettingsView: View {
                 .disabled(notifications.working || !notifications.enabled || !notifications.amountsAvailable)
                 .accessibilityIdentifier("settings.notificationAmounts")
             Text(notifications.status).font(.footnote).foregroundStyle(WalletTheme.secondary)
-            Text("Amounts are off by default. When enabled, new invoices can show received sats if this wallet updates in the background. Locked wallets and incomplete updates show payment activity. Delivery may be skipped when iOS does not allow background time.")
+            Text("Amounts are off by default. When enabled, new invoices can show received sats if this wallet updates in the background. Amounts may appear while the app is locked. Incomplete updates show payment activity. Delivery may be skipped when iOS does not allow background time.")
                 .font(.footnote).foregroundStyle(WalletTheme.secondary)
             Button("Retry setup") { notifications.reconcile() }.disabled(notifications.working)
             Button("iOS notification settings") {

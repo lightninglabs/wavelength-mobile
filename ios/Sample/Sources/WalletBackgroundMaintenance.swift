@@ -2,7 +2,8 @@ import BackgroundTasks
 import Foundation
 
 /// Schedules opportunities to apply the current tip and advance retained native
-/// rounds. Registration is synchronous at launch; execution never unlocks a wallet.
+/// rounds. Registration is synchronous; execution may unlock a device-managed
+/// wallet without granting access to the UI.
 @MainActor
 enum WalletBackgroundMaintenance {
     static let identifier = "engineering.lightning.wavelength.wallet.maintenance"

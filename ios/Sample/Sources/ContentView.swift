@@ -4,7 +4,7 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @ObservedObject var store: WalletStore
     @ObservedObject private var notifications = WalletNotifications.shared
-    @State private var enteredBackground = false
+    @State private var enteredBackground = true
 
     var body: some View {
         ZStack {
@@ -12,7 +12,7 @@ struct ContentView: View {
                 .environmentObject(store)
                 .disabled(store.isWorking)
 
-            if store.isWorking {
+            if store.isWorking && store.unlockStage == nil {
                 Color.black.opacity(0.18).ignoresSafeArea()
                 ProgressView()
                     .padding(22)
@@ -26,6 +26,7 @@ struct ContentView: View {
             guard NSClassFromString("XCTestCase") == nil else { return }
             #endif
             notifications.attach(store)
+            if scenePhase == .active { enteredBackground = false }
             if scenePhase == .active && store.phase == .idle {
                 await store.start()
                 #if DEBUG
@@ -42,13 +43,13 @@ struct ContentView: View {
             #endif
             switch phase {
             case .background:
+                enteredBackground = true
                 store.lockForBackground()
                 notifications.enteredBackground()
-                enteredBackground = true
             case .active:
-                if store.phase == .idle { Task { await store.start() }; break }
-                guard enteredBackground else { notifications.reconcile(); break }
+                guard enteredBackground else { break }
                 enteredBackground = false
+                if store.phase == .idle { Task { await store.start() }; break }
                 Task {
                     await store.resumeAfterBackground()
                     notifications.reconcile()
@@ -81,7 +82,9 @@ struct ContentView: View {
 
     @ViewBuilder
     private var content: some View {
-        if store.isSessionLocked {
+        if store.unlockStage == .opening {
+            LaunchView(message: "Opening wallet", allowsNetworkSelection: false)
+        } else if store.isSessionLocked {
             UnlockWalletView()
         } else if let mnemonic = store.pendingMnemonic {
             SeedBackupView(words: mnemonic)
@@ -112,13 +115,13 @@ struct ContentView: View {
 private struct LaunchView: View {
     @EnvironmentObject private var store: WalletStore
     let message: String
+    var allowsNetworkSelection = true
 
     var body: some View {
         VStack(spacing: 24) {
             WavelengthMark(size: 74)
-            ProgressView(message)
-                .tint(WalletTheme.action)
-            NetworkSelectionButton()
+            WalletLoadingIndicator(label: message)
+            if allowsNetworkSelection { NetworkSelectionButton() }
         }
         .padding(.horizontal, 24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

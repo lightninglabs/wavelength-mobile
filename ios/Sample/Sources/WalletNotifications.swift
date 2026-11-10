@@ -79,9 +79,11 @@ final class WalletNotifications: ObservableObject {
     }
     var available: Bool { store?.notificationConfiguration != nil }
     var amountsAvailable: Bool { store?.notificationConfiguration?.receiptHints == true }
+    // This consent explicitly covers amounts while the app is locked. Old
+    // consent used different wording and must not silently opt users in.
     var amountsEnabled: Bool {
         guard let store else { return false }
-        return defaults.bool(forKey: "notifications.amounts." + store.network.rawValue)
+        return defaults.bool(forKey: "notifications.amounts.v2." + store.network.rawValue)
     }
 
     func setAmountsEnabled(_ requested: Bool) {
@@ -93,7 +95,7 @@ final class WalletNotifications: ObservableObject {
             if requested {
                 try receiptLedger.ensureConsent(network: network, now: Int64(Date().timeIntervalSince1970))
             }
-            defaults.set(requested, forKey: "notifications.amounts." + network)
+            defaults.set(requested, forKey: "notifications.amounts.v2." + network)
             objectWillChange.send()
             reconcile()
         } catch { status = "Couldn’t save notification preferences. Try again after unlocking this device." }
@@ -106,7 +108,7 @@ final class WalletNotifications: ObservableObject {
     }
 
     /// Connect lifetime ownership at app construction, including background launch.
-    /// This does not start the wallet or read any unlock credential.
+    /// Only an eligible background callback may prepare a cold wallet.
     func retainWarmStore(_ store: WalletStore) { self.store = store }
 
     func attach(_ store: WalletStore) {
@@ -428,14 +430,20 @@ extension WalletNotifications {
         received(userInfo)
         guard !lease.expired, UIApplication.shared.applicationState != .active else { return false }
         guard let hint = ReceiptPaymentHint(userInfo: userInfo) else {
-            guard let id = WalletNotificationRoute.parsePush(userInfo), validWakeRoute(id) != nil else { return false }
-            return await runMaintenance(windowID: windowID, lease: lease)
+            guard let id = WalletNotificationRoute.parsePush(userInfo), let route = validWakeRoute(id) else { return false }
+            return await runMaintenance(windowID: windowID, lease: lease, expectedIdentity: route.identity)
         }
         guard let store, let route = validPaymentRoute(hint.routeID),
               receiptLedger.reservePresentation(routeID: hint.routeID, eventHash: hint.eventHash) else { return false }
         defer { receiptLedger.releasePresentation(routeID: hint.routeID, eventHash: hint.eventHash) }
         // One callback owns this event across awaits. Other events can still
         // use generic presentation while the native window belongs elsewhere.
+        if matchesSelectedConnection(route, store: store), activeReceiptWindow == nil {
+            activeReceiptWindow = windowID
+            _ = await store.prepareBackgroundWallet(windowID: windowID, lease: lease, expectedIdentity: route.identity)
+            if activeReceiptWindow == windowID { activeReceiptWindow = nil }
+        }
+        guard !lease.expired else { return false }
         let currentRoute = isCurrentPaymentRoute(route, store: store)
         let id = hint.routeID
         let eventHash = hint.eventHash
@@ -446,7 +454,7 @@ extension WalletNotifications {
         catch { return false }
         var result: ReceiptWindowResult?
         if currentRoute, amountsEnabled, amountsAvailable, route.presentation == "receipt_hint",
-           let enrolled = enrollment, enrolled.identity == store.notificationIdentity,
+           let enrolled = enrollment, enrolled.identity == store.notificationRuntimeIdentity,
            enrolled.configuration == route.configuration, activeReceiptWindow == nil {
             activeReceiptWindow = windowID
             await store.setReceiptBackgroundMode(enabled: true)
@@ -460,10 +468,10 @@ extension WalletNotifications {
         }
         guard !lease.expired, store.notificationGeneration == generation,
               validPaymentRoute(id) != nil else { return false }
-        // A lock, consent change or account switch during await removes amount
-        // authority. Generic activity still requires current route consent.
+        // Consent or account changes remove amount authority. The app lock is
+        // separate: amounts still require the user's explicit notification consent.
         if !isCurrentPaymentRoute(route, store: store) || !amountsEnabled || !amountsAvailable ||
-            enrollment?.identity != store.notificationIdentity ||
+            enrollment?.identity != store.notificationRuntimeIdentity ||
             (try? receiptLedger.consent(network: route.network)) != enrollment?.consent {
             enrollment = nil
             result = nil
@@ -486,15 +494,15 @@ extension WalletNotifications {
     }
 
     /// A scheduled opportunity needs no notification consent: it advances only
-    /// existing warm wallet work and never creates a local payment alert.
-    func runMaintenance(windowID: String, lease: ReceiptFetchLease) async -> Bool {
+    /// persisted wallet work and never creates a local payment alert.
+    func runMaintenance(windowID: String, lease: ReceiptFetchLease, expectedIdentity: String? = nil) async -> Bool {
         guard !lease.expired, activeReceiptWindow == nil, let store else { return false }
         activeReceiptWindow = windowID
         defer { if activeReceiptWindow == windowID { activeReceiptWindow = nil } }
         // Cancellation can arrive during this pause; the unique-ID fence still
         // rejects the native invocation before admission.
-        await store.setReceiptBackgroundMode(enabled: true)
-        guard !lease.expired else { return false }
+        guard await store.prepareBackgroundWallet(windowID: windowID, lease: lease, expectedIdentity: expectedIdentity),
+              !lease.expired else { return false }
         let result = try? await store.runMaintenanceWindow(windowID)
         return (result?.batches ?? 0) > 0 || (result?.maintenanceChecked ?? 0) > 0
     }
@@ -505,7 +513,7 @@ extension WalletNotifications {
             $0.id == id && $0.network == store.network.rawValue &&
             $0.configuration == configuration.storageAccount && $0.boundGrant != nil &&
             ($0.boundExpiresAt ?? 0) > Int64(Date().timeIntervalSince1970) &&
-            $0.identity == store.notificationKnownIdentity
+            (store.notificationKnownIdentity == nil || $0.identity == store.notificationKnownIdentity)
         }
     }
 
@@ -518,9 +526,12 @@ extension WalletNotifications {
         }
     }
 
-    private func isCurrentPaymentRoute(_ route: WalletNotificationRoute, store: WalletStore) -> Bool {
+    private func matchesSelectedConnection(_ route: WalletNotificationRoute, store: WalletStore) -> Bool {
         route.network == store.network.rawValue &&
-        route.configuration == store.notificationConfiguration?.storageAccount &&
-        route.identity == store.notificationKnownIdentity
+        route.configuration == store.notificationConfiguration?.storageAccount
+    }
+
+    private func isCurrentPaymentRoute(_ route: WalletNotificationRoute, store: WalletStore) -> Bool {
+        matchesSelectedConnection(route, store: store) && route.identity == store.notificationRuntimeIdentity
     }
 }

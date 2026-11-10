@@ -22,11 +22,18 @@ private struct WalletDashboardView: View {
         WalletPage {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Balance").foregroundStyle(WalletTheme.secondary)
-                if store.balance != nil {
-                    WalletAmount(amount: store.confirmedBalanceSat)
+                if let balance = store.balance {
+                    WalletAmount(amount: balance.totalSat)
                         .accessibilityIdentifier("wallet.balance")
+                    if balance.pendingSat > 0 {
+                        Text("\(WalletFormatting.sats(balance.pendingSat)) pending")
+                            .font(.subheadline)
+                            .foregroundStyle(WalletTheme.secondary)
+                            .accessibilityIdentifier("wallet.balance.pending")
+                    }
                 } else {
-                    ProgressView("Loading balance")
+                    WalletLoadingIndicator(label: "Loading balance")
+                        .frame(height: 58)
                 }
             }
             .padding(.top, 12)
@@ -96,7 +103,10 @@ private struct WalletDashboardView: View {
                     WalletDivider()
                 }
 
-                if store.visibleActivity.isEmpty && store.refreshOperation == nil {
+                if store.visibleActivity.isEmpty && !store.activityLoaded {
+                    WalletLoadingIndicator(label: "Loading activity")
+                        .frame(maxWidth: .infinity).padding(.vertical, 24)
+                } else if store.visibleActivity.isEmpty && store.refreshOperation == nil {
                     Text("No activity").foregroundStyle(WalletTheme.secondary).padding(.vertical, 16)
                 } else {
                     LazyVStack(spacing: 0) {
