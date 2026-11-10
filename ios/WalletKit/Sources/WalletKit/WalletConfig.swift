@@ -39,6 +39,8 @@ public struct WalletConfig: Encodable, Sendable {
     public var allowMainnet: Bool?
     /// Persist round recovery independently of notification consent.
     public var durableRoundRuntime: Bool? = nil
+    /// Leave mailbox intake paused until the host selects a bounded window.
+    public var hostDrivenIngress: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
         case dataDir = "data_dir"
@@ -58,6 +60,7 @@ public struct WalletConfig: Encodable, Sendable {
         case debugLevel = "debug_level"
         case allowMainnet = "allow_mainnet"
         case durableRoundRuntime = "durable_round_runtime"
+        case hostDrivenIngress = "host_driven_ingress"
     }
 
     /// A signet config for the lightweight (Esplora-backed) wallet. Empty
