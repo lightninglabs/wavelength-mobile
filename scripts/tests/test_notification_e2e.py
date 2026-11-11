@@ -22,7 +22,7 @@ class NotificationBuildTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.config = {
             "origin": "https://relay.example.invalid",
-            "appAlias": "wallet-testflight", "producerAlias": "wallet",
+            "appAlias": "wallet-testflight",
             "swapIssuer": "02" + "11" * 32, "receiptHints": True,
         }
 

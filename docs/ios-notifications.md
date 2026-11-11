@@ -16,8 +16,8 @@ Before a release, add a dictionary for each supported Bitcoin network with:
 | --- | --- |
 | `origin` | Fixed HTTPS relay origin without a path or credentials |
 | `appAlias` | Publisher alias configured on the relay |
-| `producerAlias` | Relay allowlist alias configured on both producers |
 | `swapIssuer` | Compressed 33-byte public key of the trusted swap service |
+| `receiptHints` | Optional string `true` enabling verified-amount consent |
 
 These are build configuration, never fields from a notification. Custom
 operator or swap endpoint overrides disable new enrollment. Original relay
@@ -39,25 +39,33 @@ modify Apple portal capabilities or provision a profile.
   Keychain, separately from wallet secrets. It rejects redirects.
 - `WalletNotifications` owns per-network consent and local route metadata. It
   retries setup and revocation on foreground entry. Grant expiry is renewed
-  within its last day. Relay revocation invalidates both wake and alert authority;
-  the producer's bounded expired/revoked subscription cleanup is independent.
+  within its last day. Turning off removes source delegation when the matching
+  wallet is available and revokes relay delivery. Expiry cleanup is independent.
 - `WalletStore` owns native source registration. The normal operation-admission
   gate prevents a network switch while the wallet signs the registration.
 
 Enrollment persists the pending key and deterministic installation ID first.
 After a lost response, the next client probes that ID before re-attesting.
-Persist relay grants before binding them to producers. The operator receives
-wake authority only; the swap service may receive generic alert authority.
+Persist publisher offers before invoking the native signer. The producer
+verifies wallet ownership and subscriber consent locally, then returns a feed
+token. The installation signs a `bind_feed` request carrying that token, the
+local subscription and fixed source ID. The relay may already have learned the
+same mapping from its authenticated source stream. No relay-issued capability
+or producer URL allowlist is involved. Operator routes permit wakes only; swap
+routes can permit classified incoming activity.
 Apple's specific `invalidKey` error replaces an installation after reinstall.
 The app retains old subscription IDs and removes still-live bindings with the
 matching wallet's signature before binding the new grant. A transport failure
-or HTTP 401 never resets a confirmed installation. If the old wallet cannot
+or HTTP 401 never automatically resets a confirmed installation. The explicit
+“Replace device enrollment” action generates and attests a fresh Apple key; it
+does not retry `attestKey` with an already-attested key. It retains old grant
+IDs for wallet-authorized removal before binding replacement routes. If the old wallet cannot
 sign removal, a destroyed Apple key cannot revoke that installation's grants;
 the app retains metadata and reports their expiry instead of claiming they
 were revoked. Old queued hints may still arrive during their bounded lifetime.
 
-Neither producer receives Apple credentials, wallet keys, notification amounts or a URL
-chosen by the push. An HTTP 401 does not establish successful revocation.
+Neither producer receives Apple credentials, device destinations, notification
+amounts or a URL chosen by the push. Wallet identity proofs remain source-local. An HTTP 401 does not establish successful revocation.
 
 Route IDs are deterministic hashes of publisher scope, network, wallet identity
 and source. A restored wallet reconstructs the same route after reinstall even
@@ -142,3 +150,27 @@ device-managed startup, missing-credential refusal, cancelled startup, foregroun
 takeover and exact-once expiration completion. They do not prove physical-device
 APNs delivery or App Attest provisioning. Publisher configuration remains empty;
 this PR changes no Apple portal state and deploys no service.
+
+
+## Feed version and validation
+
+The feed client uses a separate Keychain namespace. It does not import legacy
+capability records or run two delivery contracts. Publishers coordinate source,
+relay and app activation; this PR alone does not make an existing push server
+serve the feed API. The publisher's source labels for this app are `operator`
+and `swap_server`, with exactly one offer for each configured native source.
+These labels select a local source; the native signer checks actual source
+identity and subscriber consent before using the wallet key.
+
+`WalletClient.processNext(id:timeoutSeconds:)` also exposes the guarded native
+single-batch API for hosts. It reports intake, not awaiting-peer or global idle.
+The app's existing maintenance and receipt windows remain its higher-level
+recovery entrypoints. Source hints still cannot authorize an amount or choose
+an endpoint, wallet or network.
+
+Local tests cover the exact signed `bind_feed` payload, rejection of a token
+for another grant, source DTO fields, token redaction, lost enrollment response,
+Apple-invalid-key recovery and explicit repair after an unknown installation.
+They use injected fixtures, not a production authentication bypass. Physical
+App Attest/APNs delivery and signing inside a real OS window remain separate
+acceptance work.

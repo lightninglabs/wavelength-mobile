@@ -98,6 +98,22 @@ public actor WalletClient {
         return try decode(await bg { try Bindings.setNotificationSubscription(body) })
     }
 
+    /// Sign an exact publisher delegation at a configured source. The native
+    /// bridge checks issuer and subscriber consent before using the wallet key.
+    public func setNotificationFeedGrant(
+        _ request: NotificationFeedGrant
+    ) async throws -> NotificationFeedGrantResult {
+        let body = try encoder.encode(request)
+        return try decode(await bg { try Bindings.setNotificationFeedGrant(body) })
+    }
+
+    /// Attempt one restricted intake batch. This does not prove domain
+    /// completion, awaiting-peer or safe suspension. Pause foreground first,
+    /// serialize state-creating calls and cancel expiry by the same unique ID.
+    public func processNext(id: String, timeoutSeconds: Int64) async throws -> IngressStepResult {
+        try decode(await bg { try Bindings.processNext(id, timeoutSeconds) })
+    }
+
     /// Join a background window before resuming foreground ingress. False
     /// pauses intake while retaining the daemon and its domain workers.
     public func setHostForeground(_ foreground: Bool) async throws {

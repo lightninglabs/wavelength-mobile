@@ -1,31 +1,30 @@
 import CryptoKit
 import DeviceCheck
 import Foundation
+import WalletKit
 
 /// Publisher configuration comes from the build, never from a push payload.
 struct NotificationRelayConfiguration: Equatable, Sendable, Codable {
     let origin: URL
     let appAlias: String
-    let producerAlias: String
     let swapIssuer: String
     let receiptHints: Bool?
 
-    init?(origin: String, appAlias: String, producerAlias: String, swapIssuer: String, receiptHints: Bool = false) {
+    init?(origin: String, appAlias: String, swapIssuer: String, receiptHints: Bool = false) {
         guard let url = URL(string: origin), url.scheme == "https", url.host != nil,
               url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
               url.path.isEmpty || url.path == "/",
-              Self.identifier(appAlias), Self.identifier(producerAlias),
+              Self.identifier(appAlias),
               swapIssuer.count == 66, swapIssuer.hasPrefix("02") || swapIssuer.hasPrefix("03"),
               swapIssuer.allSatisfy({ $0.isHexDigit && $0.isASCII }) else { return nil }
         self.origin = url
         self.appAlias = appAlias
-        self.producerAlias = producerAlias
         self.swapIssuer = swapIssuer
         self.receiptHints = receiptHints ? true : nil
     }
 
     var storageAccount: String {
-        "notification-relay." + Self.digest(Data((origin.absoluteString + "\0" + appAlias).utf8))
+        "notification-relay.feed-v1." + Self.digest(Data((origin.absoluteString + "\0" + appAlias).utf8))
     }
 
     static func identifier(_ value: String) -> Bool {
@@ -45,14 +44,32 @@ struct NotificationPreviousSubscription: Codable, Sendable {
     let expiresAt: Int64
 }
 
+struct NotificationFeedOffer: Codable, Sendable {
+    let sourceId: String
+    let role: String
+    let sourcePubkey: String
+    let subscriberPubkey: String
+    let grantId: String
+    let eventClasses: UInt32
+    let expiresAtUnix: Int64
+    let subscriberSignature: String
+}
+
 struct NotificationRelayGrant: Codable, Sendable {
     var previousSubscriptions: [NotificationPreviousSubscription]? = nil
     let subscriptionId: String
-    let wakeCapability: String
-    let alertCapability: String?
+    let feedOffers: [NotificationFeedOffer]
     let expiresAt: Int64
     let alerts: Bool
     var presentation: String? = nil
+
+    /// Roles select only configured native sources. Their actual issuer and
+    /// publisher consent are checked by the native signer before delegation.
+    func offer(for source: NotificationSource) throws -> NotificationFeedOffer {
+        let matches = feedOffers.filter { $0.role == source.rawValue }
+        guard matches.count == 1 else { throw NotificationRelayError.invalidResponse }
+        return matches[0]
+    }
 }
 
 struct NotificationRelayChallenge: Decodable, Sendable {
@@ -147,8 +164,7 @@ struct NotificationInstallation: Codable {
 private struct NotificationManagementResult: Decodable {
     let alertPresentation: String?
     let subscriptionId: String?
-    let wakeCapability: String?
-    let alertCapability: String?
+    let feedOffers: [NotificationFeedOffer]?
     let expiresAt: Int64?
 }
 
@@ -228,19 +244,54 @@ actor NotificationRelayClient {
         if alerts && receiptHints { payload["alert_presentation"] = presentation }
         let result = try await manage(payload)
         guard let id = result.subscriptionId, NotificationRelayConfiguration.identifier(id),
-              let wake = result.wakeCapability, Self.validCapability(wake),
+              let offers = result.feedOffers, !offers.isEmpty, offers.count <= 16,
               let expiry = result.expiresAt, expiry > Int64(Date().timeIntervalSince1970),
-              !alerts || result.alertCapability.map(Self.validCapability) == true,
               presentation != "receipt_hint" || result.alertPresentation == "receipt_hint" else {
             throw NotificationRelayError.invalidResponse
         }
-        let grant = NotificationRelayGrant(previousSubscriptions: current.retired?[routeId], subscriptionId: id, wakeCapability: wake,
-                                          alertCapability: result.alertCapability,
-                                          expiresAt: expiry, alerts: alerts, presentation: result.alertPresentation)
+        guard Set(offers.map(\.sourceId)).count == offers.count,
+              offers.allSatisfy({ Self.validOffer($0, subscription: id, expiry: expiry, alerts: alerts) }) else {
+            throw NotificationRelayError.invalidResponse
+        }
+        let grant = NotificationRelayGrant(previousSubscriptions: current.retired?[routeId], subscriptionId: id,
+                                          feedOffers: offers, expiresAt: expiry, alerts: alerts,
+                                          presentation: result.alertPresentation)
         var saved = try requireInstallation()
         saved.grants[routeId] = grant
         try save(saved)
         return grant
+    }
+
+    /// The installation signs the local subscription and exact producer token.
+    /// A token is correlation only and cannot select another local destination.
+    func bind(grant: NotificationRelayGrant, offer: NotificationFeedOffer,
+              result: NotificationFeedGrantResult) async throws {
+        await acquire()
+        defer { release() }
+        try Task.checkCancellation()
+        guard grant.subscriptionId == offer.grantId, result.grantID == offer.grantId,
+              Self.validBase64URL(result.feedToken, bytes: 32),
+              result.expiresAtUnix > Int64(Date().timeIntervalSince1970),
+              result.expiresAtUnix <= offer.expiresAtUnix else { throw NotificationRelayError.invalidResponse }
+        _ = try await manage([
+            "action": "bind_feed", "subscription_id": grant.subscriptionId,
+            "feed_binding": ["source_id": offer.sourceId, "feed_token": result.feedToken,
+                             "event_classes": offer.eventClasses, "expires_at_unix": result.expiresAtUnix],
+        ])
+    }
+
+    /// Explicit repair creates a fresh Apple key. A 401 alone is not proof
+    /// that old authority disappeared and never triggers automatic replacement.
+    func reenroll(token: String) async throws {
+        await acquire()
+        defer { release() }
+        try Task.checkCancellation()
+        try load()
+        var retired = installation?.retired ?? [:]
+        for (route, grant) in installation?.grants ?? [:] {
+            retired[route, default: []].append(.init(id: grant.subscriptionId, expiresAt: grant.expiresAt))
+        }
+        try await enroll(token: token, retired: retired)
     }
 
     func acknowledgeReplacedSubscriptions(routeId: String) throws {
@@ -387,10 +438,32 @@ actor NotificationRelayClient {
         return try decoder.decode(T.self, from: data)
     }
 
-    private static func validCapability(_ value: String) -> Bool {
-        guard value.count == 43 else { return false }
+    private static func validBase64URL(_ value: String, bytes: Int) -> Bool {
+        guard !value.contains("="), value.utf8.allSatisfy({
+            (65...90).contains($0) || (97...122).contains($0) ||
+                (48...57).contains($0) || [45, 95].contains($0)
+        }) else { return false }
         let padded = value.replacingOccurrences(of: "-", with: "+")
-            .replacingOccurrences(of: "_", with: "/") + "="
-        return Data(base64Encoded: padded)?.count == 32
+            .replacingOccurrences(of: "_", with: "/") + String(repeating: "=", count: (4 - value.count % 4) % 4)
+        guard let decoded = Data(base64Encoded: padded), decoded.count == bytes else { return false }
+        let canonical = decoded.base64EncodedString().replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+        return canonical == value
+    }
+
+    private static func validOffer(_ offer: NotificationFeedOffer, subscription: String,
+                                   expiry: Int64, alerts: Bool) -> Bool {
+        func publicKey(_ value: String) -> Bool {
+            value.count == 66 && (value.hasPrefix("02") || value.hasPrefix("03")) &&
+                value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+        }
+        return NotificationRelayConfiguration.identifier(offer.sourceId) &&
+            NotificationRelayConfiguration.identifier(offer.role) &&
+            publicKey(offer.sourcePubkey) && publicKey(offer.subscriberPubkey) &&
+            offer.grantId == subscription && (22...64).contains(offer.grantId.count) &&
+            offer.eventClasses > 0 && offer.eventClasses & ~UInt32(3) == 0 &&
+            (alerts || offer.eventClasses & 2 == 0) &&
+            offer.expiresAtUnix > Int64(Date().timeIntervalSince1970) && offer.expiresAtUnix <= expiry &&
+            validBase64URL(offer.subscriberSignature, bytes: 64)
     }
 }

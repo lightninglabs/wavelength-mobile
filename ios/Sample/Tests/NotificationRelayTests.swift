@@ -24,6 +24,21 @@ private struct FixtureNotificationAttester: NotificationAttesting {
     }
 }
 
+private final class RotatingNotificationAttester: NotificationAttesting, @unchecked Sendable {
+    let supported = true
+    private let lock = NSLock()
+    private var count = 0
+    var generations: Int { lock.lock(); defer { lock.unlock() }; return count }
+    private func nextKey() -> String {
+        lock.lock(); defer { lock.unlock() }
+        count += 1
+        return Data(repeating: UInt8(count + 1), count: 32).base64EncodedString()
+    }
+    func generateKey() async throws -> String { nextKey() }
+    func attest(key: String, hash: Data) async throws -> Data { hash }
+    func assert(key: String, hash: Data) async throws -> Data { hash }
+}
+
 private final class NotificationURLProtocol: URLProtocol {
     static var handler: ((URLRequest) throws -> (Int, Data))?
     override class func canInit(with request: URLRequest) -> Bool { true }
@@ -41,8 +56,25 @@ private final class NotificationURLProtocol: URLProtocol {
 }
 
 final class NotificationRelayTests: XCTestCase {
+    private static func offer(id: String = "AAECAwQFBgcICQoLDA0ODw") -> NotificationFeedOffer {
+        NotificationFeedOffer(sourceId: "swap", role: "swap_server",
+                              sourcePubkey: "02" + String(repeating: "01", count: 32),
+                              subscriberPubkey: "03" + String(repeating: "02", count: 32),
+                              grantId: id, eventClasses: 3, expiresAtUnix: 2_000_000_000,
+                              subscriberSignature: Data(repeating: 0, count: 64).base64EncodedString()
+                                .replacingOccurrences(of: "=", with: ""))
+    }
+
+    private static func offerJSON(id: String) -> [String: Any] {
+        let value = offer(id: id)
+        return ["source_id": value.sourceId, "role": value.role, "source_pubkey": value.sourcePubkey,
+                "subscriber_pubkey": value.subscriberPubkey, "grant_id": value.grantId,
+                "event_classes": value.eventClasses, "expires_at_unix": value.expiresAtUnix,
+                "subscriber_signature": value.subscriberSignature]
+    }
+
     private func configuration() throws -> NotificationRelayConfiguration {
-        try XCTUnwrap(.init(origin: "https://relay.invalid", appAlias: "test", producerAlias: "local",
+        try XCTUnwrap(.init(origin: "https://relay.invalid", appAlias: "test",
                             swapIssuer: "02" + String(repeating: "01", count: 32)))
     }
 
@@ -59,7 +91,7 @@ final class NotificationRelayTests: XCTestCase {
 
     func testRejectsUntrustedConfigurationAndPushRouting() throws {
         for origin in ["http://relay.invalid", "https://user@relay.invalid", "https://relay.invalid/path", "https://relay.invalid?q=x"] {
-            XCTAssertNil(NotificationRelayConfiguration(origin: origin, appAlias: "test", producerAlias: "local",
+            XCTAssertNil(NotificationRelayConfiguration(origin: origin, appAlias: "test",
                                                        swapIssuer: "02" + String(repeating: "01", count: 32)))
         }
         XCTAssertNil(WalletNotificationRoute.parsePush(["wavelength": ["version": true, "route_id": "known"]]))
@@ -79,8 +111,7 @@ final class NotificationRelayTests: XCTestCase {
         XCTAssertNotEqual(routeID, WalletNotificationRoute.routeID(network: "mainnet", identity: "wallet", relay: configuration, source: .swapServer))
         XCTAssertNotEqual(routeID, WalletNotificationRoute.routeID(network: "signet", identity: "other", relay: configuration, source: .swapServer))
         XCTAssertNotEqual(routeID, WalletNotificationRoute.routeID(network: "signet", identity: "wallet", relay: configuration, source: .arkOperator))
-        let oldGrant = NotificationRelayGrant(subscriptionId: "old-subscription", wakeCapability: String(repeating: "A", count: 43),
-                                              alertCapability: nil, expiresAt: 2_000_000_000, alerts: true)
+        let oldGrant = NotificationRelayGrant(subscriptionId: "AAECAwQFBgcICQoLDA0ODw", feedOffers: [Self.offer()], expiresAt: 2_000_000_000, alerts: true)
         let old = NotificationInstallation(keyId: "lost-key", installationId: "old-installation", confirmed: true,
                                             token: "old-token", grants: [routeID: oldGrant])
         try credentials.save(JSONEncoder().encode(old), account: "")
@@ -105,8 +136,7 @@ final class NotificationRelayTests: XCTestCase {
                 enrollments += 1
                 result = ["installation_id": newID]
             case "/v1/installations/\(newID)/manage":
-                result = ["subscription_id": "new-subscription", "wake_capability": String(repeating: "A", count: 43),
-                          "alert_capability": String(repeating: "A", count: 43), "expires_at": 2_000_000_000]
+                result = ["subscription_id": "EBESExQVFhcYGRobHB0eHw", "feed_offers": [Self.offerJSON(id: "EBESExQVFhcYGRobHB0eHw")], "expires_at": 2_000_000_000]
             default: XCTFail("Unexpected request: \(request.url!.path)")
             }
             return (200, try JSONSerialization.data(withJSONObject: result))
@@ -116,8 +146,8 @@ final class NotificationRelayTests: XCTestCase {
         catch NotificationRelayError.previousInstallationExpires(let expiry) { XCTAssertEqual(expiry, oldGrant.expiresAt) }
         let grant = try await client.subscribe(token: "new-token", routeId: routeID, alerts: true)
         XCTAssertEqual(enrollments, 1)
-        XCTAssertEqual(grant.subscriptionId, "new-subscription")
-        XCTAssertEqual(grant.previousSubscriptions?.map(\.id), ["old-subscription"])
+        XCTAssertEqual(grant.subscriptionId, "EBESExQVFhcYGRobHB0eHw")
+        XCTAssertEqual(grant.previousSubscriptions?.map(\.id), ["AAECAwQFBgcICQoLDA0ODw"])
         let route = WalletNotificationRoute(id: routeID, network: "signet", identity: "wallet", relay: configuration, source: .swapServer,
                                             boundGrant: WalletNotificationRoute.fingerprint(oldGrant))
         XCTAssertFalse(route.isBound(grant))
@@ -189,8 +219,7 @@ final class NotificationRelayTests: XCTestCase {
                 case "rotate_token": rotates += 1; return try json([:])
                 case "subscribe":
                     subscriptions += 1
-                    return try json(["subscription_id": "subscription", "wake_capability": String(repeating: "A", count: 43),
-                                     "alert_capability": String(repeating: "A", count: 43), "expires_at": Int64(Date().timeIntervalSince1970) + 2_000_000])
+                    return try json(["subscription_id": "ICEiIyQlJicoKSorLC0uLw", "feed_offers": [Self.offerJSON(id: "ICEiIyQlJicoKSorLC0uLw")], "expires_at": 2_000_000_000])
                 case "revoke_subscription":
                     if rejectRevoke { return try json([:], 401) }
                     revoked = true
@@ -207,7 +236,7 @@ final class NotificationRelayTests: XCTestCase {
         // ID. The relay has already committed it; re-attesting is forbidden.
         let restarted = NotificationRelayClient(configuration: configuration, attester: attester, session: session, credentials: credentials)
         let grant = try await restarted.subscribe(token: "abcd", routeId: "route", alerts: true)
-        XCTAssertEqual(grant.subscriptionId, "subscription")
+        XCTAssertEqual(grant.subscriptionId, "ICEiIyQlJicoKSorLC0uLw")
         XCTAssertEqual(attestations, 1)
         XCTAssertEqual(rotates, 1)
         XCTAssertEqual(subscriptions, 1)
@@ -235,8 +264,7 @@ final class NotificationRelayTests: XCTestCase {
         let configuration = try configuration()
         let credentials = MemoryNotificationCredentials()
         let attester = FixtureNotificationAttester()
-        let old = NotificationRelayGrant(subscriptionId: "sub", wakeCapability: String(repeating: "A", count: 43),
-                                        alertCapability: String(repeating: "A", count: 43),
+        let old = NotificationRelayGrant(subscriptionId: "MDEyMzQ1Njc4OTo7PD0-Pw", feedOffers: [Self.offer(id: "MDEyMzQ1Njc4OTo7PD0-Pw")],
                                         expiresAt: 2_000_000_000, alerts: true)
         try credentials.save(JSONEncoder().encode(NotificationInstallation(
             keyId: attester.key, installationId: "install", confirmed: true,
@@ -259,8 +287,7 @@ final class NotificationRelayTests: XCTestCase {
                 let mutation = try JSONSerialization.jsonObject(with: payload) as! [String: Any]
                 XCTAssertEqual(mutation["action"] as? String, "subscribe")
                 modes.append(mutation["alert_presentation"] as? String)
-                result = ["subscription_id": "sub", "wake_capability": String(repeating: "A", count: 43),
-                          "alert_capability": String(repeating: "A", count: 43), "expires_at": 2_000_000_000]
+                result = ["subscription_id": "MDEyMzQ1Njc4OTo7PD0-Pw", "feed_offers": [Self.offerJSON(id: "MDEyMzQ1Njc4OTo7PD0-Pw")], "expires_at": 2_000_000_000]
                 if ack { result["alert_presentation"] = mutation["alert_presentation"] ?? "generic" }
             }
             return (200, try JSONSerialization.data(withJSONObject: result))
@@ -284,6 +311,122 @@ final class NotificationRelayTests: XCTestCase {
         XCTAssertEqual(modes[0], "receipt_hint")
         XCTAssertEqual(modes[1], "receipt_hint")
         XCTAssertNil(modes[2], "Generic hosts must remain compatible with old servers")
+    }
+
+    func testProducerTokenBindingSignsExactLocalRouteAndSource() async throws {
+        let configuration = try configuration()
+        let credentials = MemoryNotificationCredentials()
+        let grant = NotificationRelayGrant(subscriptionId: "AAECAwQFBgcICQoLDA0ODw", feedOffers: [Self.offer()],
+                                          expiresAt: 2_000_000_000, alerts: true)
+        let attester = FixtureNotificationAttester()
+        try credentials.save(JSONEncoder().encode(NotificationInstallation(
+            keyId: attester.key, installationId: "installation", confirmed: true,
+            token: "abcd", grants: ["route": grant]
+        )), account: "")
+        let settings = URLSessionConfiguration.ephemeral
+        settings.protocolClasses = [NotificationURLProtocol.self]
+        let session = URLSession(configuration: settings)
+        defer { NotificationURLProtocol.handler = nil; session.invalidateAndCancel() }
+        var bound = 0
+        NotificationURLProtocol.handler = { request in
+            let object = try JSONSerialization.jsonObject(with: Self.body(request)) as! [String: Any]
+            if request.url!.path == "/v1/challenges" {
+                return (200, try JSONSerialization.data(withJSONObject: [
+                    "id": "challenge", "nonce": "nonce", "app_id": "test", "operation": "manage",
+                    "installation_id": "installation", "expires_at": 2_000_000_000,
+                ]))
+            }
+            let payload = try XCTUnwrap(Data(base64Encoded: object["payload"] as! String))
+            let mutation = try JSONSerialization.jsonObject(with: payload) as! [String: Any]
+            let challenge = NotificationRelayChallenge(id: "challenge", nonce: "nonce", appId: "test",
+                                                        operation: "manage", installationId: "installation", expiresAt: 0)
+            XCTAssertEqual(Data(base64Encoded: object["proof"] as! String), challenge.clientDataHash(payload: payload))
+            XCTAssertEqual(mutation["action"] as? String, "bind_feed")
+            XCTAssertEqual(mutation["subscription_id"] as? String, grant.subscriptionId)
+            let binding = try XCTUnwrap(mutation["feed_binding"] as? [String: Any])
+            XCTAssertEqual(binding["source_id"] as? String, "swap")
+            XCTAssertEqual(binding["event_classes"] as? UInt32, 3)
+            XCTAssertEqual(binding["feed_token"] as? String, String(repeating: "A", count: 43))
+            XCTAssertEqual(binding["expires_at_unix"] as? Int64, 2_000_000_000)
+            XCTAssertNil(binding["device_token"])
+            bound += 1
+            return (200, Data("{}".utf8))
+        }
+        let client = NotificationRelayClient(configuration: configuration, attester: attester,
+                                             session: session, credentials: credentials)
+        _ = try await client.subscribe(token: "abcd", routeId: "route", alerts: true)
+        let resultJSON = #"{"grant_id":"AAECAwQFBgcICQoLDA0ODw","feed_token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","expires_at_unix":2000000000}"#
+        let result = try JSONDecoder().decode(NotificationFeedGrantResult.self, from: Data(resultJSON.utf8))
+        try await client.bind(grant: grant, offer: grant.offer(for: .swapServer), result: result)
+        XCTAssertEqual(bound, 1)
+        let foreign = try JSONDecoder().decode(NotificationFeedGrantResult.self,
+            from: Data(resultJSON.replacingOccurrences(of: "AAECAwQFBgcICQoLDA0ODw", with: "foreign-route").utf8))
+        do {
+            try await client.bind(grant: grant, offer: grant.offer(for: .swapServer), result: foreign)
+            XCTFail("A producer token for another route was bound")
+        } catch { XCTAssertTrue(error is NotificationRelayError) }
+        XCTAssertEqual(bound, 1)
+    }
+
+    func testUnknownInstallationRequiresExplicitFreshKeyEnrollment() async throws {
+        let configuration = try configuration()
+        let credentials = MemoryNotificationCredentials()
+        let oldKey = Data(repeating: 1, count: 32).base64EncodedString()
+        let grant = NotificationRelayGrant(subscriptionId: "AAECAwQFBgcICQoLDA0ODw", feedOffers: [Self.offer()],
+                                          expiresAt: 2_000_000_000, alerts: true)
+        try credentials.save(JSONEncoder().encode(NotificationInstallation(
+            keyId: oldKey, installationId: "old-installation", confirmed: true,
+            token: "old-token", grants: ["route": grant]
+        )), account: "")
+        let attester = RotatingNotificationAttester()
+        let newKey = Data(repeating: 2, count: 32).base64EncodedString()
+        var identity = Data("test\0".utf8)
+        identity.append(try XCTUnwrap(Data(base64Encoded: newKey)))
+        let newID = NotificationRelayConfiguration.digest(identity)
+        var repair = false
+        var attestedKeys: [String] = []
+        let settings = URLSessionConfiguration.ephemeral
+        settings.protocolClasses = [NotificationURLProtocol.self]
+        let session = URLSession(configuration: settings)
+        defer { NotificationURLProtocol.handler = nil; session.invalidateAndCancel() }
+        NotificationURLProtocol.handler = { request in
+            let object = try JSONSerialization.jsonObject(with: Self.body(request)) as! [String: Any]
+            var value: [String: Any]
+            switch request.url!.path {
+            case "/v1/challenges":
+                if !repair { return (401, Data("{}".utf8)) }
+                value = ["id": "challenge", "nonce": "nonce", "app_id": "test",
+                         "operation": object["operation"]!, "expires_at": 2_000_000_000]
+                value["installation_id"] = object["installation_id"]
+            case "/v1/installations":
+                let key = object["key_id"] as! String
+                XCTAssertEqual(key, newKey)
+                XCTAssertNotEqual(key, oldKey)
+                attestedKeys.append(key)
+                value = ["installation_id": newID]
+            case "/v1/installations/\(newID)/manage":
+                value = ["subscription_id": "EBESExQVFhcYGRobHB0eHw",
+                         "feed_offers": [Self.offerJSON(id: "EBESExQVFhcYGRobHB0eHw")], "expires_at": 2_000_000_000]
+            default: throw NotificationRelayError.invalidResponse
+            }
+            return (200, try JSONSerialization.data(withJSONObject: value))
+        }
+        let client = NotificationRelayClient(configuration: configuration, attester: attester,
+                                             session: session, credentials: credentials)
+        do {
+            _ = try await client.subscribe(token: "new-token", routeId: "route", alerts: true)
+            XCTFail("Unknown authority was silently replaced")
+        } catch { XCTAssertEqual((error as? NotificationRelayHTTPError)?.status, 401) }
+        XCTAssertEqual(attester.generations, 0)
+        let retained = try JSONDecoder().decode(NotificationInstallation.self,
+            from: XCTUnwrap(credentials.read(account: "")))
+        XCTAssertEqual(retained.keyId, oldKey)
+        repair = true
+        try await client.reenroll(token: "new-token")
+        let replaced = try await client.subscribe(token: "new-token", routeId: "route", alerts: true)
+        XCTAssertEqual(attester.generations, 1)
+        XCTAssertEqual(attestedKeys, [newKey])
+        XCTAssertEqual(replaced.previousSubscriptions?.map(\.id), [grant.subscriptionId])
     }
 
 }

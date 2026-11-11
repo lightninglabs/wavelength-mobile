@@ -385,18 +385,22 @@ for try await entry in client.activity(includeExisting: true) {
 
 ## Notification source registration
 
-The pinned native source includes signed operator and swap notification
-registration and retained shutdown ownership. `WalletClient` accepts a typed
-`NotificationSubscription.register` or `.remove`. Register each configured
-source independently. The operator receives only a wake capability. Supply an
-optional alert capability only to a source that can classify incoming work.
-`WalletConfig.swapNotificationIssuer` pins the swap service's compressed public
-wallet identity; leave it unset to keep that source unsupported. Registration
-uses the existing gRPC connection. Push payloads cannot supply endpoints or pins.
+The pinned native source includes wallet-authorized subscriber feed grants and
+retained shutdown ownership. `WalletClient.setNotificationFeedGrant` signs the
+publisher's exact subscriber key, grant ID, classes and expiry through the
+configured source. The native bridge checks source identity and subscriber
+consent before using the wallet key. The returned feed token is correlation,
+not mailbox-read authority. The installation signs its binding at the relay.
 
-These calls do not enroll a phone with APNs, attest an installation, or run wallet
-recovery. The app owns those platform responsibilities. Capabilities belong in
-Keychain and must not appear in logs or notification payloads.
+Register each source independently. `WalletConfig.swapNotificationIssuer` pins
+the swap service's compressed public wallet identity; leaving it unset keeps
+that source unsupported. Neither a push nor an offer can choose an RPC endpoint.
+There is no producer relay-alias input. Legacy capability registration APIs
+remain available in the wrapper for older callers, but the app uses feed setup.
+
+These calls do not enroll a phone with APNs or run wallet recovery. The app owns
+those platform responsibilities. Installation state stays in device-only
+Keychain. Feed tokens must not appear in logs or notification payloads.
 
 A `WalletError.isStopPending` result means the native singleton still owns
 cleanup. Retain the client and repeat `stop()` before starting another daemon.

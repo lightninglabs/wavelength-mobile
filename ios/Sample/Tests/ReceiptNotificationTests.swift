@@ -133,7 +133,7 @@ final class ReceiptNotificationTests: XCTestCase {
     func testSavedNetworkKeepsGenericAuthorityWithoutCurrentWalletConfiguration() throws {
         let defaults = UserDefaults(suiteName: UUID().uuidString)!
         let configuration = try XCTUnwrap(NotificationRelayConfiguration(
-            origin: "https://relay.invalid", appAlias: "test", producerAlias: "local", swapIssuer: owner))
+            origin: "https://relay.invalid", appAlias: "test", swapIssuer: owner))
         let route = WalletNotificationRoute(id: "other-network", network: "mainnet", identity: owner,
                                             relay: configuration, source: .swapServer)
         let operatorRoute = WalletNotificationRoute(id: "operator", network: "mainnet", identity: owner,
@@ -156,7 +156,7 @@ final class ReceiptNotificationTests: XCTestCase {
         let storage = ReceiptMemoryCredentials()
         let ledger = ReceiptNotificationLedger(storage: storage)
         let configuration = try XCTUnwrap(NotificationRelayConfiguration(
-            origin: "https://relay.invalid", appAlias: "test", producerAlias: "local", swapIssuer: owner))
+            origin: "https://relay.invalid", appAlias: "test", swapIssuer: owner))
         let route = WalletNotificationRoute(id: "route", network: "signet", identity: owner,
                                             relay: configuration, source: .swapServer)
         defaults.set(try JSONEncoder().encode([route]), forKey: "notifications.routes")

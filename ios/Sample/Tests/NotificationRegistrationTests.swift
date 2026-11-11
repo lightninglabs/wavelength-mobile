@@ -61,4 +61,36 @@ final class NotificationRegistrationTests: XCTestCase {
         }
     }
 
+    func testFeedGrantUsesNativeFieldsAndRemovalDropsConsent() throws {
+        let grant = NotificationFeedGrant.register(source: .swapServer, grantID: "AAECAwQFBgcICQoLDA0ODw",
+                                                   subscriberPubkey: "03" + String(repeating: "02", count: 32),
+                                                   subscriberSignature: "publisher-consent", eventClasses: 3,
+                                                   expiresAtUnix: 2_000_000_000)
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(grant)) as? [String: Any])
+        XCTAssertEqual(Set(body.keys), ["source", "grant_id", "subscriber_pubkey", "subscriber_signature",
+                                       "event_classes", "expires_at_unix", "remove"])
+        XCTAssertEqual(body["source"] as? String, "swap_server")
+        XCTAssertEqual(body["event_classes"] as? UInt32, 3)
+        let removal = NotificationFeedGrant.remove(source: .swapServer, grantID: grant.grantID)
+        let removed = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(removal)) as? [String: Any])
+        XCTAssertEqual(Set(removed.keys), ["source", "grant_id", "remove"])
+        let json = #"{"grant_id":"route","feed_token":"private-correlation","expires_at_unix":2000000000}"#
+        let result = try JSONDecoder().decode(NotificationFeedGrantResult.self, from: Data(json.utf8))
+        XCTAssertEqual(result.feedToken, "private-correlation")
+        XCTAssertFalse(String(describing: result).contains(result.feedToken))
+        XCTAssertFalse(String(reflecting: result).contains(result.feedToken))
+    }
+
+    func testNewNativeFeedAndStepRejectUnstartedRuntime() async {
+        let client = WalletClient()
+        do {
+            _ = try await client.setNotificationFeedGrant(.remove(source: .arkOperator, grantID: "AAECAwQFBgcICQoLDA0ODw"))
+            XCTFail("An unstarted runtime accepted a delegation")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("not started")) }
+        do {
+            _ = try await client.processNext(id: "step", timeoutSeconds: 1)
+            XCTFail("An unstarted runtime processed a step")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("not started")) }
+    }
+
 }

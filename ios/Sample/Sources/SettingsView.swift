@@ -172,6 +172,10 @@ private struct NotificationSettingsView: View {
             Text("Amounts are off by default. When enabled, new invoices can show received sats if this wallet updates in the background. Amounts may appear while the app is locked. Incomplete updates show payment activity. Delivery may be skipped when iOS does not allow background time.")
                 .font(.footnote).foregroundStyle(WalletTheme.secondary)
             Button("Retry setup") { notifications.reconcile() }.disabled(notifications.working)
+            Button("Replace device enrollment") { Task { await notifications.resetSetup() } }
+                .disabled(notifications.working || !notifications.enabled)
+            Text("Use replacement if this device’s notification registration was lost. Your wallet stays unchanged.")
+                .font(.footnote).foregroundStyle(WalletTheme.secondary)
             Button("iOS notification settings") {
                 if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
             }

@@ -10,7 +10,7 @@ extension NotificationRelayConfiguration {
         guard let all = bundle.object(forInfoDictionaryKey: "WavelengthNotificationRelays") as? [String: [String: String]],
               let value = all[network.rawValue] else { return nil }
         return Self(origin: value["origin"] ?? "", appAlias: value["appAlias"] ?? "",
-                    producerAlias: value["producerAlias"] ?? "", swapIssuer: value["swapIssuer"] ?? "",
+                    swapIssuer: value["swapIssuer"] ?? "",
                     receiptHints: value["receiptHints"] == "true")
     }
 }
@@ -24,6 +24,7 @@ struct WalletNotificationRoute: Codable, Equatable {
     let relay: NotificationRelayConfiguration
     var configuration: String { relay.storageAccount }
     let source: NotificationSource
+    var subscriptionID: String? = nil
     var boundGrant: String? = nil
     var presentation: String? = nil
     var boundExpiresAt: Int64? = nil
@@ -32,8 +33,12 @@ struct WalletNotificationRoute: Codable, Equatable {
         boundGrant == Self.fingerprint(grant) && (grant.previousSubscriptions ?? []).isEmpty
     }
     static func fingerprint(_ grant: NotificationRelayGrant) -> String {
-        grant.subscriptionId + ":" + String(grant.expiresAt) + ":" + (grant.presentation ?? "generic") + ":" +
-            NotificationRelayConfiguration.digest(Data((grant.wakeCapability + "\0" + (grant.alertCapability ?? "")).utf8))
+        let offers = grant.feedOffers.sorted { $0.sourceId < $1.sourceId }.map {
+            [$0.sourceId, $0.role, $0.sourcePubkey, $0.subscriberPubkey, $0.grantId,
+             String($0.eventClasses), String($0.expiresAtUnix), $0.subscriberSignature].joined(separator: "\0")
+        }.joined(separator: "\n")
+        return grant.subscriptionId + ":" + String(grant.expiresAt) + ":" + (grant.presentation ?? "generic") + ":" +
+            NotificationRelayConfiguration.digest(Data(offers.utf8))
     }
 
     /// A restored wallet can reconstruct its route after reinstall even when
@@ -122,6 +127,25 @@ final class WalletNotifications: ObservableObject {
         reconcile()
     }
 
+    /// User-requested repair does not reuse an already-attested Apple key.
+    func resetSetup() async {
+        guard !working, enabled, let store, let configuration = store.notificationConfiguration else { return }
+        guard let token else {
+            UIApplication.shared.registerForRemoteNotifications()
+            status = "Waiting for device registration."
+            return
+        }
+        working = true
+        do {
+            try await relay(configuration).reenroll(token: token)
+            status = "Device enrollment replaced. Finishing notification setup."
+        } catch {
+            status = "Couldn’t replace notification setup. Open the wallet to retry."
+        }
+        working = false
+        reconcile()
+    }
+
     func registrationFailed() { status = "Couldn’t register this device. Try again in Settings." }
 
     func setEnabled(_ requested: Bool) async {
@@ -178,6 +202,9 @@ final class WalletNotifications: ObservableObject {
                 var previousExpiry: Int64?
                 for route in obsolete {
                     do {
+                        if route.network == network, route.identity == identity, let id = route.subscriptionID {
+                            try await store.removeNotification(id, source: route.source, network: network, identity: route.identity)
+                        }
                         try await relay(route.relay).revoke(routeId: route.id)
                         removeRoute(route.id)
                     } catch NotificationRelayError.previousInstallationExpires(let expiry) where desired {
@@ -228,12 +255,14 @@ final class WalletNotifications: ObservableObject {
                         try await store.removeNotification(previous.id, source: source, network: network, identity: identity)
                     }
                     try await client.acknowledgeReplacedSubscriptions(routeId: route.id)
-                    try await store.bindNotification(grant, source: source, configuration: configuration,
-                                                     network: network, identity: identity)
+                    let response = try await store.bindNotification(grant, source: source, configuration: configuration,
+                                                                    network: network, identity: identity)
+                    try await client.bind(grant: grant, offer: grant.offer(for: source), result: response)
                     var bound = route
+                    bound.subscriptionID = grant.subscriptionId
                     bound.boundGrant = WalletNotificationRoute.fingerprint(grant)
                     bound.presentation = grant.presentation ?? "generic"
-                    bound.boundExpiresAt = grant.expiresAt
+                    bound.boundExpiresAt = response.expiresAtUnix
                     try updateRoute(bound)
                 }
                 status = previousExpiry == nil ? (amountsEnabled && amountsAvailable ?

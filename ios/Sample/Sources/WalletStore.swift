@@ -1217,19 +1217,22 @@ final class WalletStore: ObservableObject {
     /// Source registration owns admission until the signed RPC returns. Network
     /// switching cannot replace the native singleton during this operation.
     func bindNotification(_ grant: NotificationRelayGrant, source: NotificationSource,
-                          configuration: NotificationRelayConfiguration, network: String, identity: String) async throws {
+                          configuration: NotificationRelayConfiguration, network: String,
+                          identity: String) async throws -> NotificationFeedGrantResult {
         guard self.network.rawValue == network, notificationIdentity == identity,
               notificationConfiguration == configuration else { throw CancellationError() }
+        let offer = try grant.offer(for: source)
         let currentGeneration = generation
         try await beginStateCreatingCall()
         defer { endStateCreatingCall() }
-        let result = try await client.setNotificationSubscription(.register(
-            source: source, subscriptionID: grant.subscriptionId, relayID: configuration.producerAlias,
-            wakeCapability: grant.wakeCapability, alertCapability: source == .swapServer ? grant.alertCapability : nil,
-            expiresAtUnix: grant.expiresAt))
-        guard currentGeneration == generation, result.subscriptionID == grant.subscriptionId,
+        let result = try await client.setNotificationFeedGrant(.register(
+            source: source, grantID: offer.grantId, subscriberPubkey: offer.subscriberPubkey,
+            subscriberSignature: offer.subscriberSignature, eventClasses: offer.eventClasses,
+            expiresAtUnix: offer.expiresAtUnix))
+        guard currentGeneration == generation, result.grantID == offer.grantId,
               result.expiresAtUnix > Int64(Date().timeIntervalSince1970),
-              result.expiresAtUnix <= grant.expiresAt else { throw NotificationRelayError.invalidResponse }
+              result.expiresAtUnix <= offer.expiresAtUnix else { throw NotificationRelayError.invalidResponse }
+        return result
     }
 
     func removeNotification(_ subscription: String, source: NotificationSource,
@@ -1237,7 +1240,7 @@ final class WalletStore: ObservableObject {
         guard self.network.rawValue == network, notificationIdentity == identity else { throw CancellationError() }
         try await beginStateCreatingCall()
         defer { endStateCreatingCall() }
-        _ = try await client.setNotificationSubscription(.remove(source: source, subscriptionID: subscription))
+        _ = try await client.setNotificationFeedGrant(.remove(source: source, grantID: subscription))
     }
 
     private func walletConfig() throws -> WalletConfig {

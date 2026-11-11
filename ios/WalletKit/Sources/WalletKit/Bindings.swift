@@ -43,6 +43,16 @@ enum Bindings {
         return try unwrap(MobileSetNotificationSubscription(req, &err), err)
     }
 
+    static func setNotificationFeedGrant(_ req: Data) throws -> Data {
+        var err: NSError?
+        return try unwrap(MobileSetNotificationFeedGrant(req, &err), err)
+    }
+
+    static func processNext(_ id: String, _ seconds: Int64) throws -> Data {
+        var err: NSError?
+        return try unwrap(MobileProcessNext(id, seconds, &err), err)
+    }
+
     static func setHostForeground(_ foreground: Bool) throws {
         var err: NSError?
         let ok = MobileSetHostForeground(foreground, &err)
@@ -191,6 +201,8 @@ enum Bindings {
     static func start(_ cfg: String) throws { throw missing() }
     static func stop() throws { throw missing() }
     static func setNotificationSubscription(_ req: Data) throws -> Data { throw missing() }
+    static func setNotificationFeedGrant(_ req: Data) throws -> Data { throw missing() }
+    static func processNext(_ id: String, _ seconds: Int64) throws -> Data { throw missing() }
     static func setHostForeground(_ foreground: Bool) throws { throw missing() }
     static func runReceiptWindow(_ req: Data, _ seconds: Int64) throws -> Data { throw missing() }
     static func runMaintenanceWindow(_ id: String, _ seconds: Int64) throws -> Data { throw missing() }

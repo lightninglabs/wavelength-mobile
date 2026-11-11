@@ -7,7 +7,7 @@ build log, an isolated Xcode project and `build-manifest.json` with the source,
 native pin, bridge digest, Apple environment and completion state.
 
 Use an untracked local JSON file for publisher configuration. It contains
-`origin`, `appAlias`, `producerAlias`, `swapIssuer` and a boolean `receiptHints`.
+`origin`, `appAlias`, `swapIssuer` and a boolean `receiptHints`.
 Use the verified publisher origin and service public key. No device token,
 capability or Apple provider key belongs in this file. The app understands
 `receiptHints` as a string in its plist; the build converts the JSON boolean.

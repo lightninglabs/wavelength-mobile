@@ -18,16 +18,16 @@ ROOT = Path(__file__).resolve().parents[1]
 def relay_configuration(path):
     """Accept only the public configuration fields understood by the app."""
     config = json.loads(path.read_text())
-    required = {"origin", "appAlias", "producerAlias", "swapIssuer"}
+    required = {"origin", "appAlias", "swapIssuer"}
     if not isinstance(config, dict) or set(config) != required | {"receiptHints"}:
-        raise ValueError("relay JSON requires origin, appAlias, producerAlias, swapIssuer and receiptHints")
+        raise ValueError("relay JSON requires origin, appAlias, swapIssuer and receiptHints")
     if not all(isinstance(config[key], str) for key in required):
         raise ValueError("relay identifiers must be strings")
     origin = urlsplit(config["origin"])
     if (origin.scheme != "https" or not origin.hostname or origin.username or
             origin.password or origin.path not in ("", "/") or "?" in config["origin"] or "#" in config["origin"]):
         raise ValueError("origin must be a fixed HTTPS origin")
-    for key in ("appAlias", "producerAlias"):
+    for key in ("appAlias",):
         if not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", config[key]):
             raise ValueError(f"invalid {key}")
     if not re.fullmatch(r"0[23][0-9a-fA-F]{64}", config["swapIssuer"]):
