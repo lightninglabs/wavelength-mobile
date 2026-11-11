@@ -63,6 +63,12 @@ struct NotificationRelayGrant: Codable, Sendable {
     let alerts: Bool
     var presentation: String? = nil
 
+    /// Cache renewal must honor the shortest publisher offer as well as the
+    /// local grant. Re-signing cannot extend an expired offer's consent.
+    var renewalExpiresAt: Int64 {
+        min(expiresAt, feedOffers.map(\.expiresAtUnix).min() ?? 0)
+    }
+
     /// Roles select only configured native sources. Their actual issuer and
     /// publisher consent are checked by the native signer before delegation.
     func offer(for source: NotificationSource) throws -> NotificationFeedOffer {
@@ -233,7 +239,7 @@ actor NotificationRelayClient {
         let presentation = alerts && receiptHints ? "receipt_hint" : "generic"
         if let grant = current.grants[routeId], grant.alerts == alerts,
            (grant.presentation ?? "generic") == presentation,
-           grant.expiresAt > Int64(Date().timeIntervalSince1970) + 86_400 {
+           grant.renewalExpiresAt > Int64(Date().timeIntervalSince1970) + 86_400 {
             return grant
         }
         var payload: [String: Any] = [

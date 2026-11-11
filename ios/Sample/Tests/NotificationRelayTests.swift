@@ -105,6 +105,67 @@ final class NotificationRelayTests: XCTestCase {
         XCTAssertEqual(calls, ["relay", "producer"])
     }
 
+    @MainActor
+    func testRevocationContinuesAfterOneRouteFails() async throws {
+        enum Unavailable: Error { case producer }
+        let config = try configuration()
+        let routes = [NotificationSource.arkOperator, .swapServer].map {
+            WalletNotificationRoute(id: $0.rawValue, network: "signet", identity: "wallet", relay: config, source: $0)
+        }
+        var revoked: [String] = []
+        do {
+            try await WalletNotificationRoute.revokeAll(routes) { route in
+                try await WalletNotificationRoute.revoke {
+                    revoked.append(route.id)
+                } producer: {
+                    if route.source == .arkOperator { throw Unavailable.producer }
+                }
+            }
+            XCTFail("The first route still needs producer cleanup")
+        } catch Unavailable.producer { }
+        XCTAssertEqual(revoked, ["operator", "swap_server"], "Every relay revoke runs despite a producer outage")
+    }
+
+    func testShortPublisherOfferRefreshesCachedGrant() async throws {
+        let credentials = MemoryNotificationCredentials()
+        let attester = FixtureNotificationAttester()
+        let old = Self.offer()
+        let short = NotificationFeedOffer(sourceId: old.sourceId, role: old.role, sourcePubkey: old.sourcePubkey,
+                                          subscriberPubkey: old.subscriberPubkey, grantId: old.grantId,
+                                          eventClasses: old.eventClasses,
+                                          expiresAtUnix: Int64(Date().timeIntervalSince1970) + 3600,
+                                          subscriberSignature: old.subscriberSignature)
+        let grant = NotificationRelayGrant(subscriptionId: old.grantId, feedOffers: [short],
+                                           expiresAt: 2_000_000_000, alerts: true)
+        try credentials.save(JSONEncoder().encode(NotificationInstallation(
+            keyId: attester.key, installationId: "installation", confirmed: true,
+            token: "abcd", grants: ["route": grant]
+        )), account: "")
+        let settings = URLSessionConfiguration.ephemeral
+        settings.protocolClasses = [NotificationURLProtocol.self]
+        let session = URLSession(configuration: settings)
+        defer { NotificationURLProtocol.handler = nil; session.invalidateAndCancel() }
+        var subscriptions = 0
+        NotificationURLProtocol.handler = { request in
+            if request.url!.path == "/v1/challenges" {
+                return (200, try JSONSerialization.data(withJSONObject: [
+                    "id": "challenge", "nonce": "nonce", "app_id": "test", "operation": "manage",
+                    "installation_id": "installation", "expires_at": 2_000_000_000,
+                ]))
+            }
+            subscriptions += 1
+            return (200, try JSONSerialization.data(withJSONObject: [
+                "subscription_id": old.grantId, "expires_at": 2_000_000_000,
+                "feed_offers": [Self.offerJSON(id: old.grantId)],
+            ]))
+        }
+        let client = NotificationRelayClient(configuration: try configuration(), attester: attester,
+                                             session: session, credentials: credentials)
+        let renewed = try await client.subscribe(token: "abcd", routeId: "route", alerts: true)
+        XCTAssertEqual(subscriptions, 1, "Refresh publisher consent before re-signing a short offer")
+        XCTAssertEqual(renewed.feedOffers.first?.expiresAtUnix, old.expiresAtUnix)
+    }
+
     func testBindingRenewalUsesProducerExpiry() throws {
         let grant = NotificationRelayGrant(subscriptionId: "AAECAwQFBgcICQoLDA0ODw", feedOffers: [Self.offer()],
                                            expiresAt: 2_000_000_000, alerts: true)

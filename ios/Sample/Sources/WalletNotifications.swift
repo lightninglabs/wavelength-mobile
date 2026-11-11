@@ -42,6 +42,16 @@ struct WalletNotificationRoute: Codable, Equatable {
         try await producer()
         if let relayError { throw relayError }
     }
+    /// Finish every independent route before reporting the first failure.
+    /// One unavailable producer must not leave another device route active.
+    static func revokeAll(_ routes: [Self], action: (Self) async throws -> Void) async throws {
+        var failure: Error?
+        for route in routes {
+            do { try await action(route) } catch { failure = failure ?? error }
+        }
+        if let failure { throw failure }
+    }
+
     static func fingerprint(_ grant: NotificationRelayGrant) -> String {
         let offers = grant.feedOffers.sorted { $0.sourceId < $1.sourceId }.map {
             [$0.sourceId, $0.role, $0.sourcePubkey, $0.subscriberPubkey, $0.grantId,
@@ -210,7 +220,7 @@ final class WalletNotifications: ObservableObject {
                                 (identity != nil && $0.identity != identity)))
                 }
                 var previousExpiry: Int64?
-                for route in obsolete {
+                try await WalletNotificationRoute.revokeAll(obsolete) { route in
                     do {
                         try await WalletNotificationRoute.revoke {
                             try await self.relay(route.relay).revoke(routeId: route.id)
