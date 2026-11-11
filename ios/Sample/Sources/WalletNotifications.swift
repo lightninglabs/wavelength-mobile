@@ -29,8 +29,18 @@ struct WalletNotificationRoute: Codable, Equatable {
     var presentation: String? = nil
     var boundExpiresAt: Int64? = nil
 
-    func isBound(_ grant: NotificationRelayGrant) -> Bool {
-        boundGrant == Self.fingerprint(grant) && (grant.previousSubscriptions ?? []).isEmpty
+    func isBound(_ grant: NotificationRelayGrant, now: Int64 = Int64(Date().timeIntervalSince1970)) -> Bool {
+        boundGrant == Self.fingerprint(grant) && (grant.previousSubscriptions ?? []).isEmpty &&
+            (boundExpiresAt ?? 0) > now + 86_400
+    }
+
+    /// Stop local delivery even when the producer cannot be reached. Keep the
+    /// caller's route until both sides acknowledge, so cleanup can be retried.
+    static func revoke(relay: () async throws -> Void, producer: () async throws -> Void) async throws {
+        var relayError: Error?
+        do { try await relay() } catch { relayError = error }
+        try await producer()
+        if let relayError { throw relayError }
     }
     static func fingerprint(_ grant: NotificationRelayGrant) -> String {
         let offers = grant.feedOffers.sorted { $0.sourceId < $1.sourceId }.map {
@@ -202,10 +212,13 @@ final class WalletNotifications: ObservableObject {
                 var previousExpiry: Int64?
                 for route in obsolete {
                     do {
-                        if route.network == network, route.identity == identity, let id = route.subscriptionID {
-                            try await store.removeNotification(id, source: route.source, network: network, identity: route.identity)
+                        try await WalletNotificationRoute.revoke {
+                            try await self.relay(route.relay).revoke(routeId: route.id)
+                        } producer: {
+                            if route.network == network, route.identity == identity, let id = route.subscriptionID {
+                                try await store.removeNotification(id, source: route.source, network: network, identity: route.identity)
+                            }
                         }
-                        try await relay(route.relay).revoke(routeId: route.id)
                         removeRoute(route.id)
                     } catch NotificationRelayError.previousInstallationExpires(let expiry) where desired {
                         // A destroyed key cannot revoke another installation.

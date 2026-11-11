@@ -78,6 +78,46 @@ final class NotificationRelayTests: XCTestCase {
                             swapIssuer: "02" + String(repeating: "01", count: 32)))
     }
 
+    @MainActor
+    func testRevocationTriesBothOwnersDuringAnOutage() async throws {
+        enum Unavailable: Error { case producer, relay }
+        var calls: [String] = []
+        do {
+            try await WalletNotificationRoute.revoke {
+                calls.append("relay")
+            } producer: {
+                calls.append("producer")
+                throw Unavailable.producer
+            }
+            XCTFail("Keep the route for producer cleanup retry")
+        } catch Unavailable.producer { }
+        XCTAssertEqual(calls, ["relay", "producer"])
+        calls = []
+        do {
+            try await WalletNotificationRoute.revoke {
+                calls.append("relay")
+                throw Unavailable.relay
+            } producer: {
+                calls.append("producer")
+            }
+            XCTFail("Keep the route for relay revoke retry")
+        } catch Unavailable.relay { }
+        XCTAssertEqual(calls, ["relay", "producer"])
+    }
+
+    func testBindingRenewalUsesProducerExpiry() throws {
+        let grant = NotificationRelayGrant(subscriptionId: "AAECAwQFBgcICQoLDA0ODw", feedOffers: [Self.offer()],
+                                           expiresAt: 2_000_000_000, alerts: true)
+        var route = WalletNotificationRoute(id: "route", network: "signet", identity: "wallet",
+                                             relay: try configuration(), source: .swapServer,
+                                             boundGrant: WalletNotificationRoute.fingerprint(grant))
+        route.boundExpiresAt = 100_000
+        XCTAssertTrue(route.isBound(grant, now: 10_000))
+        XCTAssertFalse(route.isBound(grant, now: 20_000), "Renew before the producer token expires")
+        route.boundExpiresAt = nil
+        XCTAssertFalse(route.isBound(grant, now: 10_000), "A missing token expiry is not a live binding")
+    }
+
     func testProofTranscriptMatchesRelayGoldenVector() throws {
         let challenge = NotificationRelayChallenge(id: "challenge", nonce: "nonce", appId: "test",
                                                     operation: "manage", installationId: "install", expiresAt: 2_000_000_000)
@@ -156,6 +196,7 @@ final class NotificationRelayTests: XCTestCase {
         XCTAssertNil(reused.previousSubscriptions)
         var bound = route
         bound.boundGrant = WalletNotificationRoute.fingerprint(reused)
+        bound.boundExpiresAt = reused.expiresAt
         XCTAssertTrue(bound.isBound(reused))
     }
 
@@ -366,6 +407,39 @@ final class NotificationRelayTests: XCTestCase {
             XCTFail("A producer token for another route was bound")
         } catch { XCTAssertTrue(error is NotificationRelayError) }
         XCTAssertEqual(bound, 1)
+    }
+
+    func testRejectsPaymentOfferForOperatorRole() async throws {
+        let credentials = MemoryNotificationCredentials()
+        let attester = FixtureNotificationAttester()
+        try credentials.save(JSONEncoder().encode(NotificationInstallation(
+            keyId: attester.key, installationId: "installation", confirmed: true,
+            token: "abcd", grants: [:]
+        )), account: "")
+        let settings = URLSessionConfiguration.ephemeral
+        settings.protocolClasses = [NotificationURLProtocol.self]
+        let session = URLSession(configuration: settings)
+        defer { NotificationURLProtocol.handler = nil; session.invalidateAndCancel() }
+        NotificationURLProtocol.handler = { request in
+            if request.url!.path == "/v1/challenges" {
+                return (200, try JSONSerialization.data(withJSONObject: [
+                    "id": "challenge", "nonce": "nonce", "app_id": "test", "operation": "manage",
+                    "installation_id": "installation", "expires_at": 2_000_000_000,
+                ]))
+            }
+            var offer = Self.offerJSON(id: "AAECAwQFBgcICQoLDA0ODw")
+            offer["role"] = NotificationSource.arkOperator.rawValue
+            return (200, try JSONSerialization.data(withJSONObject: [
+                "subscription_id": "AAECAwQFBgcICQoLDA0ODw", "expires_at": 2_000_000_000,
+                "feed_offers": [offer],
+            ]))
+        }
+        let client = NotificationRelayClient(configuration: try configuration(), attester: attester,
+                                             session: session, credentials: credentials)
+        do {
+            _ = try await client.subscribe(token: "abcd", routeId: "route", alerts: true)
+            XCTFail("The operator role is wake-only, including on an alerts route")
+        } catch NotificationRelayError.invalidResponse { }
     }
 
     func testUnknownInstallationRequiresExplicitFreshKeyEnrollment() async throws {
