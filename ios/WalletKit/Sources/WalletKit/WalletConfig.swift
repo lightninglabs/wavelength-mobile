@@ -36,6 +36,8 @@ public struct WalletConfig: Encodable, Sendable {
     /// Omit to leave signed swap notification registration unsupported.
     public var swapNotificationIssuer: String? = nil
     public var debugLevel: String?
+    /// Opt in to bounded native diagnostics capture. Other SDK hosts keep it off.
+    public var diagnosticLogs: Bool? = nil
     public var allowMainnet: Bool?
     /// Persist round recovery independently of notification consent.
     public var durableRoundRuntime: Bool? = nil
@@ -58,6 +60,7 @@ public struct WalletConfig: Encodable, Sendable {
         case swapServerInsecure = "swap_server_insecure"
         case swapNotificationIssuer = "swap_notification_issuer"
         case debugLevel = "debug_level"
+        case diagnosticLogs = "diagnostic_logs"
         case allowMainnet = "allow_mainnet"
         case durableRoundRuntime = "durable_round_runtime"
         case hostDrivenIngress = "host_driven_ingress"
