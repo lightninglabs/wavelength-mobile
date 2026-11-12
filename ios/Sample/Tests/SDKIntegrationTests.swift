@@ -20,7 +20,9 @@ final class SDKIntegrationTests: XCTestCase {
 
         // A sub-floor receive must be payable through credit, including when
         // the payer has no existing credit and needs a quoted Ark top-up.
-        try await client.start(.signet(dataDir: fixture.appendingPathComponent("receiver").path))
+        var receiverConfig = WalletConfig.signet(dataDir: fixture.appendingPathComponent("receiver").path)
+        receiverConfig.durableRoundRuntime = true
+        try await client.start(receiverConfig)
         _ = try await client.createWallet(walletPassword: password)
         try await waitForServices(client)
         // A fresh wallet must decode the native recovery result as an empty
@@ -33,7 +35,21 @@ final class SDKIntegrationTests: XCTestCase {
         )
         try await client.stop()
 
-        try await client.start(.signet(dataDir: fixture.appendingPathComponent("payer").path))
+        // Reopen the same durable wallet and exercise the ordinary receive
+        // path too. Restart must retain the mailbox identity and still start
+        // every service needed to create a fresh invoice.
+        try await client.start(receiverConfig)
+        _ = try await client.unlockWallet(walletPassword: password)
+        try await waitForServices(client)
+        let ordinaryReceive = try await client.receiveLightning(
+            amountSat: 5_000, memo: "Durable restart \(UUID().uuidString)"
+        )
+        XCTAssertTrue(ordinaryReceive.invoice.lowercased().hasPrefix("lntbs"))
+        try await client.stop()
+
+        var payerConfig = WalletConfig.signet(dataDir: fixture.appendingPathComponent("payer").path)
+        payerConfig.durableRoundRuntime = true
+        try await client.start(payerConfig)
         _ = try await client.createWallet(walletPassword: password)
         try await waitForServices(client)
         let quote = try await client.prepareSend(invoice: receive.invoice)

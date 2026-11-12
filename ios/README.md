@@ -12,13 +12,13 @@ self-custodial wallet.
 The app includes:
 
 - isolated signet, testnet3, mainnet, and development regtest wallets;
-- one spendable balance, provider-held credit, and activity on Home;
+- one wallet balance including pending funds, provider-held credit, and activity on Home;
 - Lightning and Bitcoin receive requests with QR codes, copy, and share;
 - invoice and Bitcoin address sends with QR scanning and quote confirmation;
 - cooperative exit, unilateral recovery plans and progress, on-chain sweeps,
   signed portable recovery export, and explicit refresh;
-- password-based creation and restore, recovery-word backup, and optional
-  Face ID or Touch ID unlock;
+- device-managed encrypted wallets, recovery-word backup, and Face ID,
+  Touch ID or device-passcode app unlock;
 - Signal Dark, Porcelain Light, and the system appearance; and
 - an app-switcher privacy cover and immediate auto-lock when biometrics is on.
 
@@ -48,20 +48,36 @@ returning an error. If the invoice was durably created just before the response
 was lost, the app recovers and displays that exact invoice; it never blindly
 creates a second one after ambiguous cancellation.
 
-After backgrounding, the app checks the embedded wallet and refreshes a
-healthy session. It restarts only when that health check fails, after any
-state-creating call finishes. It does not interrupt a healthy assembling round
-just to re-dial transports. Enable Face ID or Touch ID in Settings > Security
-once for all network wallets. Existing protected wallets adopt this shared
-policy automatically. Each wallet keeps its own password and Keychain account;
-an older wallet's saved key is migrated on its first authenticated unlock.
-New wallets inherit the policy. Disabling it authenticates and restores all
-protected credentials before turning off automatic locking.
+New wallets use a random 32-byte encryption password stored in the device-only
+Keychain with `AfterFirstUnlockThisDeviceOnly` accessibility. Creation and restore
+no longer ask the user to invent a wallet password. Device authentication is on
+by default for a new installation when available; an existing explicit preference
+is preserved. Face ID or Touch ID uses the device passcode as its system fallback.
 
-Keychain access control protects the biometric copy of each wallet password.
-Password fallback unlocks a stopped wallet through the SDK. For an already
-running wallet, a salted password verifier authenticates without interrupting
-payments or rounds. Cancelling authentication leaves the wallet locked.
+The UI session lock is separate from native wallet encryption. The app can read
+the wallet credential unattended after the first device unlock following a reboot.
+Foreground interaction, sends and recovery exports still require an unlocked UI
+session. This deliberately replaces per-read biometric Keychain protection with
+application-enforced authorization; it is not a Secure Enclave signing wallet.
+Each network retains its own credential. The UI lock applies across networks.
+
+Existing wallets migrate on their next successful foreground biometric or wallet
+password unlock. Migration writes and reads back the exact old password before
+removing the legacy protected item. There is no re-encryption or wallet reset.
+A failed migration keeps the legacy source for a later retry. User-chosen legacy
+passwords remain an unlock fallback; new generated passwords are never displayed.
+
+The managed key does not move to another iPhone through iCloud or device backups.
+Before replacing or erasing the original phone, transfer funds or export the
+appropriate recovery package. Recovery words alone may not recover off-chain
+state. Restored wallet files without their managed key show an explicit recovery
+explanation and remain untouched; the app does not overwrite them with a new
+seed-only wallet or claim that a seed can decrypt those files.
+
+Background preparation and foreground takeover share lifecycle ownership. A
+foreground transition waits for preparation, resumes intake, then requires UI
+authentication before interaction. Healthy native work is retained. An accepted
+payment or round is not cancelled merely to lock the UI or re-dial transports.
 
 Home activity shows the payment amount, note/title, status, and local time.
 Explicitly linked credit-funding entries are grouped under their invoice
@@ -107,13 +123,18 @@ gobind with `go install golang.org/x/mobile/cmd/gomobile@latest` and
 Put `$(go env GOPATH)/bin` on PATH. Xcode must use the full developer directory,
 not only Command Line Tools.
 
-`.wavelength-ios-version` pins Wavelength main at
-`43c517cf6fefe9aae3f9c2a879d0b11f6ff407a2`. The fetch script builds that exact
-commit with `scripts/wavelength-ios-recovery.patch`. The narrow bridge exposes
+[`.wavelength-ios-version`](../.wavelength-ios-version) pins Wavelength source.
+The fetch script builds that exact commit with
+`scripts/wavelength-ios-recovery.patch`. The narrow bridge exposes
 refresh, refresh observation, full recovery inventory, and signed portable
-recovery export through gomobile. The patch also carries the credit top-up
-correlation fix in Wavelength PR #1530 until it is available in the pin.
+recovery export through gomobile. The pinned source already includes the
+credit top-up correlation fix.
 Android keeps its separate existing release pin.
+
+The app enables the durable round runtime. Its typed service lookup is separate
+from the persisted mailbox address, so startup and wallet reopening use the
+same durable state. Replacement-round support is disabled for durable clients
+until replacement lineage can be checkpointed; ordinary clients retain support.
 
 Framework provenance includes the source commit and bridge digest. Managed
 source caches are keyed by both, under
@@ -141,8 +162,9 @@ run `sudo xcodebuild -runFirstLaunch` from your terminal and authenticate there.
 
 Build, test, and run check a receipt containing the source commit and bridge
 patch digest. A matching artifact is reusable offline. Otherwise the script
-clones the pin into `~/.cache/wavelength-mobile-ios/<commit>`, applies the
-checked-in bridge, and builds the framework. An explicit `WAVELENGTH_DIR`
+clones the pin into `~/.cache/wavelength-mobile-ios/<commit>-<bridge-sha256>`,
+applies the checked-in bridge, and builds the framework. An explicit
+`WAVELENGTH_DIR`
 must already contain exactly that commit and bridge diff, with no unexpected
 untracked source. It rebuilds each time. Source or patch mismatches fail before
 replacing the staged SDK. Framework binaries stay ignored.
@@ -360,3 +382,86 @@ for try await entry in client.activity(includeExisting: true) {
     print("\(entry.kind) \(entry.amountSat) sat \(entry.status)")
 }
 ```
+
+## Notification source registration
+
+The pinned native source includes wallet-authorized subscriber feed grants and
+retained shutdown ownership. `WalletClient.setNotificationFeedGrant` signs the
+publisher's exact subscriber key, grant ID, classes and expiry through the
+configured source. The native bridge checks source identity and subscriber
+consent before using the wallet key. The returned feed token is correlation,
+not mailbox-read authority. The installation signs its binding at the relay.
+
+Register each source independently. `WalletConfig.swapNotificationIssuer` pins
+the swap service's compressed public wallet identity; leaving it unset keeps
+that source unsupported. Neither a push nor an offer can choose an RPC endpoint.
+There is no producer relay-alias input. Legacy capability registration APIs
+remain available in the wrapper for older callers, but the app uses feed setup.
+
+These calls do not enroll a phone with APNs or run wallet recovery. The app owns
+those platform responsibilities. Installation state stays in device-only
+Keychain. Feed tokens must not appear in logs or notification payloads.
+
+A `WalletError.isStopPending` result means the native singleton still owns
+cleanup. Retain the client and repeat `stop()` before starting another daemon.
+`isRunning == false` alone does not prove cleanup has finished.
+
+The recovery bridge patch now contains only the remaining additive native APIs;
+the pinned SDK already includes the credit top-up correlation fix and its test.
+The framework is built locally from the exact source and recorded patch digest.
+No unpublished release asset or invented checksum is used.
+
+`activity` and `incomingPayments` accept the last durable `Entry.cursor` to
+replay missed transitions. Persist it only after processing that entry. `list`
+accepts the opaque `ActivityList.nextCursor` for complete keyset pagination.
+Notification recovery must not truncate its catch-up to the UI’s latest page.
+
+## Payment activity alerts
+
+The app's notification settings support App Attest enrollment, private generic
+payment-activity alerts and taps into Activity after wallet authentication.
+Publisher configuration is empty by default. See
+[the iOS notification integration](../docs/ios-notifications.md) for build keys,
+credential ownership, revocation and remaining bounded-runtime work.
+
+Release-tag overrides must expose `MobileSetHostForeground`,
+`MobileRunReceiptWindow`, `MobileRunMaintenanceWindow` and
+`MobileCancelReceiptWindow`, as well as the existing recovery and subscription
+bridge symbols. An older release cannot build the current Swift wrapper.
+
+## Background preparation and bounded windows
+
+Set `WalletConfig.durableRoundRuntime = true` and `hostDrivenIngress = true`
+before starting the app runtime. This leaves mailbox intake paused during unlock.
+Keep it enabled independently of notification consent. `setHostForeground(false)`
+joins continuous ingress while retaining the daemon and domain workers. The host
+must serialize against state-creating wallet calls. `runReceiptWindow` checks one
+locally enrolled invoice; only complete source/canonical proof may supply an
+amount, after the host validates consent, identity and event correlation.
+
+`runMaintenanceWindow` needs no invoice. It attempts current-tip expiry for a
+bounded page of existing VTXO owners and pumps native round work. It returns no
+receipts and never authorizes a payment banner. Use it for ordinary protocol wakes
+and scheduled background opportunities. Both windows accept 1 through 20 seconds
+and share `cancelReceiptWindow` with a unique invocation ID. Cancellation signals
+expiry; the original call retains native ownership until its actual return.
+
+The app may prepare the selected wallet from a cold process using its saved
+credential before entering either window. It never creates a wallet, prompts for
+biometrics, switches networks, or accepts an endpoint from a push. Missing keys,
+legacy keys awaiting migration, and device storage before first unlock skip the
+opportunity. Receipt amounts still require explicit notification consent and
+matching enrolled invoice proof, independently of the UI lock.
+
+The OS callback's twenty-second deadline includes preparation. Expiration cancels
+an owned cold startup through SDK stop, or signals an admitted window by ID.
+Ownership remains retained until the original native call returns. A warm runtime
+is not torn down because a background opportunity failed. Foreground takeover
+waits for preparation and uses `setHostForeground(true)` before ordinary calls.
+
+The native window APIs themselves require an unlocked runtime; they do not start
+one. Cold startup loses in-memory signing sessions, so durable recovery cannot
+promise continuation of every round. iOS may relaunch a system-terminated app,
+but a user force-quit prevents ordinary background-push relaunch. Wake delivery
+and execution time are best-effort, not a guarantee of refresh before expiry.
+Preserve wallet files after durable-runtime adoption.

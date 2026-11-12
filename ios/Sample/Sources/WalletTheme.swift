@@ -20,6 +20,16 @@ enum WalletTheme {
     }
 }
 
+struct WalletLoadingIndicator: View {
+    var label = "Loading"
+
+    var body: some View {
+        ProgressView()
+            .tint(WalletTheme.secondary)
+            .accessibilityLabel(label)
+    }
+}
+
 struct WalletButtonStyle: ButtonStyle {
     var secondary = false
     @Environment(\.isEnabled) private var enabled

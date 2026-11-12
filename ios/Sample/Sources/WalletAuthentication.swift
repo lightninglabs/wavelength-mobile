@@ -1,20 +1,65 @@
 import Foundation
 import LocalAuthentication
 import Security
+import UIKit
 
-/// Protects the actual wallet credential in Keychain. Authentication is enforced
-/// by Keychain access control, not by a separate UI-only Face ID success flag.
+/// Authenticates foreground interaction. The protected credential functions
+/// remain only for reading and migrating wallets created by older versions.
 enum WalletAuthentication {
     private static let service = "engineering.lightning.wavelength.wallet.biometric"
 
     static var available: Bool {
-        LAContext().canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
+        LAContext().canEvaluatePolicy(.deviceOwnerAuthentication, error: nil)
     }
 
     static var name: String {
         let context = LAContext()
         _ = context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
-        return context.biometryType == .touchID ? "Touch ID" : "Face ID"
+        switch context.biometryType {
+        case .touchID: return "Touch ID"
+        case .faceID: return "Face ID"
+        default: return "Device passcode"
+        }
+    }
+
+    /// The device passcode is the system fallback when biometrics are unavailable.
+    static func authenticate() async throws {
+        let context = LAContext()
+        guard try await context.evaluatePolicy(.deviceOwnerAuthentication,
+                                               localizedReason: "Unlock Wavelength") else {
+            throw KeychainError(status: errSecAuthFailed)
+        }
+    }
+
+    /// LocalAuthentication may complete while its system sheet is still
+    /// dismissing. Wait for that inactive-to-active transition, but
+    /// never carry authentication through an actual background transition.
+    @MainActor static func waitForForeground() async throws {
+        try await waitForForeground(applicationState: { UIApplication.shared.applicationState })
+    }
+
+    @MainActor static func waitForForeground(
+        applicationState: () -> UIApplication.State
+    ) async throws {
+        while true {
+            try Task.checkCancellation()
+            switch applicationState() {
+            case .active: return
+            case .background: throw LAError(.systemCancel)
+            case .inactive: try await Task.sleep(nanoseconds: 20_000_000)
+            @unknown default: throw LAError(.systemCancel)
+            }
+        }
+    }
+
+    /// Publish and verify the background-readable copy before removing the
+    /// legacy item. A failed write/read leaves the authenticated source intact.
+    static func migrate(_ secret: Data, account: String) throws {
+        try KeychainStore.save(secret, account: account)
+        guard try KeychainStore.read(account: account) == secret else {
+            throw KeychainError(status: errSecDecode)
+        }
+        try delete(account: account)
     }
 
     static func contains(account: String) -> Bool {

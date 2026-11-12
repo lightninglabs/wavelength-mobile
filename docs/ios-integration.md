@@ -206,12 +206,16 @@ retain their corresponding rail labels; no amount or settlement state changes.
 
 ## Wallet redesign and main SDK — 2026-11-06
 
-This supersedes the stable SDK pin above. iOS now builds Wavelength main at
-`43c517cf6fefe9aae3f9c2a879d0b11f6ff407a2` plus the mobile bridge carried in
-`scripts/wavelength-ios-recovery.patch`. The bridge adds refresh, positive
-refresh observation, nonterminal Bitcoin recovery inventory, and the complete
-signed portable recovery export. Source staging verifies the exact commit and
-whole patch diff; Android is unchanged.
+This dated entry records the November 6 build and validation, which superseded
+the stable SDK pin above. That build used Wavelength source
+`43c517cf6fefe9aae3f9c2a879d0b11f6ff407a2` plus the mobile bridge in
+`scripts/wavelength-ios-recovery.patch`. The current source pin is recorded in
+[`.wavelength-ios-version`](../.wavelength-ios-version); the results below
+belong to the November 6 build, not each later pin.
+
+The bridge added refresh, positive refresh observation, nonterminal Bitcoin
+recovery inventory, and the complete signed portable recovery export. Source
+staging verified the exact commit and whole patch diff; Android was unchanged.
 
 The app now has one balance and activity on Home, separate provider-held
 credit, Signal Dark and Porcelain Light, the wave wordmark and app icon, and
@@ -273,7 +277,8 @@ credit correlation still compared the gross input amount with the net top-up.
 [Wavelength PR #1530](https://github.com/lightninglabs/wavelength/pull/1530)
 fixes that comparison without changing accounting or dispatch. The regression
 fails before the fix; the full swapwallet suite, formatting, and local lint
-pass. The source bridge patch carries the fix for the pinned iOS SDK.
+pass. At the time of this repair, the source bridge patch carried the fix.
+The current pinned native source includes it, so the bridge no longer does.
 
 After rebuilding and installing over the existing iPhone app, a read-only
 inspection confirmed the same original payment and funding records, now linked

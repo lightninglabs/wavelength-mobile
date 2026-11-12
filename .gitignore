@@ -5,6 +5,7 @@ android/local.properties
 android/.kotlin/
 .idea/
 .DS_Store
+__pycache__/
 
 # The gomobile bindings are large native artifacts built by scripts/fetch-aar.sh.
 android/walletkit/libs/*.aar
