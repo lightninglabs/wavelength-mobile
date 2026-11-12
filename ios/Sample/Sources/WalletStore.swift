@@ -871,6 +871,15 @@ final class WalletStore: ObservableObject {
         return try await client.getExitPlan(outpoints: [outpoint])
     }
 
+    func estimateExitFee(outpoint: String) async throws -> ExitFeeEstimate {
+        try requireForegroundInteraction()
+        let currentGeneration = generation
+        let estimate = try await client.estimateExitFee(outpoint: outpoint)
+        guard currentGeneration == generation else { throw CancellationError() }
+        try requireForegroundInteraction()
+        return estimate
+    }
+
     func exitFunds(outpoint: String, destination: String, unilateral: Bool) async throws -> ExitResult {
         try await beginStateCreatingCall()
         defer { endStateCreatingCall() }

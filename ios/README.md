@@ -126,9 +126,9 @@ not only Command Line Tools.
 [`.wavelength-ios-version`](../.wavelength-ios-version) pins Wavelength source.
 The fetch script builds that exact commit with
 `scripts/wavelength-ios-recovery.patch`. The narrow bridge exposes
-refresh, refresh observation, full recovery inventory, and signed portable
-recovery export through gomobile. The pinned source already includes the
-credit top-up correlation fix.
+refresh, refresh observation, full recovery inventory, cooperative-exit fee
+estimation, and signed portable recovery export through gomobile. The pinned
+source already includes the credit top-up correlation fix.
 Android keeps its separate existing release pin.
 
 The app enables the durable round runtime. Its typed service lookup is separate
@@ -426,8 +426,17 @@ credential ownership, revocation and remaining bounded-runtime work.
 
 Release-tag overrides must expose `MobileSetHostForeground`,
 `MobileRunReceiptWindow`, `MobileRunMaintenanceWindow` and
-`MobileCancelReceiptWindow`, as well as the existing recovery and subscription
-bridge symbols. An older release cannot build the current Swift wrapper.
+`MobileCancelReceiptWindow` and `MobileEstimateExitFee`, as well as the existing
+recovery and subscription bridge symbols. An older release cannot build the
+current Swift wrapper.
+
+`estimateExitFee(outpoint:)` reads the selected live Bitcoin VTXO and chain tip,
+then asks the operator to price its remaining lifetime. It never allocates an
+address, reserves funds or submits an exit. A failed lookup remains an error;
+it does not become a zero fee. Cooperative exits do not receive the pure-refresh
+fee waiver. This is an advisory preview; the binding round quote still determines
+the final fee. The review shows the amount, destination, destination switch and
+estimated fee in that order. Confirmation waits for a usable estimate.
 
 ## Background preparation and bounded windows
 

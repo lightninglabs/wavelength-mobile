@@ -1,5 +1,23 @@
 import Foundation
 
+/// The operator's advisory price for forfeiting one selected Bitcoin VTXO.
+/// A successful zero estimate is distinct from a failed or pending lookup.
+public struct ExitFeeEstimate: Decodable, Sendable {
+    public let outpoint: String
+    public let amountSat: Int64
+    public let estimatedFeeSat: Int64
+    public let belowDustWarning: Bool
+
+    public var canExit: Bool {
+        !belowDustWarning && amountSat > 0 && estimatedFeeSat >= 0 && estimatedFeeSat < amountSat
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case outpoint = "Outpoint", amountSat = "AmountSat"
+        case estimatedFeeSat = "EstimatedFeeSat", belowDustWarning = "BelowDustWarning"
+    }
+}
+
 public struct RefreshResult: Decodable, Sendable {
     public let queuedOutpoints: [String]?
     public let dryRun: Bool
