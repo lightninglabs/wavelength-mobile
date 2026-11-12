@@ -2,8 +2,8 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
-    @StateObject private var store = WalletStore()
-    @State private var enteredBackground = false
+    @ObservedObject var store: WalletStore
+    @State private var enteredBackground = true
 
     var body: some View {
         ZStack {
@@ -11,7 +11,7 @@ struct ContentView: View {
                 .environmentObject(store)
                 .disabled(store.isWorking)
 
-            if store.isWorking {
+            if store.isWorking && store.unlockStage == nil {
                 Color.black.opacity(0.18).ignoresSafeArea()
                 ProgressView()
                     .padding(22)
@@ -24,7 +24,8 @@ struct ContentView: View {
             // UI tests launch the app in a separate process without this class.
             guard NSClassFromString("XCTestCase") == nil else { return }
             #endif
-            if store.phase == .idle {
+            if scenePhase == .active { enteredBackground = false }
+            if scenePhase == .active && store.phase == .idle {
                 await store.start()
                 #if DEBUG
                 if ProcessInfo.processInfo.environment["WAVELENGTH_AUTOCREATE"] == "1",
@@ -35,13 +36,20 @@ struct ContentView: View {
             }
         }
         .onChange(of: scenePhase) { phase in
+            #if DEBUG
+            guard NSClassFromString("XCTestCase") == nil else { return }
+            #endif
             switch phase {
             case .background:
-                store.lockForBackground()
                 enteredBackground = true
-            case .active where enteredBackground:
+                store.lockForBackground()
+            case .active:
+                guard enteredBackground else { break }
                 enteredBackground = false
-                Task { await store.resumeAfterBackground() }
+                if store.phase == .idle { Task { await store.start() }; break }
+                Task {
+                    await store.resumeAfterBackground()
+                }
             default:
                 break
             }
@@ -55,7 +63,13 @@ struct ContentView: View {
 
     @ViewBuilder
     private var content: some View {
-        if store.isSessionLocked {
+        if case .failed(let message) = store.phase {
+            FailureView(message: message) { store.retry() }
+        } else if store.phase == .idle || store.phase == .starting {
+            LaunchView(message: "Connecting")
+        } else if store.unlockStage == .opening {
+            LaunchView(message: "Opening wallet", allowsNetworkSelection: false)
+        } else if store.isSessionLocked {
             UnlockWalletView()
         } else if let mnemonic = store.pendingMnemonic {
             SeedBackupView(words: mnemonic)
@@ -86,13 +100,13 @@ struct ContentView: View {
 private struct LaunchView: View {
     @EnvironmentObject private var store: WalletStore
     let message: String
+    var allowsNetworkSelection = true
 
     var body: some View {
         VStack(spacing: 24) {
             WavelengthMark(size: 74)
-            ProgressView(message)
-                .tint(WalletTheme.action)
-            NetworkSelectionButton()
+            WalletLoadingIndicator(label: message)
+            if allowsNetworkSelection { NetworkSelectionButton() }
         }
         .padding(.horizontal, 24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

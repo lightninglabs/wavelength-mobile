@@ -51,6 +51,8 @@ private struct SecuritySettingsView: View {
                 .accessibilityIdentifier("settings.biometric")
             WalletDivider()
             HStack { Text("Auto-lock"); Spacer(); Text(store.biometricUnlockEnabled ? "Immediately" : "Off").foregroundStyle(WalletTheme.secondary) }
+            Text("Your wallet stays encrypted. Background updates can run while the app is locked.")
+                .font(.footnote).foregroundStyle(WalletTheme.secondary)
         }.navigationTitle("Security").navigationBarTitleDisplayMode(.inline)
     }
 }

@@ -3,6 +3,18 @@ import Security
 import SwiftUI
 import WalletKit
 
+extension Balance {
+    // Wallet RPC buckets are disjoint. Refresh reservations move value from
+    // confirmed to pendingOut without removing it from the wallet.
+    var pendingSat: Int64 { pendingInSat + pendingOutSat }
+    var totalSat: Int64 { confirmedSat + pendingSat }
+}
+
+enum WalletUnlockStage {
+    case authenticating
+    case opening
+}
+
 enum WalletPhase: Equatable {
     case idle
     case starting
@@ -139,6 +151,17 @@ enum WalletFormatting {
 
 enum KeychainStore {
     private static let service = "engineering.lightning.wavelength.wallet"
+
+    static func contains(account: String) -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
+    }
 
     static func read(account: String) throws -> Data? {
         let query: [String: Any] = [

@@ -1,5 +1,6 @@
 import XCTest
 import WalletKit
+@testable import Wavelength
 
 final class WalletModelDecodingTests: XCTestCase {
     func testDecodesDetailedActivityEntry() throws {
@@ -63,6 +64,18 @@ final class WalletModelDecodingTests: XCTestCase {
         XCTAssertNil(entry.progress)
         XCTAssertNil(entry.request)
         XCTAssertNil(entry.createdAt)
+    }
+
+    func testRefreshReservationPreservesDisplayedWalletBalance() throws {
+        let decoder = JSONDecoder()
+        let available = try decoder.decode(Balance.self, from: Data(
+            #"{"ConfirmedSat":490166,"PendingInSat":0,"PendingOutSat":0}"#.utf8))
+        let refreshing = try decoder.decode(Balance.self, from: Data(
+            #"{"ConfirmedSat":0,"PendingInSat":0,"PendingOutSat":490166}"#.utf8))
+        XCTAssertEqual(available.totalSat, refreshing.totalSat)
+        XCTAssertEqual(refreshing.totalSat, 490_166)
+        XCTAssertEqual(refreshing.confirmedSat, 0, "Refresh inputs must not become spendable")
+        XCTAssertEqual(refreshing.pendingSat, 490_166)
     }
 
     func testOlderBalancePayloadStillDecodes() throws {
