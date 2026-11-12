@@ -2,7 +2,7 @@
 #
 # run-ios-sample.sh builds and runs the iOS sample on a booted simulator,
 # entirely from the command line (no Xcode GUI). It:
-#   1. stages the Wavewalletdk.xcframework (via fetch-xcframework.sh) if missing,
+#   1. stages the requested Wavewalletdk.xcframework (via fetch-xcframework.sh),
 #   2. generates the Xcode project from project.yml with xcodegen,
 #   3. boots a simulator (creating one if none exists),
 #   4. builds, installs, and launches the app.
@@ -18,25 +18,23 @@ BUNDLE_ID="engineering.lightning.wavewalletdk.sample"
 SCHEME="WavewalletdkSample"
 
 # 1. Stage the bindings.
-if [[ ! -d "${REPO_ROOT}/ios/WalletKit/Frameworks/Wavewalletdk.xcframework" ]]; then
-	echo "==> staging Wavewalletdk.xcframework"
-	"${REPO_ROOT}/scripts/fetch-xcframework.sh"
-fi
+"${REPO_ROOT}/scripts/fetch-xcframework.sh" --if-needed
 
 # 2. Generate the project.
 echo "==> xcodegen generate"
 ( cd "${SAMPLE_DIR}" && xcodegen generate )
 
 # 3. Pick (or create) and boot a simulator.
-device_udid="$(xcrun simctl list devices available | grep -oE 'iPhone[^(]*\([-0-9A-F]+\)' | head -1 | grep -oE '[-0-9A-F]{36}' || true)"
-if [[ -z "${device_udid}" ]]; then
-	runtime="$(xcrun simctl list runtimes | grep -oE 'com.apple.CoreSimulator.SimRuntime.iOS[-0-9]+' | head -1)"
-	devtype="$(xcrun simctl list devicetypes | grep -oE 'com.apple.CoreSimulator.SimDeviceType.iPhone[-0-9A-Za-z]+' | head -1)"
-	echo "==> creating simulator (${devtype} / ${runtime})"
-	device_udid="$(xcrun simctl create "wavelength-mobile-iphone" "${devtype}" "${runtime}")"
+device_udid="$("${REPO_ROOT}/scripts/select-ios-simulator.sh")"
+echo "==> using simulator ${device_udid}"
+
+# `simctl boot` starts the virtual device but intentionally does not show the
+# macOS Simulator window. Interactive run targets should open and foreground
+# the GUI; set OPEN_SIMULATOR=0 when a headless launch is preferable.
+if [[ "${OPEN_SIMULATOR:-1}" == "1" ]]; then
+	echo "==> opening Simulator.app"
+	open -a Simulator --args -CurrentDeviceUDID "${device_udid}"
 fi
-echo "==> booting ${device_udid}"
-xcrun simctl bootstatus "${device_udid}" -b || xcrun simctl boot "${device_udid}" || true
 
 # 4. Build, install, launch.
 echo "==> xcodebuild"
@@ -50,6 +48,15 @@ xcodebuild \
 app="${SAMPLE_DIR}/DerivedData/Build/Products/Debug-iphonesimulator/${SCHEME}.app"
 echo "==> installing ${app}"
 xcrun simctl install "${device_udid}" "${app}"
+
+# Preserve the existing diagnostic demo's opt-in headless startup.
+if [[ -n "${WAVEWALLETDK_AUTOSTART:-}" ]]; then
+    export SIMCTL_CHILD_WAVEWALLETDK_AUTOSTART="${WAVEWALLETDK_AUTOSTART}"
+fi
 xcrun simctl launch "${device_udid}" "${BUNDLE_ID}"
+
+if [[ "${OPEN_SIMULATOR:-1}" == "1" ]]; then
+	open -a Simulator
+fi
 
 echo "==> running. Screenshot with: xcrun simctl io ${device_udid} screenshot ui.png"

@@ -33,3 +33,29 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "1"
+
+  WavelengthTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests
+    dependencies:
+      - package: WalletKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: engineering.lightning.wavewalletdk.tests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.9"
+
+schemes:
+  WavewalletdkSample:
+    build:
+      targets:
+        WavewalletdkSample: all
+        WavelengthTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - WavelengthTests

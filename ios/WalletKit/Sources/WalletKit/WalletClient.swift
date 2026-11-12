@@ -10,10 +10,46 @@ import Wavewalletdk
 #endif
 
 /// Thrown when an embedded-wallet call fails. Wraps the Go-side error.
-public struct WalletError: Error, Sendable {
+public struct WalletError: LocalizedError, CustomStringConvertible, Sendable {
+    private static let receiveOutcomeUncertainPrefix =
+        "receive outcome uncertain; reconcile activity before retrying"
+
     public let message: String
     init(_ error: Error) { self.message = (error as NSError).localizedDescription }
     init(message: String) { self.message = message }
+
+    public var errorDescription: String? { message }
+    public var description: String { message }
+
+    /// Whether the native binding ended the request at its operation-specific
+    /// deadline. The outcome of a state-creating call may still be uncertain.
+    public var isDeadlineExceeded: Bool {
+        let normalized = message.lowercased()
+        return normalized.contains("deadline exceeded") ||
+            normalized.contains("timed out")
+    }
+
+    /// Whether a receive may have become durable before cancellation. Reconcile
+    /// Activity before asking the wallet to create another invoice.
+    public var isReceiveOutcomeUncertain: Bool {
+        message.lowercased().hasPrefix(Self.receiveOutcomeUncertainPrefix)
+    }
+
+    /// A native admission rejection that proves this call did not dispatch.
+    /// Unmarked failures must be reconciled before offering another send.
+    /// This says nothing about an earlier attempt with the same intent: an
+    /// already-consumed intent is also rejected. Never use a rejected retry to
+    /// clear the uncertain outcome of its original attempt.
+    public var isSendRejectedBeforeDispatch: Bool {
+        message.lowercased().hasPrefix("send rejected before dispatch:")
+    }
+}
+
+/// Per-payment credit limits for small Lightning payments. These are ceilings;
+/// the prepared quote determines the actual credit use and required top-up.
+public enum SendCreditDefaults {
+    public static let maxCreditSat: UInt64 = 10_000
+    public static let maxCreditTopupSat: UInt64 = 10_000
 }
 
 /// An idiomatic Swift facade over the gomobile bindings.
@@ -81,11 +117,19 @@ public actor WalletClient {
         return try decode(await bg { try Bindings.unlockWallet(body) })
     }
 
-    /// Open a Lightning invoice to receive `amountSat` into the wallet. Share
-    /// the returned invoice with the payer; the matching entry shows up on the
-    /// activity stream as it is paid.
-    public func receiveLightning(amountSat: Int64, memo: String = "") async throws -> ReceiveResult {
-        let body = try encoder.encode(ReceiveReq(amountSat: amountSat, memo: memo))
+    /// Open a Lightning invoice to receive `amountSat` into the wallet. The
+    /// native deadline bounds a stale mobile transport but does not prove a
+    /// receive was absent; reconcile Activity before retrying after timeout.
+    public func receiveLightning(
+        amountSat: Int64,
+        memo: String = "",
+        timeoutSeconds: Int64 = 20
+    ) async throws -> ReceiveResult {
+        let body = try encoder.encode(ReceiveReq(
+            amountSat: amountSat,
+            memo: memo,
+            timeoutSeconds: timeoutSeconds
+        ))
         return try decode(await bg { try Bindings.receive(body) })
     }
 
@@ -98,23 +142,30 @@ public actor WalletClient {
     /// Quote an outbound payment without moving funds. Set exactly one of
     /// `invoice` or `onchainAddress`. The result carries a single-use intent id
     /// to pass to `send(_:)`. `sweepAll` drains every VTXO to the address.
+    /// Credit use and top-ups default to independent 10,000-sat caps. Pass zero
+    /// to disable either permission. These limits apply to invoice sends only.
     public func prepareSend(
         invoice: String? = nil,
         onchainAddress: String? = nil,
         amountSat: Int64 = 0,
         note: String = "",
         maxFeeSat: Int64 = 0,
-        sweepAll: Bool = false
+        sweepAll: Bool = false,
+        maxCreditSat: UInt64 = SendCreditDefaults.maxCreditSat,
+        maxCreditTopupSat: UInt64 = SendCreditDefaults.maxCreditTopupSat
     ) async throws -> PrepareSendResult {
         let req = PrepareSendReq(
             invoice: invoice, onchainAddress: onchainAddress, amountSat: amountSat,
-            note: note, maxFeeSat: maxFeeSat, sweepAll: sweepAll
+            note: note, maxFeeSat: maxFeeSat, sweepAll: sweepAll,
+            maxCreditSat: maxCreditSat, maxCreditTopupSat: maxCreditTopupSat
         )
         let body = try encoder.encode(req)
         return try decode(await bg { try Bindings.prepareSend(body) })
     }
 
     /// Dispatch a prepared send, consuming the single-use intent id.
+    /// Call once. After an ambiguous result, reconcile the original payment;
+    /// retrying a consumed intent cannot establish whether it was dispatched.
     public func send(_ sendIntentID: String) async throws -> SendResult {
         let body = try encoder.encode(SendPreparedReq(sendIntentID: sendIntentID))
         return try decode(await bg { try Bindings.sendPrepared(body) })
@@ -122,8 +173,16 @@ public actor WalletClient {
 
     /// Pay a Lightning invoice in one call, skipping the explicit quote step.
     /// Use `prepareSend` + `send` when you want to show the fee before paying.
-    public func payInvoice(_ invoice: String, maxFeeSat: Int64 = 0) async throws -> SendResult {
-        let quote = try await prepareSend(invoice: invoice, maxFeeSat: maxFeeSat)
+    public func payInvoice(
+        _ invoice: String,
+        maxFeeSat: Int64 = 0,
+        maxCreditSat: UInt64 = SendCreditDefaults.maxCreditSat,
+        maxCreditTopupSat: UInt64 = SendCreditDefaults.maxCreditTopupSat
+    ) async throws -> SendResult {
+        let quote = try await prepareSend(
+            invoice: invoice, maxFeeSat: maxFeeSat,
+            maxCreditSat: maxCreditSat, maxCreditTopupSat: maxCreditTopupSat
+        )
         return try await send(quote.sendIntentID)
     }
 
@@ -165,9 +224,52 @@ public actor WalletClient {
     }
 
     /// Query the phase of an exit job for a VTXO outpoint.
-    public func exitStatus(outpoint: String) async throws -> ExitStatusResult {
-        let body = try encoder.encode(ExitStatusReq(outpoint: outpoint))
+    public func exitStatus(outpoint: String, detailed: Bool = true) async throws -> ExitStatusResult {
+        let body = try JSONSerialization.data(withJSONObject: ["Outpoint": outpoint, "Detailed": detailed])
         return try decode(await bg { try Bindings.exitStatus(body) })
+    }
+
+    /// Preview or queue refresh of the selected funds. An empty selection uses
+    /// the daemon's default selection; an absent estimate never means zero fee.
+    public func refreshFunds(outpoints: [String] = [], dryRun: Bool) async throws -> RefreshResult {
+        let body = try JSONSerialization.data(withJSONObject: ["Outpoints": outpoints, "DryRun": dryRun])
+        return try decode(await bg { try Bindings.refresh(body) })
+    }
+
+    /// Include expired and reserved Bitcoin funds for recovery presentation.
+    public func recoveryInventory() async throws -> VTXOInventory {
+        try decode(await bg { try Bindings.recoveryInventory() })
+    }
+
+    /// Observe confirmed forfeits for the exact input selection of a refresh.
+    public func observeRefresh(outpoints: [String]) async throws -> RefreshObservation {
+        let body = try JSONSerialization.data(withJSONObject: ["Outpoints": outpoints])
+        return try decode(await bg { try Bindings.observeRefresh(body) })
+    }
+
+    /// Preview confirmed fee-input funding before an explicit unilateral exit.
+    public func getExitPlan(outpoints: [String]) async throws -> ExitPlan {
+        let body = try JSONSerialization.data(withJSONObject: ["Outpoints": outpoints])
+        return try decode(await bg { try Bindings.getExitPlan(body) })
+    }
+
+    /// List live recovery jobs so the host can resume them after relaunch.
+    public func exitSummary() async throws -> ExitSummary {
+        let body = Data("{}".utf8)
+        return try decode(await bg { try Bindings.exitSummary(body) })
+    }
+
+    /// Preview or broadcast a sweep of confirmed backing-wallet funds.
+    public func sweepWallet(destination: String, broadcast: Bool, feeRateSatPerVByte: Int64 = 0) async throws -> SweepPreview {
+        let body = try JSONSerialization.data(withJSONObject: ["DestinationAddress": destination, "Broadcast": broadcast,
+                                                               "FeeRateSatPerVByte": feeRateSatPerVByte])
+        return try decode(await bg { try Bindings.sweepWallet(body) })
+    }
+
+    /// Export the complete versioned signed bundle without broadcasting.
+    public func exportRecovery(outpoints: [String]) async throws -> Data {
+        let body = try JSONSerialization.data(withJSONObject: ["Outpoints": outpoints])
+        return try await bg { try Bindings.exportExits(body) }
     }
 
     /// Stream only incoming payments (receives and deposits) as they arrive and
@@ -274,9 +376,11 @@ private struct SubscribeReq: Encodable {
 private struct ReceiveReq: Encodable {
     let amountSat: Int64
     let memo: String
+    let timeoutSeconds: Int64
     enum CodingKeys: String, CodingKey {
         case amountSat = "AmountSat"
         case memo = "Memo"
+        case timeoutSeconds = "TimeoutSeconds"
     }
 }
 
@@ -287,13 +391,15 @@ private struct DepositReq: Encodable {
     }
 }
 
-private struct PrepareSendReq: Encodable {
+struct PrepareSendReq: Encodable {
     let invoice: String?
     let onchainAddress: String?
     let amountSat: Int64
     let note: String
     let maxFeeSat: Int64
     let sweepAll: Bool
+    var maxCreditSat: UInt64 = SendCreditDefaults.maxCreditSat
+    var maxCreditTopupSat: UInt64 = SendCreditDefaults.maxCreditTopupSat
     enum CodingKeys: String, CodingKey {
         case invoice = "Invoice"
         case onchainAddress = "OnchainAddress"
@@ -301,6 +407,8 @@ private struct PrepareSendReq: Encodable {
         case note = "Note"
         case maxFeeSat = "MaxFeeSat"
         case sweepAll = "SweepAll"
+        case maxCreditSat = "MaxCreditSat"
+        case maxCreditTopupSat = "MaxCreditTopupSat"
     }
 }
 
