@@ -495,6 +495,9 @@ extension WalletNotifications {
     }
 
     func cancelReceiptRecovery(_ windowID: String) async {
+        if let store {
+            DiagnosticJournal.shared.finish(id: windowID, network: store.network.rawValue, status: "iOS window expired")
+        }
         guard activeReceiptWindow == windowID else { return }
         await store?.cancelReceiptWindow(windowID)
     }
@@ -505,6 +508,15 @@ extension WalletNotifications {
                   lease: ReceiptFetchLease) async -> Bool {
         received(userInfo)
         guard !lease.expired, UIApplication.shared.applicationState != .active else { return false }
+        let diagnosticNetwork = store?.network.rawValue
+        if let diagnosticNetwork {
+            DiagnosticJournal.shared.begin(id: windowID, network: diagnosticNetwork, trigger: "Push")
+        }
+        defer {
+            if let diagnosticNetwork {
+                DiagnosticJournal.shared.finish(id: windowID, network: diagnosticNetwork, status: "No native window")
+            }
+        }
         guard let hint = ReceiptPaymentHint(userInfo: userInfo) else {
             guard let id = WalletNotificationRoute.parsePush(userInfo), let route = validWakeRoute(id) else { return false }
             return await runMaintenance(windowID: windowID, lease: lease, expectedIdentity: route.identity)
@@ -572,6 +584,14 @@ extension WalletNotifications {
     /// A scheduled opportunity needs no notification consent: it advances only
     /// persisted wallet work and never creates a local payment alert.
     func runMaintenance(windowID: String, lease: ReceiptFetchLease, expectedIdentity: String? = nil) async -> Bool {
+        if let store {
+            DiagnosticJournal.shared.begin(id: windowID, network: store.network.rawValue, trigger: "Scheduled opportunity")
+        }
+        defer {
+            if let store {
+                DiagnosticJournal.shared.finish(id: windowID, network: store.network.rawValue, status: "No native window")
+            }
+        }
         guard !lease.expired, activeReceiptWindow == nil, let store else { return false }
         activeReceiptWindow = windowID
         defer { if activeReceiptWindow == windowID { activeReceiptWindow = nil } }
