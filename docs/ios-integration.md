@@ -292,3 +292,19 @@ Validation: 20 Swift tests passed, two opt-in network/storage probes skipped;
 the live signet request/copy/foreground/relaunch UI test passed separately.
 The rebuilt source framework and device-signed iPhone app compiled, installed,
 and launched successfully.
+
+## Cooperative batch exits — 2026-11-12
+
+Settings → Exit supports several selected VTXOs through one native batch
+request. The review sums exact per-input advisory estimates and uses one common
+destination. Each input still creates its own on-chain output. A device-local,
+network-scoped receipt is atomically saved before dispatch. Accepted inputs share
+the returned canonical activity identifier; unknown inputs remain separate and
+cannot be automatically retried. Corrupt history blocks new admission. No
+receipt is replayed after restart. These receipts contain public outpoints,
+amounts and destination, not wallet credentials.
+
+Simulator unit and unfunded Signet navigation checks cover admission receipts
+and the separate unilateral route. A funded physical-device batch exit is left
+for beta testing. The current native source is recorded in
+[`.wavelength-ios-version`](../.wavelength-ios-version).
