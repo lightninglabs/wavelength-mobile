@@ -32,8 +32,15 @@ public struct WalletConfig: Encodable, Sendable {
     public var swapServerTransport: String?
     public var swapServerTLSCertPath: String?
     public var swapServerInsecure: Bool?
+    /// Expected compressed public key of the configured swap wallet identity.
+    /// Omit to leave signed swap notification registration unsupported.
+    public var swapNotificationIssuer: String? = nil
     public var debugLevel: String?
     public var allowMainnet: Bool?
+    /// Persist round recovery independently of notification consent.
+    public var durableRoundRuntime: Bool? = nil
+    /// Leave mailbox intake paused until the host selects a bounded window.
+    public var hostDrivenIngress: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
         case dataDir = "data_dir"
@@ -49,8 +56,11 @@ public struct WalletConfig: Encodable, Sendable {
         case swapServerTransport = "swap_server_transport"
         case swapServerTLSCertPath = "swap_server_tls_cert_path"
         case swapServerInsecure = "swap_server_insecure"
+        case swapNotificationIssuer = "swap_notification_issuer"
         case debugLevel = "debug_level"
         case allowMainnet = "allow_mainnet"
+        case durableRoundRuntime = "durable_round_runtime"
+        case hostDrivenIngress = "host_driven_ingress"
     }
 
     /// A signet config for the lightweight (Esplora-backed) wallet. Empty

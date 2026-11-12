@@ -29,6 +29,12 @@ public struct WalletError: LocalizedError, CustomStringConvertible, Sendable {
             normalized.contains("timed out")
     }
 
+    /// The native singleton retains cleanup after this caller's wait ended.
+    /// Re-wait stop before starting another daemon on the same wallet directory.
+    public var isStopPending: Bool {
+        message.hasPrefix("wavewalletdk mobile stop pending; call Stop again:")
+    }
+
     /// Whether a receive may have become durable before cancellation. Reconcile
     /// Activity before asking the wallet to create another invoice.
     public var isReceiveOutcomeUncertain: Bool {
@@ -77,9 +83,66 @@ public actor WalletClient {
         try await bg { try Bindings.start(json) }
     }
 
-    /// Tear the daemon down. Idempotent.
+    /// Cancel the daemon and wait for cleanup. If this times out, retain the
+    /// client and re-wait stop before starting another daemon.
     public func stop() async throws {
         try await bg { try Bindings.stop() }
+    }
+
+    /// Bind a relay route through the selected configured producer and the
+    /// native wallet signer. This does not enroll with APNs or run recovery.
+    public func setNotificationSubscription(
+        _ request: NotificationSubscription
+    ) async throws -> NotificationSubscriptionResult {
+        let body = try encoder.encode(request)
+        return try decode(await bg { try Bindings.setNotificationSubscription(body) })
+    }
+
+    /// Sign an exact publisher delegation at a configured source. The native
+    /// bridge checks issuer and subscriber consent before using the wallet key.
+    public func setNotificationFeedGrant(
+        _ request: NotificationFeedGrant
+    ) async throws -> NotificationFeedGrantResult {
+        let body = try encoder.encode(request)
+        return try decode(await bg { try Bindings.setNotificationFeedGrant(body) })
+    }
+
+    /// Attempt one restricted intake batch. This does not prove domain
+    /// completion, awaiting-peer or safe suspension. Pause foreground first,
+    /// serialize state-creating calls and cancel expiry by the same unique ID.
+    public func processNext(id: String, timeoutSeconds: Int64) async throws -> IngressStepResult {
+        try decode(await bg { try Bindings.processNext(id, timeoutSeconds) })
+    }
+
+    /// Join a background window before resuming foreground ingress. False
+    /// pauses intake while retaining the daemon and its domain workers.
+    public func setHostForeground(_ foreground: Bool) async throws {
+        try await bg { try Bindings.setHostForeground(foreground) }
+    }
+
+    /// Reconcile one enrolled invoice within a cooperative 1...20 second
+    /// budget. The host must serialize against state-creating wallet calls.
+    public func runReceiptWindow(
+        _ request: ReceiptWindowRequest, timeoutSeconds: Int64 = 15
+    ) async throws -> ReceiptWindowResult {
+        let body = try encoder.encode(request)
+        return try decode(await bg {
+            try Bindings.runReceiptWindow(body, timeoutSeconds)
+        })
+    }
+
+    /// Attempts current-tip expiry and native round work on a retained warm runtime.
+    /// Uses the same unique-ID cancellation API as receipt windows. Produces no receipt.
+    public func runMaintenanceWindow(
+        _ windowID: String, timeoutSeconds: Int64 = 15
+    ) async throws -> ReceiptWindowResult {
+        let data = try await bg { try Bindings.runMaintenanceWindow(windowID, timeoutSeconds) }
+        return try decode(data)
+    }
+
+    /// Signal expiry without releasing the running call's retained owner.
+    public func cancelReceiptWindow(_ windowID: String) async throws {
+        try await bg { try Bindings.cancelReceiptWindow(windowID) }
     }
 
     /// Daemon readiness snapshot.
@@ -189,17 +252,19 @@ public actor WalletClient {
     /// List a unified wallet view: the merged activity history, the live VTXO
     /// inventory, or the on-chain transaction history. Read the `ListResult`
     /// property named by its `view`. `kinds`, `pendingOnly`, `limit`, and
-    /// `offset` apply to the activity view.
+    /// `offset` apply to the activity view. Pass `ActivityList.nextCursor` to
+    /// read the next canonical page; canonical activity ignores `offset`.
     public func list(
         view: ListView = .activity,
         kinds: [String] = [],
         pendingOnly: Bool = false,
         limit: Int64 = 0,
-        offset: Int64 = 0
+        offset: Int64 = 0,
+        cursor: String = ""
     ) async throws -> ListResult {
         let req = ListReq(
             view: view.rawValue, pendingOnly: pendingOnly,
-            kinds: kinds, limit: limit, offset: offset
+            kinds: kinds, limit: limit, offset: offset, cursor: cursor
         )
         let body = try encoder.encode(req)
         return try decode(await bg { try Bindings.list(body) })
@@ -276,9 +341,10 @@ public actor WalletClient {
     /// settle. A convenience over `activity` filtered to the credit kinds: watch
     /// for an `Entry` whose status becomes "complete".
     public nonisolated func incomingPayments(
-        includeExisting: Bool = false
+        includeExisting: Bool = false,
+        cursor: Int64 = 0
     ) -> AsyncThrowingStream<Entry, Error> {
-        activity(includeExisting: includeExisting, kinds: ["receive", "deposit"])
+        activity(includeExisting: includeExisting, kinds: ["receive", "deposit"], cursor: cursor)
     }
 
     /// Stream wallet activity. The stream finishes on a clean end-of-stream and
@@ -286,12 +352,13 @@ public actor WalletClient {
     /// closes the underlying subscription, which unblocks the pull loop.
     public nonisolated func activity(
         includeExisting: Bool = false,
-        kinds: [String] = []
+        kinds: [String] = [],
+        cursor: Int64 = 0
     ) -> AsyncThrowingStream<Entry, Error> {
         AsyncThrowingStream { continuation in
             let decoder = JSONDecoder()
             let reqData = (try? JSONEncoder().encode(
-                SubscribeReq(includeExisting: includeExisting, kinds: kinds)
+                SubscribeReq(includeExisting: includeExisting, kinds: kinds, cursor: cursor)
             )) ?? Data("{}".utf8)
 
             let sub: BindingsSubscription
@@ -367,9 +434,11 @@ private struct UnlockWalletReq: Encodable {
 private struct SubscribeReq: Encodable {
     let includeExisting: Bool
     let kinds: [String]
+    let cursor: Int64
     enum CodingKeys: String, CodingKey {
         case includeExisting = "IncludeExisting"
         case kinds = "Kinds"
+        case cursor = "Cursor"
     }
 }
 
@@ -425,12 +494,14 @@ private struct ListReq: Encodable {
     let kinds: [String]
     let limit: Int64
     let offset: Int64
+    let cursor: String
     enum CodingKeys: String, CodingKey {
         case view = "View"
         case pendingOnly = "PendingOnly"
         case kinds = "Kinds"
         case limit = "Limit"
         case offset = "Offset"
+        case cursor = "Cursor"
     }
 }
 
