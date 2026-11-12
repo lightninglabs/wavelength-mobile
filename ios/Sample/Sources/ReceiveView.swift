@@ -114,24 +114,19 @@ struct ReceiveView: View {
             if let reason = entry.failureReason, !reason.isEmpty {
                 Text(reason).font(.footnote).foregroundStyle(WalletTheme.secondary)
             }
-            DisclosureGroup("Details", isExpanded: $details) {
-                requestContent
-                NavigationLink(destination: ActivityDetailView(entry: entry)) { Text("Activity") }
-            }
         } else {
             if rail == .lightning, (Int64(amount) ?? 0) > 0 {
                 WalletAmount(amount: Int64(amount) ?? 0)
             }
-            QRCodeView(value: request)
-                .frame(maxWidth: 290, maxHeight: 290)
-                .aspectRatio(1, contentMode: .fit)
-                .padding(18)
-                .background(Color.white, in: RoundedRectangle(cornerRadius: 16))
-                .frame(maxWidth: .infinity)
-                .accessibilityLabel("Payment request QR code")
-            requestContent
             WalletStatus(text: "Waiting for payment")
                 .foregroundStyle(WalletTheme.secondary)
+            RequestQRCodeCard(value: request)
+        }
+        DisclosureGroup("Details", isExpanded: $details) {
+            requestContent
+            if paymentDetected, let entry = currentEntry {
+                NavigationLink(destination: ActivityDetailView(entry: entry)) { Text("Activity") }
+            }
         }
         if paymentDetected {
             Button("Done") { presentationMode.wrappedValue.dismiss() }
@@ -146,9 +141,7 @@ struct ReceiveView: View {
                     .accessibilityIdentifier("receive.copy")
                 Button { showingShare = true } label: { Label("Share", systemImage: "square.and.arrow.up") }
             }
-            if paymentDetected { requestValue } else {
-                DisclosureGroup("Details", isExpanded: $details) { requestValue.padding(.top, 12) }
-            }
+            requestValue
         }.padding(.vertical, 12)
     }
 
@@ -178,11 +171,35 @@ struct ReceiveView: View {
     }
 }
 
-struct QRCodeView: View {
+/// Shows only the saved payload, with a four-module quiet zone in the image.
+struct RequestQRCodeCard: View {
     let value: String
 
     var body: some View {
-        if let image = QRCodeGenerator.image(for: value) {
+        QRCodeView(value: value, fullQuietZone: true)
+        .aspectRatio(1, contentMode: .fit)
+        .padding(4)
+        .frame(maxWidth: 420)
+        .background(Color.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Color.black.opacity(0.06), lineWidth: 1)
+        }
+        .frame(maxWidth: .infinity)
+        .environment(\.colorScheme, .light)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Payment request QR code")
+        .accessibilityIdentifier("request.qr")
+        .privacySensitive()
+    }
+}
+
+struct QRCodeView: View {
+    let value: String
+    var fullQuietZone = false
+
+    var body: some View {
+        if let image = QRCodeGenerator.image(for: value, fullQuietZone: fullQuietZone) {
             Image(uiImage: image)
                 .resizable()
                 .interpolation(.none)
@@ -197,12 +214,21 @@ struct QRCodeView: View {
 }
 
 private enum QRCodeGenerator {
-    static func image(for value: String) -> UIImage? {
+    static func image(for value: String, fullQuietZone: Bool) -> UIImage? {
         let filter = CIFilter.qrCodeGenerator()
         filter.message = Data(value.utf8)
         filter.correctionLevel = "M"
         guard let output = filter.outputImage else { return nil }
-        let transformed = output.transformed(by: CGAffineTransform(scaleX: 12, y: 12))
+        // Core Image supplies one clear module. Payment requests add three
+        // more in module space, so even short addresses retain four in total.
+        let symbol: CIImage
+        if fullQuietZone {
+            let background = CIImage(color: .white).cropped(to: output.extent.insetBy(dx: -3, dy: -3))
+            symbol = output.composited(over: background)
+        } else {
+            symbol = output
+        }
+        let transformed = symbol.transformed(by: CGAffineTransform(scaleX: 12, y: 12))
         let context = CIContext(options: nil)
         guard let cgImage = context.createCGImage(transformed, from: transformed.extent) else {
             return nil

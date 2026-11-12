@@ -198,8 +198,7 @@ extension Entry {
     var activityAmountText: String {
         if isAwaitingIncomingPayment || isExpiredInvoice {
             guard amountSat > 0 else { return "Waiting for payment" }
-            let suffix = kind == "receive" ? "requested" : "expected"
-            return "\(WalletFormatting.sats(amountSat)) \(suffix)"
+            return WalletFormatting.sats(amountSat)
         }
         if isCredit, status == "pending" {
             return WalletFormatting.sats(amountSat)

@@ -4,7 +4,6 @@ import WalletKit
 struct ActivityDetailView: View {
     @EnvironmentObject private var store: WalletStore
     let entry: Entry
-    @State private var showingInvoiceQR = false
     @State private var details = false
     private var currentEntry: Entry { store.activity.first { $0.id == entry.id } ?? entry }
 
@@ -24,10 +23,12 @@ struct ActivityDetailView: View {
             if let reason = currentEntry.failureReason, !reason.isEmpty {
                 Text(reason).foregroundStyle(currentEntry.isExpiredInvoice ? WalletTheme.secondary : .red)
             }
-            if currentEntry.kind == "receive", currentEntry.status == "pending",
-               let invoice = currentEntry.request?.lightningInvoice, !invoice.isEmpty {
-                Button { showingInvoiceQR = true } label: { Label("Show request", systemImage: "qrcode") }
-                    .accessibilityIdentifier("activity.invoice.qr")
+            if currentEntry.isAwaitingIncomingPayment, let request = currentEntry.request {
+                if !request.lightningInvoice.isEmpty {
+                    RequestQRCodeCard(value: request.lightningInvoice)
+                } else if !request.onchainAddress.isEmpty {
+                    RequestQRCodeCard(value: request.onchainAddress)
+                }
             }
             DisclosureGroup("Details", isExpanded: $details) {
                 VStack(alignment: .leading, spacing: 20) {
@@ -66,8 +67,5 @@ struct ActivityDetailView: View {
         .navigationTitle(currentEntry.kind == "exit" ? "Exit" : "Payment")
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("activity.detail")
-        .sheet(isPresented: $showingInvoiceQR) {
-            ReceiveView(existingEntry: currentEntry)
-        }
     }
 }
