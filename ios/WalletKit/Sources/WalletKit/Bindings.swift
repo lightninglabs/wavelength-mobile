@@ -137,6 +137,11 @@ enum Bindings {
         return try unwrap(MobileEstimateExitFee(req, &err), err)
     }
 
+    static func exitBatch(_ req: Data) throws -> Data {
+        var err: NSError?
+        return try unwrap(MobileExitBatch(req, &err), err)
+    }
+
     static func diagnosticRead(_ req: Data) throws -> Data {
         var err: NSError?
         return try unwrap(MobileDiagnosticRead(req, &err), err)
@@ -233,6 +238,7 @@ enum Bindings {
     static func sendPrepared(_ req: Data) throws -> Data { throw missing() }
     static func list(_ req: Data) throws -> Data { throw missing() }
     static func exit(_ req: Data) throws -> Data { throw missing() }
+    static func exitBatch(_ req: Data) throws -> Data { throw missing() }
     static func estimateExitFee(_ req: Data) throws -> Data { throw missing() }
     static func diagnosticRead(_ req: Data) throws -> Data { throw missing() }
     static func diagnosticLogs() throws -> Data { throw missing() }

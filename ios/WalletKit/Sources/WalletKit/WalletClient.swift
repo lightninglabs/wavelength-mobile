@@ -49,6 +49,15 @@ public struct WalletError: LocalizedError, CustomStringConvertible, Sendable {
     public var isSendRejectedBeforeDispatch: Bool {
         message.lowercased().hasPrefix("send rejected before dispatch:")
     }
+
+    /// These native batch RPC statuses are returned only before admission.
+    /// Match the outer status, never an error string nested in its description.
+    public var isExitBatchRejectedBeforeAdmission: Bool {
+        let prefix = "exit batch (do not retry without reconciling admission): rpc error: code = "
+        return ["InvalidArgument", "FailedPrecondition", "Unimplemented"].contains {
+            message.hasPrefix(prefix + $0 + " desc = ")
+        }
+    }
 }
 
 /// Per-payment credit limits for small Lightning payments. These are ceilings;
@@ -295,6 +304,14 @@ public actor WalletClient {
         return try decode(await bg { try Bindings.estimateExitFee(body) })
     }
 
+    /// Submit one cooperative selection, including inputs from different rounds.
+    /// Accepted inputs are queued, not paid. A transport error can hide admission.
+    /// The host must retain the selection and reconcile it before any retry.
+    public func exitBatch(outpoints: [String], destination: String = "") async throws -> ExitBatchResult {
+        let body = try encoder.encode(ExitBatchReq(outpoints: outpoints, destination: destination))
+        return try decode(await bg { try Bindings.exitBatch(body) })
+    }
+
     /// Read a finite low-level diagnostic view without mutating wallet state.
     public func diagnosticRead(_ view: DiagnosticView, outpoint: String = "",
                                roundID: String = "", history: Bool = false,
@@ -535,6 +552,14 @@ private struct ExitReq: Encodable {
         case outpoint = "Outpoint"
         case destination = "Destination"
         case forceUnrollAck = "ForceUnrollAck"
+    }
+}
+
+private struct ExitBatchReq: Encodable {
+    let outpoints: [String]
+    let destination: String
+    enum CodingKeys: String, CodingKey {
+        case outpoints = "Outpoints", destination = "Destination"
     }
 }
 
