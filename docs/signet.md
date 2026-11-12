@@ -16,9 +16,9 @@ just means sends and rounds are unavailable.
 ## Endpoints
 
 Empty endpoint overrides in `WalletConfig.signet(...)` use the defaults compiled
-into the Wavelength binding. For the iOS source pin
-`43c517cf6fefe9aae3f9c2a879d0b11f6ff407a2` plus the checked-in mobile bridge,
-these are:
+into the Wavelength binding. For the source in
+[`.wavelength-ios-version`](../.wavelength-ios-version) plus the checked-in
+mobile bridge, these are:
 
 | Parameter | Meaning | Default |
 |-----------|---------|---------|

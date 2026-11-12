@@ -56,8 +56,8 @@ embedded wallet, create a key, sync the chain from Esplora, and read balances.
 Both the Android and iOS wrappers and their sample apps run end to end — Android
 on an emulator, iOS on the Simulator — booting the embedded wallet, creating a
 wallet, and syncing signet to the chain tip. wavelength CI builds the bindings
-on release tags. iOS uses the source commit in `.wavelength-ios-version`
-(`43c517cf6fefe9aae3f9c2a879d0b11f6ff407a2`) plus
+on release tags. iOS uses the source commit in
+[`.wavelength-ios-version`](.wavelength-ios-version) plus
 `scripts/wavelength-ios-recovery.patch`;
 Android uses `.wavelength-version` (currently `v0.1.2`). The separate pins let
 each host wrapper adopt SDK changes after its own validation. iOS build, test,
