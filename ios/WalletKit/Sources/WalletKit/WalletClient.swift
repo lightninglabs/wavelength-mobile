@@ -288,6 +288,13 @@ public actor WalletClient {
         return try decode(await bg { try Bindings.exit(body) })
     }
 
+    /// Read an advisory cooperative-exit estimate for the exact selected VTXO.
+    /// This does not allocate an address, reserve funds or queue an exit.
+    public func estimateExitFee(outpoint: String) async throws -> ExitFeeEstimate {
+        let body = try JSONSerialization.data(withJSONObject: ["Outpoint": outpoint])
+        return try decode(await bg { try Bindings.estimateExitFee(body) })
+    }
+
     /// Query the phase of an exit job for a VTXO outpoint.
     public func exitStatus(outpoint: String, detailed: Bool = true) async throws -> ExitStatusResult {
         let body = try JSONSerialization.data(withJSONObject: ["Outpoint": outpoint, "Detailed": detailed])

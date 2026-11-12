@@ -1,6 +1,263 @@
+diff --git a/sdk/wavewalletdk/client_exit_fee_mobile.go b/sdk/wavewalletdk/client_exit_fee_mobile.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..753f06bb8b1e106511e84ca5f109f57c7f30fb43
+--- /dev/null
++++ b/sdk/wavewalletdk/client_exit_fee_mobile.go
+@@ -0,0 +1,99 @@
++package wavewalletdk
++
++import (
++	"context"
++	"fmt"
++
++	"github.com/btcsuite/btcd/btcutil/v2"
++	"github.com/lightninglabs/wavelength/waverpc"
++)
++
++// ExitFeeEstimate is an advisory cooperative-leave estimate for one exact
++// Bitcoin VTXO. The binding round quote remains authoritative at execution.
++type ExitFeeEstimate struct {
++	Outpoint         string
++	AmountSat        int64
++	EstimatedFeeSat  int64
++	BelowDustWarning bool
++}
++
++// EstimateExitFee reads the selected VTXO and current chain tip, then asks the
++// operator to price its forfeiture. It never queues an exit or allocates an
++// address. In particular, a pure-refresh waiver cannot make a leave look free.
++func (c *Client) EstimateExitFee(ctx context.Context, outpoint string) (
++	*ExitFeeEstimate, error) {
++
++	if err := c.requireWalletRPC(); err != nil {
++		return nil, err
++	}
++	if outpoint == "" {
++		return nil, fmt.Errorf("outpoint is required")
++	}
++
++	inventory, err := c.daemon.ListVTXOs(ctx, &waverpc.ListVTXOsRequest{
++		StatusFilter:           waverpc.VTXOStatus_VTXO_STATUS_LIVE,
++		ExcludeCheckpointPsbts: true,
++	})
++	if err != nil {
++		return nil, fmt.Errorf("read exit funds: %w", err)
++	}
++	var selected *waverpc.VTXO
++	for _, v := range inventory.GetVtxos() {
++		if v.GetOutpoint() == outpoint && v.GetAssetRef() == "" &&
++			v.GetStatus() == waverpc.VTXOStatus_VTXO_STATUS_LIVE {
++
++			selected = v
++			break
++		}
++	}
++	if selected == nil {
++		return nil, fmt.Errorf("selected exit funds are no longer " +
++			"available")
++	}
++	info, err := c.daemon.GetInfo(ctx, &waverpc.GetInfoRequest{})
++	if err != nil {
++		return nil, fmt.Errorf("read exit chain tip: %w", err)
++	}
++	if info.GetBlockHeight() == 0 || selected.GetBatchExpiry() <= 0 {
++		return nil, fmt.Errorf("exit fee needs a current tip and " +
++			"known expiry")
++	}
++
++	// Zero means full lifetime to the operator. Clamp near-expiry funds to
++	// one block instead of accidentally pricing a fresh lifetime.
++	remaining := int64(selected.GetBatchExpiry()) -
++		int64(info.GetBlockHeight())
++	if remaining < 1 {
++		remaining = 1
++	}
++	quote, err := c.daemon.EstimateFee(ctx, &waverpc.EstimateFeeRequest{
++		AmountSat:       selected.GetAmountSat(),
++		IsBoarding:      false,
++		RemainingBlocks: uint32(remaining),
++	})
++	if err != nil {
++		return nil, fmt.Errorf("estimate exit fee: %w", err)
++	}
++
++	// The quote components must agree with the displayed total. Bounding
++	// each component also makes their sum safe from signed overflow.
++	var sum int64
++	for _, component := range []int64{
++		quote.GetLiquidityFeeSat(), quote.GetOnchainShareSat(),
++		quote.GetMarginSat(),
++	} {
++		if component < 0 || component > int64(btcutil.MaxSatoshi) {
++			return nil, fmt.Errorf("invalid exit fee estimate")
++		}
++		sum += component
++	}
++	if sum != quote.GetTotalFeeSat() || sum > int64(btcutil.MaxSatoshi) {
++		return nil, fmt.Errorf("invalid exit fee estimate")
++	}
++
++	return &ExitFeeEstimate{
++		Outpoint: outpoint, AmountSat: selected.GetAmountSat(),
++		EstimatedFeeSat:  quote.GetTotalFeeSat(),
++		BelowDustWarning: quote.GetBelowDustWarning(),
++	}, nil
++}
+diff --git a/sdk/wavewalletdk/client_exit_fee_mobile_test.go b/sdk/wavewalletdk/client_exit_fee_mobile_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..cd43f3cd18f7721ff44f5c62d505a088dd7431aa
+--- /dev/null
++++ b/sdk/wavewalletdk/client_exit_fee_mobile_test.go
+@@ -0,0 +1,146 @@
++package wavewalletdk
++
++import (
++	"context"
++	"errors"
++	"testing"
++
++	"github.com/lightninglabs/wavelength/waverpc"
++	"github.com/stretchr/testify/require"
++	"google.golang.org/grpc"
++)
++
++// exitFeeDaemon implements reads only; any attempt to queue funds fails loudly.
++type exitFeeDaemon struct {
++	waverpc.DaemonServiceClient
++	vtxos    []*waverpc.VTXO
++	height   uint32
++	quote    *waverpc.EstimateFeeResponse
++	quoteErr error
++	request  *waverpc.EstimateFeeRequest
++}
++
++// ListVTXOs returns the locally owned selected input without artifact loading.
++func (d *exitFeeDaemon) ListVTXOs(_ context.Context,
++	req *waverpc.ListVTXOsRequest, _ ...grpc.CallOption) (
++	*waverpc.ListVTXOsResponse, error) {
++
++	return &waverpc.ListVTXOsResponse{Vtxos: d.vtxos}, nil
++}
++
++// GetInfo returns the tip used to price remaining lifetime.
++func (d *exitFeeDaemon) GetInfo(context.Context, *waverpc.GetInfoRequest,
++	...grpc.CallOption) (*waverpc.GetInfoResponse, error) {
++
++	return &waverpc.GetInfoResponse{BlockHeight: d.height}, nil
++}
++
++// EstimateFee records the exact selected amount and forfeit lifetime.
++func (d *exitFeeDaemon) EstimateFee(_ context.Context,
++	req *waverpc.EstimateFeeRequest, _ ...grpc.CallOption) (
++	*waverpc.EstimateFeeResponse, error) {
++
++	d.request = req
++
++	return d.quote, d.quoteErr
++}
++
++// TestExitFeePricesSelectedFunds verifies read-only pricing uses authoritative
++// inventory and never applies the free-refresh waiver to cooperative leave.
++func TestExitFeePricesSelectedFunds(t *testing.T) {
++	t.Parallel()
++	d := &exitFeeDaemon{
++		vtxos: []*waverpc.VTXO{
++			{
++				Outpoint:  "other:0",
++				AmountSat: 9000,
++			},
++			{
++				Outpoint:    "selected:1",
++				AmountSat:   8000,
++				BatchExpiry: 102,
++				Status: waverpc.
++					VTXOStatus_VTXO_STATUS_LIVE,
++			},
++		},
++		height: 100,
++		quote: &waverpc.EstimateFeeResponse{
++			LiquidityFeeSat: 3, OnchainShareSat: 4, MarginSat: 5,
++			TotalFeeSat: 12,
++		},
++	}
++	c := &Client{canWallet: true, daemon: d}
++	result, err := c.EstimateExitFee(t.Context(), "selected:1")
++	require.NoError(t, err)
++	require.EqualValues(t, 8000, result.AmountSat)
++	require.EqualValues(t, 12, result.EstimatedFeeSat)
++	require.EqualValues(t, 8000, d.request.AmountSat)
++	require.EqualValues(t, 2, d.request.RemainingBlocks)
++	require.False(t, d.request.IsBoarding)
++
++	// Near expiry must not send zero, which means a fresh full lifetime.
++	d.height = 102
++	_, err = c.EstimateExitFee(t.Context(), "selected:1")
++	require.NoError(t, err)
++	require.EqualValues(t, 1, d.request.RemainingBlocks)
++	// A genuine zero quote remains distinct from a failed lookup.
++	d.quote = &waverpc.EstimateFeeResponse{}
++	result, err = c.EstimateExitFee(t.Context(), "selected:1")
++	require.NoError(t, err)
++	require.Zero(t, result.EstimatedFeeSat)
++}
++
++// TestExitFeeFailuresNeverBecomeFree rejects unavailable facts and invalid
++// quotes instead of emitting a numeric zero estimate.
++func TestExitFeeFailuresNeverBecomeFree(t *testing.T) {
++	t.Parallel()
++	for _, name := range []string{
++		"unknown", "spent", "asset", "noexpiry", "notip",
++		"offline", "invalid",
++	} {
++		t.Run(name, func(t *testing.T) {
++			d := &exitFeeDaemon{
++				vtxos: []*waverpc.VTXO{{
++					Outpoint:    "selected:1",
++					AmountSat:   8000,
++					BatchExpiry: 200,
++					Status: waverpc.
++						VTXOStatus_VTXO_STATUS_LIVE,
++				}},
++				height: 100,
++				quote:  &waverpc.EstimateFeeResponse{},
++			}
++			switch name {
++			case "unknown":
++				d.vtxos = nil
++
++			case "spent":
++				d.vtxos[0].Status =
++					waverpc.VTXOStatus_VTXO_STATUS_SPENT
++
++			case "asset":
++				d.vtxos[0].AssetRef = "asset"
++
++			case "noexpiry":
++				d.vtxos[0].BatchExpiry = 0
++
++			case "notip":
++				d.height = 0
++
++			case "offline":
++				d.quoteErr = errors.New("operator unavailable")
++
++			case "invalid":
++				d.quote.TotalFeeSat = -1
++			}
++			result, err := (&Client{
++				canWallet: true,
++				daemon:    d,
++			}).EstimateExitFee(
++				t.Context(), "selected:1",
++			)
++			require.Error(t, err)
++			require.Nil(t, result)
++		})
++	}
++}
 diff --git a/sdk/wavewalletdk/client_export.go b/sdk/wavewalletdk/client_export.go
 new file mode 100644
-index 00000000..c420147c
+index 0000000000000000000000000000000000000000..c420147cb3905402df3f9161a329f642488528f0
 --- /dev/null
 +++ b/sdk/wavewalletdk/client_export.go
 @@ -0,0 +1,41 @@
@@ -47,7 +304,7 @@ index 00000000..c420147c
 +}
 diff --git a/sdk/wavewalletdk/client_recovery_mobile_test.go b/sdk/wavewalletdk/client_recovery_mobile_test.go
 new file mode 100644
-index 00000000..d5e220f3
+index 0000000000000000000000000000000000000000..d5e220f3d2122e3402ff18db5c6362750130d908
 --- /dev/null
 +++ b/sdk/wavewalletdk/client_recovery_mobile_test.go
 @@ -0,0 +1,167 @@
@@ -220,7 +477,7 @@ index 00000000..d5e220f3
 +}
 diff --git a/sdk/wavewalletdk/client_refresh_status.go b/sdk/wavewalletdk/client_refresh_status.go
 new file mode 100644
-index 00000000..7a087ec3
+index 0000000000000000000000000000000000000000..7a087ec3f5ee9d21127cf362d73f5d62167a30cb
 --- /dev/null
 +++ b/sdk/wavewalletdk/client_refresh_status.go
 @@ -0,0 +1,128 @@
@@ -352,9 +609,40 @@ index 00000000..7a087ec3
 +
 +	return result, nil
 +}
+diff --git a/sdk/wavewalletdk/mobile/exit_fee.go b/sdk/wavewalletdk/mobile/exit_fee.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..cfd824c4c72f096976e6a06386287b72a82445f6
+--- /dev/null
++++ b/sdk/wavewalletdk/mobile/exit_fee.go
+@@ -0,0 +1,25 @@
++//go:build mobile && wavewalletrpc && swapruntime
++
++package mobile
++
++// EstimateExitFee previews one cooperative exit without submitting it. The
++// request is an object with Outpoint; the response is
++// wavewalletdk.ExitFeeEstimate.
++func EstimateExitFee(reqJSON []byte) ([]byte, error) {
++	client, parent, err := activeClient()
++	if err != nil {
++		return nil, err
++	}
++	ctx, cancel := readContext(parent)
++	defer cancel()
++	var req struct{ Outpoint string }
++	if err := decode(reqJSON, &req); err != nil {
++		return nil, err
++	}
++	result, err := client.EstimateExitFee(ctx, req.Outpoint)
++	if err != nil {
++		return nil, err
++	}
++
++	return marshal(result)
++}
 diff --git a/sdk/wavewalletdk/mobile/recovery.go b/sdk/wavewalletdk/mobile/recovery.go
 new file mode 100644
-index 00000000..369fbf84
+index 0000000000000000000000000000000000000000..369fbf84aee98f6641bc730041e16d6f29b8c0e0
 --- /dev/null
 +++ b/sdk/wavewalletdk/mobile/recovery.go
 @@ -0,0 +1,88 @@
@@ -448,7 +736,7 @@ index 00000000..369fbf84
 +}
 diff --git a/sdk/wavewalletdk/mobile/send_failure.go b/sdk/wavewalletdk/mobile/send_failure.go
 new file mode 100644
-index 00000000..5214e1c4
+index 0000000000000000000000000000000000000000..5214e1c4e6f5b6b3400de3ee5801d409f5ccdd06
 --- /dev/null
 +++ b/sdk/wavewalletdk/mobile/send_failure.go
 @@ -0,0 +1,37 @@
@@ -491,7 +779,7 @@ index 00000000..5214e1c4
 +}
 diff --git a/sdk/wavewalletdk/mobile/send_failure_test.go b/sdk/wavewalletdk/mobile/send_failure_test.go
 new file mode 100644
-index 00000000..3b7fe0c9
+index 0000000000000000000000000000000000000000..3b7fe0c9d22189ac4f511affe95d85b0c13c2557
 --- /dev/null
 +++ b/sdk/wavewalletdk/mobile/send_failure_test.go
 @@ -0,0 +1,50 @@
@@ -546,7 +834,7 @@ index 00000000..3b7fe0c9
 +	}
 +}
 diff --git a/sdk/wavewalletdk/mobile/wallet.go b/sdk/wavewalletdk/mobile/wallet.go
-index e7657cfd..c0bf983d 100644
+index e7657cfd48ff5d2d1bd079b6b398a8448047f78b..c0bf983d099094f59c671b05d51d94599cfa639a 100644
 --- a/sdk/wavewalletdk/mobile/wallet.go
 +++ b/sdk/wavewalletdk/mobile/wallet.go
 @@ -247,17 +247,17 @@ func PrepareSend(reqJSON []byte) ([]byte, error) {
