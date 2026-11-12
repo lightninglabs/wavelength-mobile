@@ -32,12 +32,21 @@ struct DiagnosticVTXODetailView: View {
             VStack(alignment: .leading, spacing: 16) {
                 Text("Expiry").font(.headline)
                 Text(diagnosticExpiry(detail["expiry_info"])).font(.title3.weight(.medium))
+                DiagnosticExpiryTimeline(expiryInfo: detail["expiry_info"])
                 if detail["expiry_info"]["batch_expiry"].int > 0 {
                     DiagnosticRow(label: "Expiry height", value: detail["expiry_info"]["batch_expiry"].text)
                     DiagnosticRow(label: "Current height", value: detail["expiry_info"]["current_height"].text)
                     DiagnosticRow(label: "Posture", value: detail["expiry_info"]["status"].label(removing: "VTXO_EXPIRY_STATUS_"))
                 }
             }
+            NavigationLink(destination: DiagnosticRefreshTimingView(outpoint: outpoint)) {
+                HStack {
+                    Text("Refresh timing")
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold)).foregroundStyle(WalletTheme.secondary)
+                }.padding(.vertical, 12).contentShape(Rectangle())
+            }.buttonStyle(.plain).disabled(outpoint.isEmpty)
             WalletDivider()
             VStack(alignment: .leading, spacing: 16) {
                 Text("Bitcoin anchoring outputs").font(.headline)

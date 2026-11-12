@@ -426,7 +426,8 @@ credential ownership, revocation and remaining bounded-runtime work.
 
 Release-tag overrides must expose `MobileSetHostForeground`,
 `MobileRunReceiptWindow`, `MobileRunMaintenanceWindow` and
-`MobileCancelReceiptWindow` and `MobileEstimateExitFee`, as well as the existing
+`MobileCancelReceiptWindow`, `MobileEstimateExitFee`, `MobileDiagnosticRead` and
+`MobileDiagnosticLogs`, as well as the existing
 recovery and subscription bridge symbols. An older release cannot build the
 current Swift wrapper.
 
@@ -474,3 +475,65 @@ promise continuation of every round. iOS may relaunch a system-terminated app,
 but a user force-quit prevents ordinary background-push relaunch. Wake delivery
 and execution time are best-effort, not a guarantee of refresh before expiry.
 Preserve wallet files after durable-runtime adoption.
+
+
+## Diagnostics
+
+Settings → Diagnostics uses typed read-only views of the native daemon and swap
+RPCs. It remains behind the wallet's normal interaction lock. Inspection cannot
+send a payment, join a round, trigger refresh or start recovery.
+
+The VTXO inventory includes explicit pending-round states and can include spent
+and forfeited history. Selecting a VTXO shows its full virtual outpoint and each
+actual Bitcoin anchoring output from persisted ancestry, including nonzero
+output indexes and multiple commitments. Copy and share preserve complete
+identifiers. Recorded anchoring outputs do not assert current unspent status.
+Large checkpoint packages are excluded from listing reads.
+
+Refresh timing uses the daemon's block-height thresholds, independently of its
+CSV delay. Missing expiry/tip metadata stays unknown. Operator free-refresh
+terms are the current session snapshot; eligibility does not guarantee iOS
+execution or a completed refresh. Round timing shows the operator-provided
+registration opening, cutoff and planned join in local time. Historical rounds
+may no longer have a registration window. These times do not schedule an iOS
+wake or predict confirmation.
+
+Logs support case-insensitive literal substring matching, highlighting,
+level/source filters, pause/follow, older-record paging and explicit filtered
+export with UTC timestamps. Pausing freezes the display, not native capture.
+Scrolling holds the displayed snapshot while native capture and the captured
+match count stay live. Buffer rotation cannot move the row being read.
+Only “Follow latest” switches back to the current buffer and resumes scrolling. Log options can add a timestamped user
+marker for a reproduction without changing wallet state.
+The capture menu selects Info or Debug for the next wallet startup; it never
+restarts an active wallet. Native history retains up to 2,000 records and two
+rotating files of at most 1 MiB each. Capture is enabled by the app's
+`diagnostic_logs` config flag, while other SDK hosts keep the default off.
+The app excludes diagnostic directories from backup and retains
+complete-until-first-user-authentication file protection. Common native
+credential-bearing log records are omitted before persistence.
+
+The background journal records actual push/scheduler callbacks, cold/retained
+startup, preparation, native-window return flags and iOS expiration. It stores
+at most 50 runs and 200 host events. A run interrupted by process death shows
+“End not recorded”; its displayed duration stops at the last observation.
+Quote/signing details remain available through native logs during the selected
+run. No journal status claims global reconciliation or successful settlement.
+The journal starts with this version; it cannot reconstruct earlier wakes.
+
+The app also exposes round history, OOR/swap/credit inspection, raw public RPC
+responses and a balance breakdown. Refreshing a screen samples current state;
+it is not a complete historical stream of every transient protocol state.
+
+Validation includes native anchor/shutdown and log-rotation race tests,
+protobuf JSON decoding, case-insensitive literal search, complete identifier
+sharing, authoritative expiry calculations and journal restart handling.
+Run the opt-in, unfunded Signet UI probe with
+`WAVELENGTH_UI_DIAGNOSTICS=1` in the test runner environment and select
+`DiagnosticsUITests/testInspectInventoryAndFilterNativeLogs`.
+
+Transfer summaries show local direction and a known amount. Outgoing OOR values
+come from requested recipients and exclude wallet change. Incoming OOR values
+come from local created-output bindings. Unknown legacy or pending values are
+shown as unavailable. The VTXO inventory enriches the lightweight listing with
+authoritative expiry reads, so Refresh due uses the same posture as details.

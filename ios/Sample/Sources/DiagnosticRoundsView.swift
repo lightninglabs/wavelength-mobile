@@ -59,6 +59,7 @@ struct DiagnosticRoundDetailView: View {
             if round["batch_window"] != .null {
                 VStack(alignment: .leading, spacing: 16) {
                     Text("Schedule").font(.headline)
+                    DiagnosticRoundWindow(window: round["batch_window"])
                     DiagnosticRow(label: "Opens", value: diagnosticTime(round["batch_window"]["registration_opens_unix"].int))
                     DiagnosticRow(label: "Cutoff", value: diagnosticTime(round["batch_window"]["cutoff_unix"].int))
                     DiagnosticRow(label: "Planned join", value: diagnosticTime(round["batch_window"]["planned_join_unix_ms"].int, milliseconds: true))
