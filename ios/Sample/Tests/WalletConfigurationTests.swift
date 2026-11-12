@@ -1,5 +1,6 @@
 import XCTest
 import WalletKit
+@testable import Wavelength
 
 final class WalletConfigurationTests: XCTestCase {
     func testNetworkConfigsUseLightweightWallet() throws {
@@ -70,6 +71,34 @@ final class WalletConfigurationTests: XCTestCase {
         XCTAssertNil(object["server_insecure"])
         XCTAssertEqual(object["swap_server_tls_cert_path"] as? String, "/tmp/swap.cert")
         XCTAssertNil(object["swap_server_insecure"])
+    }
+
+    @MainActor
+    func testMainnetReceiveUsesDefaultsWithoutOverrides() throws {
+        let suite = "connection-defaults-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("mainnet", forKey: "selectedNetwork")
+        let store = WalletStore(defaults: defaults)
+        XCTAssertTrue(store.operatorAddress.isEmpty)
+        XCTAssertTrue(store.swapServerAddress.isEmpty)
+        XCTAssertTrue(store.operatorAvailable, "Boarding must accept the SDK operator default")
+        XCTAssertTrue(store.offchainAvailable, "Lightning receive must accept the SDK swap default")
+    }
+
+    @MainActor
+    func testRegtestStillRequiresExplicitServices() throws {
+        let suite = "connection-regtest-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("regtest", forKey: "selectedNetwork")
+        XCTAssertFalse(WalletStore(defaults: defaults).operatorAvailable)
+        defaults.set("127.0.0.1:10010", forKey: "regtest.operatorAddress")
+        let operatorOnly = WalletStore(defaults: defaults)
+        XCTAssertTrue(operatorOnly.operatorAvailable)
+        XCTAssertFalse(operatorOnly.offchainAvailable)
+        defaults.set("127.0.0.1:10030", forKey: "regtest.swapAddress")
+        XCTAssertTrue(WalletStore(defaults: defaults).offchainAvailable)
     }
 
     private func encodedObject(_ config: WalletConfig) throws -> [String: Any] {
