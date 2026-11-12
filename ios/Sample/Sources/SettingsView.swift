@@ -21,6 +21,9 @@ struct SettingsView: View {
             NavigationLink(destination: RecoveryOptionsView()) { settingsRow("Recovery", "key") }
                 .accessibilityIdentifier("settings.recovery")
             WalletDivider()
+            NavigationLink(destination: DiagnosticsView()) { settingsRow("Diagnostics", "waveform.path") }
+                .accessibilityIdentifier("settings.diagnostics")
+            WalletDivider()
             HStack {
                 Text("Appearance")
                 Spacer()

@@ -295,6 +295,21 @@ public actor WalletClient {
         return try decode(await bg { try Bindings.estimateExitFee(body) })
     }
 
+    /// Read a finite low-level diagnostic view without mutating wallet state.
+    public func diagnosticRead(_ view: DiagnosticView, outpoint: String = "",
+                               roundID: String = "", history: Bool = false,
+                               pageToken: String = "") async throws -> DiagnosticValue {
+        let body = try JSONSerialization.data(withJSONObject: [
+            "View": view.rawValue, "Outpoint": outpoint, "RoundID": roundID,
+            "History": history, "PageToken": pageToken
+        ])
+        return try decode(await bg { try Bindings.diagnosticRead(body) })
+    }
+
+    public func diagnosticLogs() async throws -> DiagnosticLogs {
+        try decode(await bg { try Bindings.diagnosticLogs() })
+    }
+
     /// Query the phase of an exit job for a VTXO outpoint.
     public func exitStatus(outpoint: String, detailed: Bool = true) async throws -> ExitStatusResult {
         let body = try JSONSerialization.data(withJSONObject: ["Outpoint": outpoint, "Detailed": detailed])
