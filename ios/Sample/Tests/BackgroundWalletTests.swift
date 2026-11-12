@@ -222,6 +222,18 @@ final class BackgroundWalletTests: XCTestCase {
         XCTAssertFalse(store.isSessionLocked, store.alertMessage ?? "")
     }
 
+    func testOldAmountConsentDoesNotEnableLockedWalletAmounts() {
+        let fixture = Fixture()
+        defer { fixture.cleanup() }
+        let store = fixture.store(WalletClient(), active: { true })
+        let notifications = WalletNotifications(defaults: fixture.defaults)
+        notifications.retainWarmStore(store)
+        fixture.defaults.set(true, forKey: "notifications.amounts.signet")
+        XCTAssertFalse(notifications.amountsEnabled)
+        fixture.defaults.set(true, forKey: "notifications.amounts.v2.signet")
+        XCTAssertTrue(notifications.amountsEnabled)
+    }
+
     func testAuthenticationWaitsForActiveButCannotSurviveBackground() async throws {
         for enterBackground in [false, true] {
             let fixture = Fixture()

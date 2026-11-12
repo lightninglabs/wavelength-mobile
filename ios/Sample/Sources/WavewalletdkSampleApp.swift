@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct WavelengthApp: App {
+    @UIApplicationDelegateAdaptor(WalletNotificationDelegate.self) private var delegate
     @StateObject private var store: WalletStore
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("appearance") private var appearance = "system"
@@ -9,6 +10,7 @@ struct WavelengthApp: App {
     init() {
         let warmStore = WalletStore()
         _store = StateObject(wrappedValue: warmStore)
+        WalletNotifications.shared.retainWarmStore(warmStore)
     }
 
     var body: some Scene {

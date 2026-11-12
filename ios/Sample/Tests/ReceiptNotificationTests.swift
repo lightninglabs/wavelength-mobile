@@ -119,6 +119,60 @@ final class ReceiptNotificationTests: XCTestCase {
         XCTAssertEqual(completions, 2)
     }
 
+    func testScheduledOpportunityNeverStartsColdWallet() async {
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        let notifications = WalletNotifications(defaults: defaults)
+        let store = WalletStore()
+        notifications.retainWarmStore(store)
+        let lease = ReceiptFetchLease { _ in }
+        let changed = await notifications.runMaintenance(windowID: "cold", lease: lease)
+        XCTAssertFalse(changed)
+        if case .idle = store.phase {} else { XCTFail("Background maintenance started a cold wallet") }
+    }
+
+    func testSavedNetworkKeepsGenericAuthorityWithoutCurrentWalletConfiguration() throws {
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        let configuration = try XCTUnwrap(NotificationRelayConfiguration(
+            origin: "https://relay.invalid", appAlias: "test", swapIssuer: owner))
+        let route = WalletNotificationRoute(id: "other-network", network: "mainnet", identity: owner,
+                                            relay: configuration, source: .swapServer)
+        let operatorRoute = WalletNotificationRoute(id: "operator", network: "mainnet", identity: owner,
+                                                    relay: configuration, source: .arkOperator)
+        defaults.set(try JSONEncoder().encode([route, operatorRoute]), forKey: "notifications.routes")
+        defaults.set(true, forKey: "notifications.enabled.mainnet")
+        let notifications = WalletNotifications(defaults: defaults)
+        // No current store, account or bundled endpoint can authorize an amount.
+        // The old remote generic banner must still have a local equivalent.
+        XCTAssertEqual(notifications.validPaymentRoute(route.id)?.id, route.id)
+        XCTAssertNil(notifications.validPaymentRoute(operatorRoute.id))
+        XCTAssertNil(notifications.validPaymentRoute("unknown"))
+        defaults.set(false, forKey: "notifications.enabled.mainnet")
+        XCTAssertNil(notifications.validPaymentRoute(route.id))
+    }
+
+    func testForegroundHintDoesNotConsumePresentationClaim() async throws {
+        XCTAssertEqual(UIApplication.shared.applicationState, .active)
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        let storage = ReceiptMemoryCredentials()
+        let ledger = ReceiptNotificationLedger(storage: storage)
+        let configuration = try XCTUnwrap(NotificationRelayConfiguration(
+            origin: "https://relay.invalid", appAlias: "test", swapIssuer: owner))
+        let route = WalletNotificationRoute(id: "route", network: "signet", identity: owner,
+                                            relay: configuration, source: .swapServer)
+        defaults.set(try JSONEncoder().encode([route]), forKey: "notifications.routes")
+        defaults.set(true, forKey: "notifications.enabled.signet")
+        let notifications = WalletNotifications(defaults: defaults, receiptLedger: ledger)
+        let store = WalletStore()
+        notifications.retainWarmStore(store)
+        let changed = await notifications.received([
+            "wavelength": ["version": 1, "route_id": "route", "event_id": event, "kind": "payment_activity"],
+            "aps": ["content-available": 1],
+        ], windowID: "foreground", lease: ReceiptFetchLease { _ in })
+        XCTAssertFalse(changed)
+        XCTAssertTrue(try ledger.claim(routeID: "route", eventHash: event, now: 200),
+                      "Foreground handling must preserve later receipt authority")
+    }
+
     private func enrolled(_ consent: ReceiptConsent) -> ReceiptEnrollment {
         ReceiptEnrollment(routeID: "route", network: "signet", identity: owner,
                           configuration: "publisher", consent: consent,

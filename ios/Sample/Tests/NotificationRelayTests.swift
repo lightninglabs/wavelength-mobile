@@ -79,6 +79,66 @@ final class NotificationRelayTests: XCTestCase {
     }
 
     @MainActor
+    func testLockedRevocationRetainsProducerRetryAfterRelayAcknowledges() async throws {
+        enum Offline: Error { case producer }
+        var route = WalletNotificationRoute(id: "route", network: "signet", identity: "wallet",
+                                            relay: try configuration(), source: .swapServer)
+        route.subscriptionID = "signed-grant"
+        var calls: [String] = []
+        var retained = true
+        do {
+            let complete = try await route.revoke(currentNetwork: "signet", currentIdentity: "wallet") {
+                calls.append("relay")
+            } producer: { _ in
+                calls.append("producer")
+                throw Offline.producer
+            }
+            retained = !complete
+        } catch Offline.producer { }
+        XCTAssertTrue(retained)
+        // A foreground retry may run before Face ID unlock. Relay revocation
+        // must still happen, but it cannot erase the deferred producer cleanup.
+        let lockedComplete = try await route.revoke(currentNetwork: "signet", currentIdentity: nil) {
+            calls.append("relay")
+        } producer: { _ in XCTFail("Locked wallet reached the producer") }
+        retained = !lockedComplete
+        XCTAssertTrue(retained)
+        let complete = try await route.revoke(currentNetwork: "signet", currentIdentity: "wallet") {
+            calls.append("relay")
+        } producer: { id in
+            XCTAssertEqual(id, "signed-grant")
+            calls.append("producer")
+        }
+        retained = !complete
+        XCTAssertFalse(retained)
+        XCTAssertEqual(calls, ["relay", "producer", "relay", "relay", "producer"])
+    }
+
+    @MainActor
+    func testRevocationWaitsForMatchingWalletButDropsUnboundRoute() async throws {
+        var route = WalletNotificationRoute(id: "route", network: "signet", identity: "wallet",
+                                            relay: try configuration(), source: .swapServer)
+        route.subscriptionID = "signed-grant"
+        for (network, identity) in [("mainnet", "wallet"), ("signet", "other-wallet")] {
+            var revoked = false
+            let complete = try await route.revoke(currentNetwork: network, currentIdentity: identity) {
+                revoked = true
+            } producer: { _ in XCTFail("Wrong wallet reached producer removal") }
+            XCTAssertFalse(complete, "Keep bound metadata without blocking other route setup")
+            XCTAssertTrue(revoked, "Device delivery must stop immediately")
+        }
+        // Consent can disappear after subscribe but before source binding.
+        // A genuinely unbound route needs only its relay revocation.
+        route.subscriptionID = nil
+        var revoked = false
+        let complete = try await route.revoke(currentNetwork: "signet", currentIdentity: nil) {
+            revoked = true
+        } producer: { _ in XCTFail("No producer grant exists") }
+        XCTAssertTrue(complete)
+        XCTAssertTrue(revoked)
+    }
+
+    @MainActor
     func testRevocationTriesBothOwnersDuringAnOutage() async throws {
         enum Unavailable: Error { case producer, relay }
         var calls: [String] = []

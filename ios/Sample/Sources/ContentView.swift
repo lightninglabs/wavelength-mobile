@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @ObservedObject var store: WalletStore
+    @ObservedObject private var notifications = WalletNotifications.shared
     @State private var enteredBackground = true
 
     var body: some View {
@@ -24,6 +25,7 @@ struct ContentView: View {
             // UI tests launch the app in a separate process without this class.
             guard NSClassFromString("XCTestCase") == nil else { return }
             #endif
+            notifications.attach(store)
             if scenePhase == .active { enteredBackground = false }
             if scenePhase == .active && store.phase == .idle {
                 await store.start()
@@ -43,17 +45,34 @@ struct ContentView: View {
             case .background:
                 enteredBackground = true
                 store.lockForBackground()
+                notifications.enteredBackground()
             case .active:
                 guard enteredBackground else { break }
                 enteredBackground = false
                 if store.phase == .idle { Task { await store.start() }; break }
                 Task {
                     await store.resumeAfterBackground()
+                    notifications.reconcile()
                 }
             default:
                 break
             }
         }
+        .sheet(isPresented: $notifications.showsActivity) {
+            NavigationView {
+                List(store.visibleActivity) { entry in
+                    NavigationLink(destination: ActivityDetailView(entry: entry).environmentObject(store)) {
+                        ActivityRow(entry: entry)
+                    }
+                }.navigationTitle("Activity")
+                    .toolbar { Button("Done") { notifications.showsActivity = false } }
+            }.environmentObject(store)
+        }
+        .onChange(of: store.isSessionLocked) { locked in
+            if locked { notifications.showsActivity = false }
+            else { notifications.reconcile() }
+        }
+        .onChange(of: store.network) { _ in notifications.showsActivity = false; notifications.reconcile() }
         .alert("Wavelength", isPresented: alertIsPresented) {
             Button("OK", role: .cancel) { store.alertMessage = nil }
         } message: {

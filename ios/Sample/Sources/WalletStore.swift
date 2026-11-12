@@ -433,6 +433,7 @@ final class WalletStore: ObservableObject {
         try await beginStateCreatingCall()
         defer { endStateCreatingCall() }
         let existingEntryIDs = Set(activity.map(\.id))
+        let receiptContext = WalletNotifications.shared.receiptCreationContext()
 
         do {
             let result = try await client.receiveLightning(
@@ -441,6 +442,7 @@ final class WalletStore: ObservableObject {
                 timeoutSeconds: 20
             )
             upsert(result.entry)
+            WalletNotifications.shared.enrollCreatedReceive(result, context: receiptContext)
             return result
         } catch {
             guard let walletError = error as? WalletError,
@@ -564,6 +566,7 @@ final class WalletStore: ObservableObject {
             phase = current.walletReady ? .ready : .syncing
         }
         beginMonitoring()
+        WalletNotifications.shared.reconcile()
     }
 
     private func refreshLifecycleAfterAmbiguousSetup() async {
@@ -1224,6 +1227,35 @@ final class WalletStore: ObservableObject {
         return identity
     }
 
+    /// Source registration owns admission until the signed RPC returns. Network
+    /// switching cannot replace the native singleton during this operation.
+    func bindNotification(_ grant: NotificationRelayGrant, source: NotificationSource,
+                          configuration: NotificationRelayConfiguration, network: String,
+                          identity: String) async throws -> NotificationFeedGrantResult {
+        guard self.network.rawValue == network, notificationIdentity == identity,
+              notificationConfiguration == configuration else { throw CancellationError() }
+        let offer = try grant.offer(for: source)
+        let currentGeneration = generation
+        try await beginStateCreatingCall()
+        defer { endStateCreatingCall() }
+        let result = try await client.setNotificationFeedGrant(.register(
+            source: source, grantID: offer.grantId, subscriberPubkey: offer.subscriberPubkey,
+            subscriberSignature: offer.subscriberSignature, eventClasses: offer.eventClasses,
+            expiresAtUnix: offer.expiresAtUnix))
+        guard currentGeneration == generation, result.grantID == offer.grantId,
+              result.expiresAtUnix > Int64(Date().timeIntervalSince1970),
+              result.expiresAtUnix <= offer.expiresAtUnix else { throw NotificationRelayError.invalidResponse }
+        return result
+    }
+
+    func removeNotification(_ subscription: String, source: NotificationSource,
+                            network: String, identity: String) async throws {
+        guard self.network.rawValue == network, notificationIdentity == identity else { throw CancellationError() }
+        try await beginStateCreatingCall()
+        defer { endStateCreatingCall() }
+        _ = try await client.setNotificationFeedGrant(.remove(source: source, grantID: subscription))
+    }
+
     private func walletConfig() throws -> WalletConfig {
         let support = try dataRoot ?? FileManager.default.url(
             for: .applicationSupportDirectory,
@@ -1249,6 +1281,7 @@ final class WalletStore: ObservableObject {
         )
         config.durableRoundRuntime = true
         config.hostDrivenIngress = true
+        config.swapNotificationIssuer = notificationConfiguration?.swapIssuer
         return config
     }
 
