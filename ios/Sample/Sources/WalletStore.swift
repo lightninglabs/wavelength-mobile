@@ -36,6 +36,8 @@ final class WalletStore: ObservableObject {
     @Published private(set) var unresolvedDispatches: [PendingDispatch] = []
     @Published private(set) var unresolvedSweeps: [SweepOperation] = []
     @Published private(set) var refreshOperation: RefreshOperation?
+    @Published private(set) var exitBatches: [BatchExitOperation] = []
+    @Published private(set) var exitBatchJournalError: String?
     @Published private(set) var recoveryInventory: [WalletVTXO] = []
     @Published private(set) var onchainHistory: [OnchainTx] = []
     @Published private(set) var recoveryJobs: [ExitSummaryEntry] = []
@@ -72,11 +74,13 @@ final class WalletStore: ObservableObject {
     private let client: WalletClient
     private let startClient: (WalletConfig) async throws -> Void
     private let stopClient: () async throws -> Void
+    private let submitExitBatch: ([String], String) async throws -> ExitBatchResult
     private let dataRoot: URL?
     private let defaults: UserDefaults
     private var refreshTask: Task<Void, Never>?
     private var activityTask: Task<Void, Never>?
     private var generation = 0
+    private var exitBatchJournalLoaded = false
     @Published private var stateCreatingCallCount = 0
     private var foregroundRestartPending = false
     private var receiptBackgroundRequested = false
@@ -87,11 +91,13 @@ final class WalletStore: ObservableObject {
          waitForForeground: @escaping @MainActor () async throws -> Void = WalletAuthentication.waitForForeground,
          applicationIsActive: @escaping @MainActor () -> Bool = { UIApplication.shared.applicationState == .active },
          startClient: ((WalletConfig) async throws -> Void)? = nil,
-         stopClient: (() async throws -> Void)? = nil) {
+         stopClient: (() async throws -> Void)? = nil,
+         submitExitBatch: (([String], String) async throws -> ExitBatchResult)? = nil) {
         self.defaults = defaults
         self.client = client
         self.startClient = startClient ?? { try await client.start($0) }
         self.stopClient = stopClient ?? { try await client.stop() }
+        self.submitExitBatch = submitExitBatch ?? { try await client.exitBatch(outpoints: $0, destination: $1) }
         self.dataRoot = dataRoot
         self.authenticate = authenticate
         self.waitForForeground = waitForForeground
@@ -625,6 +631,7 @@ final class WalletStore: ObservableObject {
         } else {
             activity.insert(entry, at: 0)
         }
+        reconcileExitBatches()
     }
 
     private func recoveredReceive(
@@ -915,6 +922,71 @@ final class WalletStore: ObservableObject {
         return try await client.exitStatus(outpoint: outpoint)
     }
 
+    var pendingExitOutpoints: Set<String> {
+        Set(exitBatches.flatMap(\.inputs).filter { $0.state.isPending }.map(\.outpoint))
+    }
+
+    /// Retain the receipt before dispatch, then issue exactly one batch call.
+    /// The SDK has no replay key, so neither restart nor a lost response retries it.
+    func exitBatch(funds: [WalletVTXO], destination: String) async throws -> UUID {
+        let currentGeneration = generation
+        try await beginStateCreatingCall()
+        defer { endStateCreatingCall() }
+        guard currentGeneration == generation else { throw CancellationError() }
+        guard exitBatchJournalError == nil, !funds.isEmpty,
+              Set(funds.map(\.outpoint)).count == funds.count,
+              funds.allSatisfy({ $0.amountSat > 0 && !pendingExitOutpoints.contains($0.outpoint) }) else {
+            throw WalletActionError(message: "Check the existing exit before submitting these funds again.")
+        }
+        let operation = BatchExitOperation(funds: funds, destination: destination, activity: activity)
+        let next = exitBatches + [operation]
+        // Failure here proves the native call has not run. Leave no UI receipt
+        // that suggests otherwise, and let the caller show the storage error.
+        try BatchExitJournal.save(next, to: exitBatchJournalURL())
+        exitBatches = next
+        let index = exitBatches.count - 1
+        do {
+            let result = try await submitExitBatch(funds.map(\.outpoint), destination)
+            exitBatches[index].apply(result)
+        } catch {
+            exitBatches[index].error = error.walletMessage
+            if (error as? WalletError)?.isExitBatchRejectedBeforeAdmission == true {
+                for input in exitBatches[index].inputs.indices {
+                    exitBatches[index].inputs[input].state = .failed
+                }
+            }
+        }
+        persistExitBatches()
+        return operation.id
+    }
+
+    private func exitBatchJournalURL() throws -> URL {
+        let support = try dataRoot ?? FileManager.default.url(for: .applicationSupportDirectory,
+            in: .userDomainMask, appropriateFor: nil, create: true)
+        return support.appendingPathComponent("Wavelength").appendingPathComponent(network.rawValue)
+            .appendingPathComponent("cooperative-exits.json")
+    }
+
+    private func persistExitBatches() {
+        do {
+            try BatchExitJournal.save(exitBatches, to: exitBatchJournalURL())
+            exitBatchJournalError = nil
+        } catch {
+            exitBatchJournalError = "Exit status could not be saved. Keep the app open and check status again."
+        }
+    }
+
+    func reconcileExitBatches() {
+        // A failed read must never be overwritten by an empty in-memory list.
+        // A failed write still has authoritative memory to save on this pass.
+        guard stateCreatingCallCount == 0, exitBatchJournalLoaded else { return }
+        var next = exitBatches
+        for index in next.indices { next[index].reconcile(activity) }
+        guard next != exitBatches || exitBatchJournalError != nil else { return }
+        exitBatches = next
+        persistExitBatches()
+    }
+
     func previewSweep(destination: String) async throws -> SweepPreview {
         try requireForegroundInteraction()
         return try await client.sweepWallet(destination: destination, broadcast: false)
@@ -1019,6 +1091,7 @@ final class WalletStore: ObservableObject {
     }
 
     private func refreshMaintenanceState() async {
+        reconcileExitBatches()
         if let inventory = try? await client.recoveryInventory() { recoveryInventory = inventory.vtxos }
         let checkedSweep = stateCreatingCallCount == 0 ? sweepOperation?.id : nil
         if let history = try? await client.list(view: .onchain, limit: 100), let transactions = history.onchain?.txs {
@@ -1090,6 +1163,15 @@ final class WalletStore: ObservableObject {
     private func preferenceKey(_ name: String) -> String { "\(network.rawValue).\(name)" }
 
     private func loadNetworkPreferences() {
+        do {
+            exitBatches = try BatchExitJournal.load(exitBatchJournalURL())
+            exitBatchJournalLoaded = true
+            exitBatchJournalError = nil
+        } catch {
+            exitBatchJournalLoaded = false
+            exitBatches = []
+            exitBatchJournalError = "Exit history could not be read. New exits are unavailable until it can be recovered."
+        }
         loadBiometricPreference()
         isSessionLocked = biometricUnlockEnabled
         maxCreditSat = UInt64(defaults.string(forKey: preferenceKey("maxCredit")) ?? "") ?? 10_000
