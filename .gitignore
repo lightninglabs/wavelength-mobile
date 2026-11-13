@@ -22,3 +22,7 @@ ios/Sample/DerivedData-Phone/
 ios/Sample/build/
 
 android/walletkit/libs/*.origin
+
+# Publisher-local Android Firebase configuration.
+android/firebase.local.properties
+android/app/google-services.json
