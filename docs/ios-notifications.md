@@ -174,3 +174,10 @@ Apple-invalid-key recovery and explicit repair after an unknown installation.
 They use injected fixtures, not a production authentication bypass. Physical
 App Attest/APNs delivery and signing inside a real OS window remain separate
 acceptance work.
+
+## Background trace inspection
+
+Diagnostics → Background records host wake context, monotonic startup spans,
+returned native counters and late cleanup observations. Each run opens logs
+from the same wall-clock window. See [background traces](background-traces.md)
+for the observation boundaries, compatibility and export policy.
