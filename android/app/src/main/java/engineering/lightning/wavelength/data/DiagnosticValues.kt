@@ -54,3 +54,6 @@ class DiagnosticLogWindow {
   fun browse(live: List<DiagnosticLog>) { if (following) { frozen = live.toList(); following = false } }
   fun follow() { frozen = null; following = true }
 }
+
+fun DiagnosticLog.inTimeWindow(since: Long?, until: Long?) =
+  (since == null || time >= since) && (until == null || time <= until)
