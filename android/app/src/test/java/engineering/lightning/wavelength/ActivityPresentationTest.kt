@@ -20,4 +20,13 @@ class ActivityPresentationTest {
     assertEquals("Received", entry.copy(status = "complete").statusLabel)
     assertEquals("Expired", entry.copy(status = "failed", failureCode = "expired").statusLabel)
   }
+
+  @Test fun snapshotsReplaceOldStreamValuesButPreserveConcurrentUpdates() {
+    val pending = Entry(id = "payment", status = "pending", cursor = 42)
+    val completeSnapshot = pending.copy(status = "complete", cursor = 0)
+    val before = mapOf(pending.id to pending)
+    assertEquals(listOf(completeSnapshot), mergeActivitySnapshot(before, listOf(completeSnapshot), listOf(pending)))
+    val concurrent = pending.copy(status = "complete", cursor = 43)
+    assertEquals(listOf(concurrent), mergeActivitySnapshot(before, listOf(pending.copy(cursor = 0)), listOf(concurrent)))
+  }
 }

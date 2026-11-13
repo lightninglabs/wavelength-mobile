@@ -23,6 +23,7 @@ class WalletSession(context: Context) {
   private var observations: Job? = null
   private var foreground = false
 
+
   fun resume() {
     foreground = true
     scope.launch {
@@ -105,13 +106,7 @@ class WalletSession(context: Context) {
           val before = mutable.value.activity.associateBy { it.id }
           val result = client.list(limit = 1000).activity ?: error("Activity unavailable")
           mutable.update { current ->
-            // List snapshots do not carry event cursors. Only stream updates
-            // observed during this read may override its authoritative result.
-            val latest = current.activity.associateBy { it.id }
-            val snapshotIds = result.entries.map { it.id }.toSet()
-            val merged = result.entries.map { entry ->
-              latest[entry.id]?.takeIf { it != before[entry.id] } ?: entry
-            } + current.activity.filterNot { it.id in snapshotIds }
+            val merged = mergeActivitySnapshot(before, result.entries, current.activity)
             current.copy(activity = merged, activityLoaded = true, error = null)
           }
         } catch (error: CancellationException) { throw error }
