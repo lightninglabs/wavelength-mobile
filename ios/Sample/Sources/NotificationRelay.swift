@@ -467,9 +467,11 @@ actor NotificationRelayClient {
             NotificationRelayConfiguration.identifier(offer.role) &&
             publicKey(offer.sourcePubkey) && publicKey(offer.subscriberPubkey) &&
             offer.grantId == subscription && (22...64).contains(offer.grantId.count) &&
-            offer.eventClasses > 0 && offer.eventClasses & ~UInt32(3) == 0 &&
+            offer.eventClasses > 0 && offer.eventClasses & ~UInt32(7) == 0 &&
             (alerts || offer.eventClasses & 2 == 0) &&
-            (offer.role != NotificationSource.arkOperator.rawValue || offer.eventClasses == 1) &&
+            (offer.role == NotificationSource.arkOperator.rawValue
+                ? (offer.eventClasses == 1 || offer.eventClasses == 5)
+                : offer.eventClasses & 4 == 0) &&
             offer.expiresAtUnix > Int64(Date().timeIntervalSince1970) && offer.expiresAtUnix <= expiry &&
             validBase64URL(offer.subscriberSignature, bytes: 64)
     }

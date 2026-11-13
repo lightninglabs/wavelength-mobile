@@ -625,3 +625,47 @@ final class NotificationRelayTests: XCTestCase {
     }
 
 }
+
+extension NotificationRelayTests {
+    // Explicit round consent is accepted only for the operator. It never
+    // grants payment-alert authority or lets another source claim urgency.
+    @MainActor
+    func testOperatorRoundOfferConsent() async throws {
+        let config = try configuration()
+        let sessionConfig = URLSessionConfiguration.ephemeral
+        sessionConfig.protocolClasses = [NotificationURLProtocol.self]
+        let session = URLSession(configuration: sessionConfig)
+        defer { NotificationURLProtocol.handler = nil; session.invalidateAndCancel() }
+        for (role, classes, accepted) in [("operator", 5, true), ("operator", 1, true),
+                                           ("operator", 7, false), ("swap_server", 5, false)] {
+            let credentials = MemoryNotificationCredentials()
+            try credentials.save(try JSONSerialization.data(withJSONObject: [
+                "keyId": Data(repeating: 4, count: 32).base64EncodedString(),
+                "installationId": "install", "confirmed": true, "token": "abcd", "grants": [:]
+            ]), account: "test")
+            NotificationURLProtocol.handler = { request in
+                let result: [String: Any]
+                if request.url!.path == "/v1/challenges" {
+                    result = ["id": "challenge", "nonce": "nonce", "app_id": "test",
+                              "operation": "manage", "installation_id": "install",
+                              "expires_at": Int64(Date().timeIntervalSince1970) + 300]
+                } else {
+                    var offer = Self.offerJSON(id: "MDEyMzQ1Njc4OTo7PD0-Pw")
+                    offer["role"] = role
+                    offer["event_classes"] = classes
+                    result = ["subscription_id": "MDEyMzQ1Njc4OTo7PD0-Pw",
+                              "feed_offers": [offer], "expires_at": 2_000_000_000]
+                }
+                return (200, try JSONSerialization.data(withJSONObject: result))
+            }
+            let client = NotificationRelayClient(configuration: config, attester: FixtureNotificationAttester(),
+                                                 session: session, credentials: credentials)
+            do {
+                _ = try await client.subscribe(token: "abcd", routeId: "route", alerts: false)
+                XCTAssertTrue(accepted, "Accepted forbidden round offer: \(role)/\(classes)")
+            } catch {
+                XCTAssertFalse(accepted, "Rejected supported round offer: \(error)")
+            }
+        }
+    }
+}
