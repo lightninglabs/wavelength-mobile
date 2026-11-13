@@ -61,6 +61,7 @@ import kotlinx.serialization.json.*
     }
     if (round["commitment_height"].number > 0) SettingsValue("Recorded confirmation", round["commitment_height"].text)
     DiagnosticRaw(round)
+    WalletButton("View related logs", secondary = true) { navigate(DiagnosticRoute("logs", "Logs", target = id.ifEmpty { round["round_key"].text })) }
     if (round != JsonNull) DiagnosticShare(round.pretty)
     DiagnosticLoad(result)
   }

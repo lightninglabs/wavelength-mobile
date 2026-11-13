@@ -92,6 +92,7 @@ import kotlinx.serialization.json.*
       SettingsNavigation("Round", Icons.Outlined.DonutLarge, shortId(id)) { navigate(DiagnosticRoute("round", "Round", buildJsonObject { put("round_id", id) })) }
     }
     DiagnosticRaw(if (result.value == JsonNull) item else result.value)
+    if (route.target.isNotEmpty()) WalletButton("View related logs", secondary = true) { navigate(DiagnosticRoute("logs", "Logs", target = route.target)) }
     DiagnosticShare(buildJsonObject { put("vtxo", if (result.value == JsonNull) item else result.value); put("anchors", anchors.value) }.pretty)
     result.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
   }
