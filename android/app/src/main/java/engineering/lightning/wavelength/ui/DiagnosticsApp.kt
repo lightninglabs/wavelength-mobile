@@ -35,7 +35,18 @@ import kotlinx.serialization.json.*
       "rounds" -> DiagnosticRounds(session, route.token, page, navigate)
       "round" -> DiagnosticRound(session, route.initial, page, navigate)
       "transfers" -> DiagnosticTransfers(session, page, navigate)
+      "logs" -> DiagnosticLogs(session, route.target, page, navigate)
       "runs" -> DiagnosticHostRuns(session, page)
+      "log" -> DiagnosticPage(page) {
+        SettingsValue("Time", route.initial["time"].text)
+        SettingsValue("Level", route.initial["level"].text)
+        SettingsValue("Source", route.initial["source"].text)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("Message"); DiagnosticCopy(route.initial["message"].text) }
+        androidx.compose.foundation.text.selection.SelectionContainer {
+          Text(route.initial["message"].text, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+        }
+        DiagnosticShare(route.initial.pretty)
+      }
       "record" -> DiagnosticPage(page) { DiagnosticFields(route.initial); DiagnosticRaw(route.initial); DiagnosticShare(route.initial.pretty) }
       "info", "balance" -> {
         val result = diagnosticRead(session, if (route.kind == "info") DiagnosticView.INFO else DiagnosticView.BALANCE)
@@ -61,7 +72,8 @@ import kotlinx.serialization.json.*
       SettingsNavigation("VTXOs", Icons.Outlined.Layers) { navigate(DiagnosticRoute("vtxos", "VTXOs")) }; HorizontalDivider()
       SettingsNavigation("Rounds", Icons.Outlined.DonutLarge) { navigate(DiagnosticRoute("rounds", "Rounds")) }; HorizontalDivider()
       SettingsNavigation("Transfers & credit", Icons.Outlined.SwapVert) { navigate(DiagnosticRoute("transfers", "Transfers & credit")) }; HorizontalDivider()
-      SettingsNavigation("App runs", Icons.Outlined.Timeline) { navigate(DiagnosticRoute("runs", "App runs")) }
+      SettingsNavigation("App runs", Icons.Outlined.Timeline) { navigate(DiagnosticRoute("runs", "App runs")) }; HorizontalDivider()
+      SettingsNavigation("Logs", Icons.AutoMirrored.Outlined.Subject) { navigate(DiagnosticRoute("logs", "Logs")) }
     }
     HorizontalDivider()
     Column {
