@@ -50,6 +50,8 @@ dependencies {
   // The idiomatic Kotlin wrapper (suspend + Flow + typed models) over the
   // gomobile bindings. It carries the Wavewalletdk.aar transitively.
   implementation(project(":walletkit"))
+  implementation(libs.kotlinx.serialization.json)
+  implementation(libs.kotlinx.coroutines.android)
   implementation("androidx.biometric:biometric:1.1.0")
   implementation("androidx.fragment:fragment-ktx:1.8.9")
 
