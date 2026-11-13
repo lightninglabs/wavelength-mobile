@@ -17,6 +17,12 @@ private val Dark = darkColorScheme(
   surface = Color(0xFF17191D), onSurface = Color(0xFFF4F4F0),
   surfaceVariant = Color(0xFF17191D), onSurfaceVariant = Color(0xFFA7AAAD),
   primary = Color(0xFFD6FF5F), onPrimary = Color(0xFF090A0C),
+  primaryContainer = Color(0xFF303825), onPrimaryContainer = Color(0xFFD6FF5F),
+  secondary = Color(0xFFD6FF5F), onSecondary = Color(0xFF090A0C),
+  secondaryContainer = Color(0xFF303825), onSecondaryContainer = Color(0xFFD6FF5F),
+  surfaceContainerHighest = Color(0xFF2B2D31), surfaceContainerHigh = Color(0xFF17191D),
+  surfaceContainer = Color(0xFF17191D), surfaceContainerLow = Color(0xFF17191D),
+  outline = Color(0xFF72757C),
   outlineVariant = Color(0xFF2B2D31),
 )
 private val Light = lightColorScheme(
@@ -24,6 +30,12 @@ private val Light = lightColorScheme(
   surface = Color(0xFFF0F0F3), onSurface = Color(0xFF151518),
   surfaceVariant = Color(0xFFF0F0F3), onSurfaceVariant = Color(0xFF72757C),
   primary = Color(0xFF151518), onPrimary = Color.White,
+  primaryContainer = Color(0xFFE4E5E8), onPrimaryContainer = Color(0xFF151518),
+  secondary = Color(0xFF151518), onSecondary = Color.White,
+  secondaryContainer = Color(0xFFE4E5E8), onSecondaryContainer = Color(0xFF151518),
+  surfaceContainerHighest = Color(0xFFE4E5E8), surfaceContainerHigh = Color(0xFFF0F0F3),
+  surfaceContainer = Color(0xFFF0F0F3), surfaceContainerLow = Color(0xFFF0F0F3),
+  outline = Color(0xFF72757C),
   outlineVariant = Color(0xFFE4E5E8),
 )
 

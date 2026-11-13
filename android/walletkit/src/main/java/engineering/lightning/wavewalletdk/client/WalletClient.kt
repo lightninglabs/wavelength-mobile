@@ -214,6 +214,16 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
   fun incomingPayments(includeExisting: Boolean = false): Flow<Entry> =
     activity(includeExisting = includeExisting, kinds = listOf("receive", "deposit"))
 
+  /** Lossless protobuf JSON, including string-encoded 64-bit fields. */
+  suspend fun diagnosticRead(view: DiagnosticView, outpoint: String = "", roundId: String = "",
+    history: Boolean = false, pageToken: String = ""): kotlinx.serialization.json.JsonElement {
+    val request = DiagnosticRequest(view.wire, outpoint, roundId, history, pageToken)
+    return json.parseToJsonElement(String(io { Mobile.diagnosticRead(encode(DiagnosticRequest.serializer(), request)) }))
+  }
+
+  /** Bounded wallet-scoped native log snapshot with the SDK’s sensitive-entry filter. */
+  suspend fun diagnosticLogs(): DiagnosticLogSnapshot = decode(io { Mobile.diagnosticLogs() })
+
   // --- internals -----------------------------------------------------------
 
   private suspend inline fun <T> io(crossinline block: () -> T): T =

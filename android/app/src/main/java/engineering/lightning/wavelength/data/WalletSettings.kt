@@ -22,6 +22,8 @@ enum class WalletNetwork(val wire: String, val title: String, val invoiceHrp: St
 
 enum class WalletAppearance(val title: String) { SYSTEM("System"), DARK("Signal Dark"), LIGHT("Porcelain Light") }
 
+enum class CaptureLevel(val wire: String, val title: String) { ERROR("error", "Error"), WARN("warn", "Warning"), INFO("info", "Info"), DEBUG("debug", "Debug"), TRACE("trace", "Trace") }
+
 data class EndpointOverrides(val operator: String = "", val swap: String = "", val esplora: String = "") {
   fun validated(): EndpointOverrides {
     val value = copy(operator = operator.trim(), swap = swap.trim(), esplora = esplora.trim().trimEnd('/'))
@@ -39,7 +41,7 @@ data class CreditLimits(val use: Long = 10_000, val topup: Long = 10_000) {
 }
 
 data class NetworkSettings(val endpoints: EndpointOverrides = EndpointOverrides(), val credit: CreditLimits = CreditLimits()) {
-  fun config(network: WalletNetwork, directory: String): WalletConfig {
+  fun config(network: WalletNetwork, directory: String, captureLevel: CaptureLevel = CaptureLevel.INFO): WalletConfig {
     require(network != WalletNetwork.REGTEST || listOf(endpoints.operator, endpoints.swap, endpoints.esplora).all { it.isNotBlank() }) {
       "Set the Regtest connection before starting its wallet."
     }
@@ -49,7 +51,7 @@ data class NetworkSettings(val endpoints: EndpointOverrides = EndpointOverrides(
       walletEsploraUrl = endpoints.esplora.ifBlank { null },
       serverInsecure = network == WalletNetwork.REGTEST, swapServerInsecure = network == WalletNetwork.REGTEST,
       allowMainnet = network == WalletNetwork.MAINNET, diagnosticLogs = true,
-      walletPollIntervalSeconds = when (network) { WalletNetwork.MAINNET -> 30; WalletNetwork.REGTEST -> 1; else -> 10 }, debugLevel = "info")
+      walletPollIntervalSeconds = when (network) { WalletNetwork.MAINNET -> 30; WalletNetwork.REGTEST -> 1; else -> 10 }, debugLevel = captureLevel.wire)
   }
 }
 
@@ -57,6 +59,8 @@ data class NetworkSettings(val endpoints: EndpointOverrides = EndpointOverrides(
 class WalletPreferences(context: Context) {
   private val preferences = context.getSharedPreferences("wallet-settings", Context.MODE_PRIVATE)
   private val secureDevice = context.getSystemService(KeyguardManager::class.java).isDeviceSecure
+  val captureLevel get() = CaptureLevel.entries.firstOrNull { it.wire == preferences.getString("capture-level", null) } ?: CaptureLevel.INFO
+  fun captureLevel(value: CaptureLevel) { check(preferences.edit().putString("capture-level", value.wire).commit()) { "Could not save capture level." } }
   val selectedNetwork get() = WalletNetwork.fromWire(preferences.getString("network", null))
   val appearance get() = runCatching { WalletAppearance.valueOf(preferences.getString("appearance", "SYSTEM")!!) }.getOrDefault(WalletAppearance.SYSTEM)
   val authentication get() = preferences.getBoolean("authentication", secureDevice)

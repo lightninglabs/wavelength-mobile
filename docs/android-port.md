@@ -92,3 +92,24 @@ Google Play internal testing is an optional distribution channel, not a push
 notification prerequisite. Emulator testing uses a Google APIs/Play image.
 Physical-device notification and hardware-backed authentication checks remain
 separate from emulator payment evidence.
+
+## Diagnostics
+
+Settings → Diagnostics uses the SDK’s finite read-only inspection API. VTXOs
+include history and refresh-due filters, authoritative expiry thresholds,
+copyable Bitcoin anchoring outputs, and raw JSON under Advanced. Round screens
+show native registration, cutoff and planned-join boundaries. Transfer rows
+include direction, known amount and state. Runtime, balance and credit views
+preserve raw 64-bit JSON values.
+
+Logs use a literal case-insensitive filter, source and level filters, pause,
+share and explicit Follow latest. Dragging freezes the displayed snapshot;
+new capture and native ring eviction cannot move the record being read.
+Capture level selects Error, Warning, Info, Debug or Trace for the next native
+wallet startup. Info is the default. Capture level and display filters are
+independent.
+
+App runs shows actual foreground host stages as a connected timeline, scoped
+to the current network and bounded to the current process. It does not claim
+Android background delivery or persist invented background outcomes. Android
+push and background scheduling remain a later slice.
