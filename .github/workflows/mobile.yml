@@ -1,0 +1,170 @@
+name: Mobile build and tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  GO_VERSION: '1.27.3'
+  XCODE_VERSION: '26.5'
+  NDK_VERSION: '29.0.14206865'
+  GOMOBILE_VERSION: v0.0.0-20260803200217-62cee1672c8e
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  inventory:
+    runs-on: ubuntu-24.04
+    outputs:
+      android: ${{ steps.platforms.outputs.android }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - id: platforms
+        shell: bash
+        run: |
+          if [[ -f android/gradlew ]]; then
+            echo 'android=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'android=false' >> "$GITHUB_OUTPUT"
+            echo 'Android is not present in this revision.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  ios:
+    name: iOS build and unit tests
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - name: Select Xcode
+        shell: bash
+        run: |
+          test -d "/Applications/Xcode_${XCODE_VERSION}.app/Contents/Developer"
+          echo "DEVELOPER_DIR=/Applications/Xcode_${XCODE_VERSION}.app/Contents/Developer" >> "$GITHUB_ENV"
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ios/WalletKit/Frameworks/Wavewalletdk.xcframework
+          key: ios-xcode${{ env.XCODE_VERSION }}-go${{ env.GO_VERSION }}-mobile-${{ env.GOMOBILE_VERSION }}-${{ hashFiles('.wavelength-ios-version', 'scripts/wavelength-ios-recovery.patch', 'scripts/fetch-xcframework.sh') }}
+      - name: Install build tools
+        shell: bash
+        run: |
+          brew install xcodegen
+          go install "golang.org/x/mobile/cmd/gomobile@${GOMOBILE_VERSION}"
+          go install "golang.org/x/mobile/cmd/gobind@${GOMOBILE_VERSION}"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Build or restore the pinned SDK
+        run: bash scripts/fetch-xcframework.sh --if-needed
+      - name: Generate project and test on Simulator
+        shell: bash
+        run: bash scripts/ci/test-ios.sh
+      - name: Save test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ios-test-results
+          path: .ci-results/ios
+          if-no-files-found: ignore
+          retention-days: 7
+
+  android:
+    name: Android build, unit tests and lint
+    needs: inventory
+    if: needs.inventory.outputs.android == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: android/**/*.gradle.kts
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            android/walletkit/libs/Wavewalletdk.aar
+            android/walletkit/libs/Wavewalletdk.aar.origin
+          key: android-ndk${{ env.NDK_VERSION }}-go${{ env.GO_VERSION }}-mobile-${{ env.GOMOBILE_VERSION }}-${{ hashFiles('.wavelength-version', 'scripts/wavelength-ios-recovery.patch', 'scripts/fetch-aar.sh') }}
+      - name: Reclaim unused hosted-runner toolchains
+        shell: bash
+        run: |
+          # The four native ABIs otherwise exhaust a standard Ubuntu runner.
+          # These fixed paths contain only unused, preinstalled CI toolchains.
+          sudo python3 - <<'PYTHON'
+          import shutil
+          for path in ["/usr/share/dotnet", "/opt/ghc", "/usr/local/.ghcup",
+                       "/usr/share/swift", "/opt/hostedtoolcache/CodeQL"]:
+              shutil.rmtree(path, ignore_errors=True)
+          PYTHON
+      - name: Install Android build tools
+        shell: bash
+        run: |
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" \
+            'platform-tools' 'platforms;android-36' 'build-tools;36.0.0' \
+            "ndk;${NDK_VERSION}"
+          go install "golang.org/x/mobile/cmd/gomobile@${GOMOBILE_VERSION}"
+          go install "golang.org/x/mobile/cmd/gobind@${GOMOBILE_VERSION}"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Build or restore the pinned SDK
+        run: bash scripts/fetch-aar.sh --if-needed
+      - name: Build, unit tests and lint
+        shell: bash
+        run: |
+          bash android/gradlew -p android -PwalletAbis=arm64-v8a \
+            :app:assembleDebug :app:testDebugUnitTest :app:lintDebug \
+            :walletkit:testDebugUnitTest
+      - name: Save reports and debug APK
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-test-results
+          path: |
+            android/app/build/reports
+            android/app/build/test-results
+            android/walletkit/build/test-results
+            android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: ignore
+          retention-days: 7
+
+  result:
+    name: Mobile build and tests
+    if: always()
+    needs: [inventory, ios, android]
+    runs-on: ubuntu-24.04
+    env:
+      INVENTORY_RESULT: ${{ needs.inventory.result }}
+      IOS_RESULT: ${{ needs.ios.result }}
+      ANDROID_RESULT: ${{ needs.android.result }}
+      HAS_ANDROID: ${{ needs.inventory.outputs.android }}
+    steps:
+      - name: Require every platform present in this revision
+        shell: bash
+        run: |
+          [[ "$INVENTORY_RESULT" == success && "$IOS_RESULT" == success ]]
+          if [[ "$HAS_ANDROID" == true ]]; then
+            [[ "$ANDROID_RESULT" == success ]]
+          else
+            [[ "$ANDROID_RESULT" == skipped ]]
+          fi
