@@ -220,7 +220,3 @@ import kotlin.math.abs
     }
   }
 }
-
-// Payment screens are added in the next PR in the Android stack.
-@Composable internal fun PaymentActions(session: WalletSession, state: WalletUiState) {}
-@Composable internal fun PendingRequest(entry: Entry) {}

@@ -22,6 +22,9 @@ class WalletSession(context: Context) {
   val state = mutable.asStateFlow()
   private var observations: Job? = null
   private var foreground = false
+  val payments = PaymentOperations(scope, NativePaymentGateway(client),
+    FilePaymentJournal(File(directory.apply { mkdirs() }, "pending-payment.json")),
+    allowed = { foreground && mutable.value.phase == WalletPhase.OPEN }, onEntry = ::upsert)
 
 
   fun resume() {
@@ -114,6 +117,7 @@ class WalletSession(context: Context) {
       }
       launch { runCatching { client.getInfo() }.onSuccess { info -> mutable.update { it.copy(info = info) } } }
       balance.join(); activity.join()
+      payments.reconcile(mutable.value.activity)
     }
   }
 

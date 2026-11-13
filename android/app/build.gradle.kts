@@ -14,6 +14,7 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         versionCode = 1
         versionName = "1.0"
+        providers.gradleProperty("walletAbis").orNull?.split(",")?.let { ndk.abiFilters.addAll(it) }
     }
 
     buildTypes {
@@ -50,6 +51,8 @@ dependencies {
   // The idiomatic Kotlin wrapper (suspend + Flow + typed models) over the
   // gomobile bindings. It carries the Wavewalletdk.aar transitively.
   implementation(project(":walletkit"))
+  implementation(libs.kotlinx.serialization.json)
+  implementation(libs.kotlinx.coroutines.android)
   implementation("androidx.biometric:biometric:1.1.0")
   implementation("androidx.fragment:fragment-ktx:1.8.9")
 
@@ -71,6 +74,7 @@ dependencies {
   implementation(libs.androidx.compose.ui.tooling.preview)
   implementation(libs.androidx.compose.material3)
   implementation("androidx.compose.material:material-icons-extended")
+  implementation("com.google.zxing:core:3.5.3")
   // Tooling
   debugImplementation(libs.androidx.compose.ui.tooling)
   // Instrumented tests
