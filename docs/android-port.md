@@ -32,10 +32,11 @@ and release builds. Previously encrypted backup files are left intact, but are
 not exposed by a repeat viewer. The iOS app already has creation-only backup;
 the native SDK has no recovery-word export API.
 
-There is no Android push
-enrollment or background scheduler yet. Foreground ingress stops when the app
-leaves the foreground. Native payment records and unresolved host evidence stay
-on disk; returning to the app resumes observation rather than redispatching.
+Android push enrollment still needs publisher configuration and the Android
+relay module. Periodic WorkManager maintenance and local verified-receipt alerts
+are implemented; see [background behavior](android-background-notifications.md).
+Foreground ingress pauses when the app leaves the foreground. Native payment
+records and unresolved host evidence stay on disk; returning to the app resumes observation rather than redispatching.
 
 Use `./scripts/fetch-aar.sh --if-needed`, then build with Gradle. A local ARM64
 emulator build can use:
@@ -111,5 +112,6 @@ independent.
 
 App runs shows actual foreground host stages as a connected timeline, scoped
 to the current network and bounded to the current process. It does not claim
-Android background delivery or persist invented background outcomes. Android
-push and background scheduling remain a later slice.
+Android background delivery or persist invented background outcomes. Background maintenance and receipt alerts are described in
+[Android background notifications](android-background-notifications.md). FCM
+enrollment and delivery activation still need the publisher integration.

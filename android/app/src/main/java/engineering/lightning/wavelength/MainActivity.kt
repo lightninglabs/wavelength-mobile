@@ -22,12 +22,19 @@ class MainActivity : FragmentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     if (!BuildConfig.DEBUG) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+    wallet.openNotification(intent.getStringExtra("notification_network"),intent.getStringExtra("notification_receipt"))
     enableEdgeToEdge()
     setContent {
       val state by wallet.state.collectAsStateWithLifecycle()
       val dark = when (state.appearance) { WalletAppearance.DARK -> true; WalletAppearance.LIGHT -> false; else -> isSystemInDarkTheme() }
       WalletTheme(dark) { WalletApp(wallet, ::authenticate) }
     }
+  }
+
+  override fun onNewIntent(intent: android.content.Intent) {
+    super.onNewIntent(intent)
+    setIntent(intent)
+    wallet.openNotification(intent.getStringExtra("notification_network"),intent.getStringExtra("notification_receipt"))
   }
 
   override fun onStart() { super.onStart(); wallet.resume() }
