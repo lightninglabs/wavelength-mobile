@@ -182,13 +182,35 @@ enum ReceiptNotificationPresentation {
 /// continues to own that call; expiration only signals the matching window.
 @MainActor
 final class ReceiptFetchLease {
+    // OS expiry is primary. Leave two seconds before the documented callback
+    // limit; the SDK ceiling must not cut short this host-owned opportunity.
+    static let fallbackSeconds = 28
+    static let nativeCeilingSeconds = 30
+    private let fallbackDeadline: TimeInterval
+    private let uptime: () -> TimeInterval
     private(set) var expired = false
     private(set) var finished = false
     private var completion: ((UIBackgroundFetchResult) -> Void)?
     var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
-    init(completion: @escaping (UIBackgroundFetchResult) -> Void) {
+    init(startedAt: TimeInterval? = nil,
+         uptime: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+         completion: @escaping (UIBackgroundFetchResult) -> Void) {
+        self.uptime = uptime
+        fallbackDeadline = (startedAt ?? uptime()) + Double(Self.fallbackSeconds)
         self.completion = completion
+    }
+
+    /// Include main-actor queueing and wallet preparation in the same deadline.
+    /// Returning an OS callback never releases the native invocation's owner.
+    func fallback(sleep: @escaping (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) },
+                  onExpiry: @escaping () -> Void) -> Task<Void, Never> {
+        Task { @MainActor in
+            do { try await sleep(UInt64(max(0, fallbackDeadline - uptime()) * 1_000_000_000)) }
+            catch { return }
+            guard !Task.isCancelled, !finished else { return }
+            onExpiry()
+        }
     }
 
     func expire(_ result: UIBackgroundFetchResult = .noData) {

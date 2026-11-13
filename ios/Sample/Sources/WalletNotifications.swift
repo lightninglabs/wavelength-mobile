@@ -97,6 +97,7 @@ final class WalletNotifications: ObservableObject {
     static let shared = WalletNotifications()
     @Published private(set) var status = "Notifications are off."
     @Published private(set) var working = false
+    @Published private(set) var notice: String?
     @Published var showsActivity = false
     private weak var store: WalletStore?
     private let defaults: UserDefaults
@@ -106,18 +107,45 @@ final class WalletNotifications: ObservableObject {
     private var pendingTap: WalletNotificationRoute?
     private let receiptLedger: ReceiptNotificationLedger
     private var activeReceiptWindow: String?
+    private let authorize: @MainActor () async throws -> Bool
+    private let configurationForStore: @MainActor (WalletStore) -> NotificationRelayConfiguration?
+    private let registerDevice: @MainActor () -> Void
 
-    init(defaults: UserDefaults = .standard, receiptLedger: ReceiptNotificationLedger? = nil) {
+    init(defaults: UserDefaults = .standard, receiptLedger: ReceiptNotificationLedger? = nil,
+         configuration: @escaping @MainActor (WalletStore) -> NotificationRelayConfiguration? = { $0.notificationConfiguration },
+         authorize: @escaping @MainActor () async throws -> Bool = {
+             try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
+         }, registerDevice: @escaping @MainActor () -> Void = { UIApplication.shared.registerForRemoteNotifications() }) {
         self.defaults = defaults
         self.receiptLedger = receiptLedger ?? ReceiptNotificationLedger()
+        self.configurationForStore = configuration
+        self.authorize = authorize
+        self.registerDevice = registerDevice
     }
+
+    var diagnosticNetwork: String? { store?.network.rawValue }
 
     var enabled: Bool {
         guard let store else { return false }
         return defaults.bool(forKey: preference(store.network.rawValue))
     }
-    var available: Bool { store?.notificationConfiguration != nil }
-    var amountsAvailable: Bool { store?.notificationConfiguration?.receiptHints == true }
+    var available: Bool { guard let store else { return false }; return configurationForStore(store) != nil }
+    var amountsAvailable: Bool { guard let store else { return false }; return configurationForStore(store)?.receiptHints == true }
+    var settingsStatus: String {
+        if let notice { return notice }
+        return !available ? unavailableMessage : status
+    }
+
+    func retrySetup() { notice = nil; reconcile() }
+    private var unavailableMessage: String {
+        guard let store else { return "Open your wallet to set up notifications." }
+        if !store.operatorAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            !store.swapServerAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Notifications need the default operator and swap server. Check Connection settings."
+        }
+        return "Notifications aren’t configured for \(store.network.rawValue.capitalized) in this build."
+    }
+
     // This consent explicitly covers amounts while the app is locked. Old
     // consent used different wording and must not silently opt users in.
     var amountsEnabled: Bool {
@@ -127,6 +155,7 @@ final class WalletNotifications: ObservableObject {
 
     func setAmountsEnabled(_ requested: Bool) {
         guard !working, let store, !requested || (enabled && amountsAvailable) else { return }
+        notice = nil
         let network = store.network.rawValue
         do {
             // Every opt-in starts a fresh epoch. Never enroll old invoices.
@@ -152,7 +181,7 @@ final class WalletNotifications: ObservableObject {
 
     func attach(_ store: WalletStore) {
         self.store = store
-        if enabled { UIApplication.shared.registerForRemoteNotifications() }
+        if enabled { registerDevice() }
         reconcile()
     }
 
@@ -163,9 +192,9 @@ final class WalletNotifications: ObservableObject {
 
     /// User-requested repair does not reuse an already-attested Apple key.
     func resetSetup() async {
-        guard !working, enabled, let store, let configuration = store.notificationConfiguration else { return }
+        guard !working, enabled, let store, let configuration = configurationForStore(store) else { return }
         guard let token else {
-            UIApplication.shared.registerForRemoteNotifications()
+            registerDevice()
             status = "Waiting for device registration."
             return
         }
@@ -183,20 +212,29 @@ final class WalletNotifications: ObservableObject {
     func registrationFailed() { status = "Couldn’t register this device. Try again in Settings." }
 
     func setEnabled(_ requested: Bool) async {
-        guard !working, let store else { return }
+        guard !working else { return }
+        notice = nil
+        guard let store else { notice = unavailableMessage; return }
         let network = store.network.rawValue
         if requested {
-            guard available else { status = "Notifications are not configured for this connection."; return }
+            guard available else { notice = unavailableMessage; return }
+            working = true
+            status = "Waiting for notification permission…"
             do {
-                guard try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) else {
-                    status = "Allow notifications in iOS Settings, then try again."
+                let allowed = try await authorize()
+                working = false
+                guard allowed else {
+                    permissionFailed("Allow notifications in iOS Settings, then try again.")
                     return
                 }
-                // Consent applies to the selected wallet network, even if the
-                // system permission sheet outlives a network switch.
+                // Permission is installation-wide; intent stays with the network
+                // selected when the user tapped, even if the system sheet outlives it.
                 defaults.set(true, forKey: preference(network))
-                UIApplication.shared.registerForRemoteNotifications()
-            } catch { status = "Couldn’t request notification permission." }
+                registerDevice()
+            } catch {
+                permissionFailed("Couldn’t request notification permission. Try again.")
+                return
+            }
         } else {
             // Keep metadata until relay and any bound producer both acknowledge.
             defaults.set(false, forKey: preference(network))
@@ -204,6 +242,14 @@ final class WalletNotifications: ObservableObject {
         }
         objectWillChange.send()
         reconcile()
+    }
+
+    /// Passive reconciliation may update setup status but must not erase the
+    /// explanation of a failed user action. Drain coalesced cleanup separately.
+    private func permissionFailed(_ message: String) {
+        notice = message
+        working = false
+        if reconcileAgain { reconcileAgain = false; reconcile() }
     }
 
     private func revokeRoute(_ route: WalletNotificationRoute, store: WalletStore) async throws -> Bool {
@@ -222,10 +268,11 @@ final class WalletNotifications: ObservableObject {
         openPendingTap()
         if working { reconcileAgain = true; return }
         guard UIApplication.shared.applicationState == .active, let store else { return }
-        let configuration = store.notificationConfiguration
+        let configuration = configurationForStore(store)
         let network = store.network.rawValue
         let desired = defaults.bool(forKey: preference(network))
         working = true
+        if desired { status = "Setting up notifications…" }
         Task {
             defer {
                 working = false
@@ -245,6 +292,7 @@ final class WalletNotifications: ObservableObject {
                             ($0.configuration != configuration?.storageAccount ||
                                 (identity != nil && $0.identity != identity)))
                 }
+                if !desired && !obsolete.isEmpty { status = "Turning off notifications…" }
                 var previousExpiry: Int64?
                 var cleanupPending = false
                 try await WalletNotificationRoute.revokeAll(obsolete) { route in
@@ -262,12 +310,12 @@ final class WalletNotifications: ObservableObject {
                     return
                 }
                 guard let configuration else {
-                    status = "Notifications are not configured for this connection."
+                    status = unavailableMessage
                     return
                 }
                 let client = relay(configuration)
                 guard let token else {
-                    UIApplication.shared.registerForRemoteNotifications()
+                    registerDevice()
                     status = "Waiting for device registration."
                     return
                 }
@@ -416,21 +464,19 @@ final class WalletNotificationDelegate: NSObject, UIApplicationDelegate, UNUserN
     }
     func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any],
                      fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        let startedAt = ProcessInfo.processInfo.systemUptime
         Task { @MainActor in
             let windowID = UUID().uuidString
-            let lease = ReceiptFetchLease(completion: completionHandler)
-            let expire: () -> Void = {
+            let lease = ReceiptFetchLease(startedAt: startedAt, completion: completionHandler)
+            let expire: (String) -> Void = { reason in
                 guard !lease.finished else { return }
                 lease.expire()
-                Task { await WalletNotifications.shared.cancelReceiptRecovery(windowID) }
+                Task { await WalletNotifications.shared.cancelReceiptRecovery(windowID, reason: reason) }
             }
             lease.backgroundTask = application.beginBackgroundTask(withName: "Invoice receipt", expirationHandler: {
-                Task { @MainActor in expire() }
+                Task { @MainActor in expire("iOS window expired") }
             })
-            let deadline = Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 20_000_000_000)
-                if !Task.isCancelled { expire() }
-            }
+            let deadline = lease.fallback { expire("Fallback deadline reached") }
             let changed = await WalletNotifications.shared.received(userInfo, windowID: windowID, lease: lease)
             deadline.cancel()
             lease.finish(changed ? .newData : .noData)
@@ -463,7 +509,7 @@ extension WalletNotifications {
     func receiptCreationContext() -> ReceiptCreationContext? {
         guard enabled, amountsEnabled, amountsAvailable, let store,
               let identity = store.notificationIdentity,
-              let configuration = store.notificationConfiguration,
+              let configuration = configurationForStore(store),
               let route = routes().first(where: {
                   $0.source == .swapServer && $0.network == store.network.rawValue &&
                   $0.identity == identity && $0.configuration == configuration.storageAccount &&
@@ -494,9 +540,9 @@ extension WalletNotifications {
         ), now: now)
     }
 
-    func cancelReceiptRecovery(_ windowID: String) async {
+    func cancelReceiptRecovery(_ windowID: String, reason: String = "iOS window expired") async {
         if let store {
-            DiagnosticJournal.shared.finish(id: windowID, network: store.network.rawValue, status: "iOS window expired")
+            DiagnosticJournal.shared.finish(id: windowID, network: store.network.rawValue, status: reason)
         }
         guard activeReceiptWindow == windowID else { return }
         await store?.cancelReceiptWindow(windowID)
@@ -510,7 +556,12 @@ extension WalletNotifications {
         guard !lease.expired, UIApplication.shared.applicationState != .active else { return false }
         let diagnosticNetwork = store?.network.rawValue
         if let diagnosticNetwork {
-            DiagnosticJournal.shared.begin(id: windowID, network: diagnosticNetwork, trigger: "Push")
+            let payment = ReceiptPaymentHint(userInfo: userInfo)
+            let known = payment.flatMap { validPaymentRoute($0.routeID) } ??
+                WalletNotificationRoute.parsePush(userInfo).flatMap { validWakeRoute($0) }
+            DiagnosticJournal.shared.begin(id: windowID, network: diagnosticNetwork,
+                trigger: known == nil ? "Unrecognized push" : payment == nil ? "Relay wake" : "Payment hint",
+                wake: .init(entryPoint: "APNs background callback", source: known?.source.rawValue))
         }
         defer {
             if let diagnosticNetwork {
@@ -518,7 +569,10 @@ extension WalletNotifications {
             }
         }
         guard let hint = ReceiptPaymentHint(userInfo: userInfo) else {
-            guard let id = WalletNotificationRoute.parsePush(userInfo), let route = validWakeRoute(id) else { return false }
+            guard let id = WalletNotificationRoute.parsePush(userInfo), let route = validWakeRoute(id) else {
+                if let diagnosticNetwork { DiagnosticJournal.shared.event(id: windowID, network: diagnosticNetwork, label: "No eligible local wake route") }
+                return false
+            }
             return await runMaintenance(windowID: windowID, lease: lease, expectedIdentity: route.identity)
         }
         guard let store, let route = validPaymentRoute(hint.routeID),
@@ -577,6 +631,7 @@ extension WalletNotifications {
                 identifier: "receipt." + NotificationRelayConfiguration.digest(Data((id + ":" + eventHash).utf8)),
                 content: content, trigger: nil
             ))
+            DiagnosticJournal.shared.event(id: windowID, network: route.network, label: "Local notification inserted")
             return result?.receipts.contains(where: { $0.state == "complete" }) == true
         } catch { return false }
     }
@@ -604,7 +659,7 @@ extension WalletNotifications {
     }
 
     private func validWakeRoute(_ id: String) -> WalletNotificationRoute? {
-        guard let store, enabled, let configuration = store.notificationConfiguration else { return nil }
+        guard let store, enabled, let configuration = configurationForStore(store) else { return nil }
         return routes().first {
             $0.id == id && $0.network == store.network.rawValue &&
             $0.configuration == configuration.storageAccount && $0.boundGrant != nil &&

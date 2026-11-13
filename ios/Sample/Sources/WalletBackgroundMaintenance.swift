@@ -10,24 +10,24 @@ enum WalletBackgroundMaintenance {
 
     static func register() {
         BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: nil) { task in
+            let startedAt = ProcessInfo.processInfo.systemUptime
             Task { @MainActor in
                 schedule()
                 let windowID = UUID().uuidString
-                let lease = ReceiptFetchLease { result in
+                if let network = WalletNotifications.shared.diagnosticNetwork {
+                    DiagnosticJournal.shared.begin(id: windowID, network: network, trigger: "Scheduled refresh",
+                        wake: .init(entryPoint: "BGAppRefreshTask", taskID: identifier))
+                }
+                let lease = ReceiptFetchLease(startedAt: startedAt) { result in
                     task.setTaskCompleted(success: result != .failed)
                 }
-                let expire: () -> Void = {
+                let expire: (String) -> Void = { reason in
                     guard !lease.finished else { return }
                     lease.expire(.failed)
-                    Task { await WalletNotifications.shared.cancelReceiptRecovery(windowID) }
+                    Task { await WalletNotifications.shared.cancelReceiptRecovery(windowID, reason: reason) }
                 }
-                task.expirationHandler = { Task { @MainActor in expire() } }
-                // The native budget is shorter; retain an outer completion
-                // deadline when an uncooperative dependency outlives that budget.
-                let deadline = Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 20_000_000_000)
-                    if !Task.isCancelled { expire() }
-                }
+                task.expirationHandler = { Task { @MainActor in expire("iOS window expired") } }
+                let deadline = lease.fallback { expire("Fallback deadline reached") }
                 let changed = await WalletNotifications.shared.runMaintenance(windowID: windowID, lease: lease)
                 deadline.cancel()
                 lease.finish(changed ? .newData : .noData)

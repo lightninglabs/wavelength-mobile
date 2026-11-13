@@ -48,10 +48,18 @@ struct SettingsView: View {
 
 private struct SecuritySettingsView: View {
     @EnvironmentObject private var store: WalletStore
+    @State private var changingBiometrics = false
     var body: some View {
         WalletPage {
-            Toggle(WalletAuthentication.name, isOn: Binding(get: { store.biometricUnlockEnabled },
-                set: { enabled in Task { await store.setBiometricUnlock(enabled) } }))
+            Toggle(isOn: Binding(get: { store.biometricUnlockEnabled }, set: { enabled in
+                changingBiometrics = true
+                Task { await store.setBiometricUnlock(enabled); changingBiometrics = false }
+            })) {
+                HStack(spacing: 8) {
+                    Text(WalletAuthentication.name)
+                    if changingBiometrics { ProgressView().controlSize(.small) }
+                }
+            }
                 .disabled(store.isWorking || (!WalletAuthentication.available && !store.biometricUnlockEnabled))
                 .accessibilityIdentifier("settings.biometric")
             WalletDivider()
@@ -160,21 +168,28 @@ private struct ConnectionSettingsView: View {
 }
 
 private struct NotificationSettingsView: View {
+    @EnvironmentObject private var store: WalletStore
     @ObservedObject private var notifications = WalletNotifications.shared
     var body: some View {
         WalletPage {
             Toggle("Payment notifications", isOn: Binding(get: { notifications.enabled },
                 set: { value in Task { await notifications.setEnabled(value) } }))
-                .disabled(notifications.working || (!notifications.available && !notifications.enabled))
+                .disabled(notifications.working)
                 .accessibilityIdentifier("settings.notifications")
             Toggle("Show received amounts", isOn: Binding(get: { notifications.amountsEnabled },
                 set: { notifications.setAmountsEnabled($0) }))
                 .disabled(notifications.working || !notifications.enabled || !notifications.amountsAvailable)
                 .accessibilityIdentifier("settings.notificationAmounts")
-            Text(notifications.status).font(.footnote).foregroundStyle(WalletTheme.secondary)
+            HStack(spacing: 8) {
+                if notifications.working { ProgressView().controlSize(.small) }
+                Text(notifications.settingsStatus).font(.footnote).foregroundStyle(WalletTheme.secondary)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            if !notifications.available {
+                NavigationLink(destination: ConnectionSettingsView()) { Text("Connection settings") }
+            }
             Text("Amounts are off by default. When enabled, new invoices can show received sats if this wallet updates in the background. Amounts may appear while the app is locked. Incomplete updates show payment activity. Delivery may be skipped when iOS does not allow background time.")
                 .font(.footnote).foregroundStyle(WalletTheme.secondary)
-            Button("Retry setup") { notifications.reconcile() }.disabled(notifications.working)
+            Button("Retry setup") { notifications.retrySetup() }.disabled(notifications.working)
             Button("Replace device enrollment") { Task { await notifications.resetSetup() } }
                 .disabled(notifications.working || !notifications.enabled)
             Text("Use replacement if this device’s notification registration was lost. Your wallet stays unchanged.")
@@ -183,5 +198,6 @@ private struct NotificationSettingsView: View {
                 if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
             }
         }.navigationTitle("Notifications").navigationBarTitleDisplayMode(.inline)
+            .onAppear { notifications.retainWarmStore(store) }
     }
 }

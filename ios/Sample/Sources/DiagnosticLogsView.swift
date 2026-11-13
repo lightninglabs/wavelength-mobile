@@ -37,6 +37,10 @@ struct DiagnosticLogsView: View {
 
     var body: some View {
         VStack(spacing: 16) {
+            if let since {
+                Text("\(diagnosticTime(since, milliseconds: true)) → \(until.map { diagnosticTime($0, milliseconds: true) } ?? "Now")")
+                    .font(.caption2).foregroundStyle(WalletTheme.secondary)
+            }
             TextField("Filter logs", text: $query)
                 .textInputAutocapitalization(.never).autocorrectionDisabled()
                 .focused($filterFocused).submitLabel(.done).onSubmit { filterFocused = false }
@@ -138,15 +142,17 @@ struct DiagnosticLogsView: View {
     }
 
     private func poll() async {
+        var nativeRecords: [DiagnosticLogRecord] = []
         while !Task.isCancelled {
             if !paused {
                 do {
                     let result = try await store.diagnosticLogs()
                     try Task.checkCancellation()
-                    let host = DiagnosticJournal.shared.entries.filter { $0.source == "App/\(store.network.rawValue)" }
-                    records = (result.entries + host).sorted { $0.time == $1.time ? $0.id < $1.id : $0.time < $1.time }
+                    nativeRecords = result.entries
                     historyUnavailable = result.historyUnavailable; error = nil
                 } catch { if !Task.isCancelled { self.error = error.walletMessage } }
+                let host = DiagnosticJournal.shared.entries.filter { $0.source == "App/\(store.network.rawValue)" }
+                records = (nativeRecords + host).sorted { $0.time == $1.time ? $0.id < $1.id : $0.time < $1.time }
             }
             do { try await Task.sleep(nanoseconds: 1_000_000_000) }
             catch { return }

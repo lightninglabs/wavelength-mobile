@@ -543,3 +543,16 @@ Debug or Trace for the next native wallet startup. Info is the default. Existing
 Debug capture preferences carry forward until a level is selected. The capture
 level controls which records the daemon produces; the display filter only
 selects records already captured.
+
+Round wake consent uses the operator offer's class mask 5: ordinary protocol
+work plus scheduled and urgent round wakes. Mask 1 remains compatible. The app
+rejects payment bits on operator offers and round bits on other source roles.
+The wallet signs the exact accepted offer; changing relay source policy alone
+cannot upgrade an existing wallet grant. Renew notification setup after a
+capable producer and publisher are activated.
+
+Round pushes use the existing silent maintenance callback. The host-driven SDK
+uses a short registration jitter and keeps the normal signing validation and
+nonce recovery fence. Neither an APNs acceptance nor a returned maintenance
+window proves a round completed. Physical-device background registration and
+signing remain a separate end-to-end acceptance test.

@@ -85,6 +85,7 @@ final class WalletStore: ObservableObject {
     private var foregroundRestartPending = false
     private var receiptBackgroundRequested = false
     private var receiptWindowWork: Task<ReceiptWindowResult, Error>?
+    private var diagnosticWindowID: String?
 
     init(defaults: UserDefaults = .standard, client: WalletClient = WalletClient(), dataRoot: URL? = nil,
          authenticate: @escaping () async throws -> Void = WalletAuthentication.authenticate,
@@ -211,6 +212,9 @@ final class WalletStore: ObservableObject {
     /// background. If a state-creating call is still returning, defer teardown
     /// until its outcome can be reconciled instead of cancelling it midway.
     func resumeAfterBackground() async {
+        if let id = backgroundPreparationID ?? diagnosticWindowID {
+            DiagnosticJournal.shared.event(id: id, network: network.rawValue, label: "Foreground requested")
+        }
         receiptBackgroundRequested = false
         if backgroundPreparation == nil, stateCreatingCallCount > 0 {
             foregroundRestartPending = true
@@ -1224,7 +1228,9 @@ final class WalletStore: ObservableObject {
                 self.backgroundStartedRuntime = false
                 self.stateCreatingCallCount -= 1
             }
-            return await self.prepareBackgroundRuntime(lease: lease, expectedIdentity: expectedIdentity)
+            return await DiagnosticJournal.shared.measure(id: windowID, network: self.network.rawValue, label: "Preparation") {
+                await self.prepareBackgroundRuntime(lease: lease, expectedIdentity: expectedIdentity)
+            }
         }
         backgroundPreparation = work
         let prepared = await work.value
@@ -1240,37 +1246,53 @@ final class WalletStore: ObservableObject {
             guard permitted() else { return false }
             if !(await client.isRunning) {
                 if let id = backgroundPreparationID {
+                    DiagnosticJournal.shared.context(id: id, startup: "Cold")
                     DiagnosticJournal.shared.event(id: id, network: network.rawValue, label: "Cold startup")
                 }
                 // Read before creating/opening any database. Before first device
                 // unlock, or with only a legacy key, this opportunity does nothing.
-                guard let secret = try KeychainStore.read(account: keychainAccount), permitted() else { return false }
+                guard let secret = try DiagnosticJournal.shared.measureSync(id: backgroundPreparationID, network: network.rawValue, label: "Credential read", operation: {
+                    try KeychainStore.read(account: keychainAccount)
+                }), permitted() else { return false }
                 // Re-wait a previous attempt's cleanup even when isRunning is
                 // false. A pending stop must prevent this start, not overlap it.
-                try await stopClient()
+                try await DiagnosticJournal.shared.measure(id: backgroundPreparationID, network: network.rawValue, label: "Previous runtime cleanup") {
+                    try await stopClient()
+                }
                 guard permitted() else { return false }
                 phase = .starting
                 backgroundStartedRuntime = true
-                try await startClient(walletConfig())
+                try await DiagnosticJournal.shared.measure(id: backgroundPreparationID, network: network.rawValue, label: "Daemon startup") {
+                    try await startClient(walletConfig())
+                }
                 guard permitted() else { throw CancellationError() }
                 let snapshot = try await client.getInfo()
                 guard snapshot.walletState != .none else { throw CancellationError() }
                 if snapshot.walletState == .locked {
-                    _ = try await client.unlockWallet(walletPassword: secret)
+                    _ = try await DiagnosticJournal.shared.measure(id: backgroundPreparationID, network: network.rawValue, label: "Wallet unlock") {
+                        try await client.unlockWallet(walletPassword: secret)
+                    }
                 }
             } else {
                 if let id = backgroundPreparationID {
+                    DiagnosticJournal.shared.context(id: id, startup: "Retained")
                     DiagnosticJournal.shared.event(id: id, network: network.rawValue, label: "Retained runtime")
                 }
                 let snapshot = try await client.getInfo()
                 if snapshot.walletState == .locked {
-                    guard let secret = try KeychainStore.read(account: keychainAccount), permitted() else { return false }
-                    _ = try await client.unlockWallet(walletPassword: secret)
+                    guard let secret = try DiagnosticJournal.shared.measureSync(id: backgroundPreparationID, network: network.rawValue, label: "Credential read", operation: {
+                        try KeychainStore.read(account: keychainAccount)
+                    }), permitted() else { return false }
+                    _ = try await DiagnosticJournal.shared.measure(id: backgroundPreparationID, network: network.rawValue, label: "Wallet unlock") {
+                        try await client.unlockWallet(walletPassword: secret)
+                    }
                 }
             }
             // The startup config already disables automatic ingress. This also
             // joins any earlier warm foreground owner before a bounded window.
-            try await client.setHostForeground(false)
+            try await DiagnosticJournal.shared.measure(id: backgroundPreparationID, network: network.rawValue, label: "Pause foreground ingress") {
+                try await client.setHostForeground(false)
+            }
             let snapshot = try await client.getInfo()
             info = snapshot
             guard snapshot.walletState == .ready || snapshot.walletState == .syncing else { throw CancellationError() }
@@ -1303,11 +1325,19 @@ final class WalletStore: ObservableObject {
               stateCreatingCallCount == 0, receiptWindowWork == nil else { throw CancellationError() }
         stateCreatingCallCount += 1
         DiagnosticJournal.shared.event(id: request.windowID, network: network.rawValue, label: "Native receipt window")
-        let work = Task { try await client.runReceiptWindow(request, timeoutSeconds: 15) }
+        DiagnosticJournal.shared.context(id: request.windowID, nativeBudget: ReceiptFetchLease.nativeCeilingSeconds)
+        let work = Task {
+            try await DiagnosticJournal.shared.measure(id: request.windowID, network: network.rawValue, label: "Receipt window") {
+                try await client.runReceiptWindow(request, timeoutSeconds: Int64(ReceiptFetchLease.nativeCeilingSeconds))
+            }
+        }
         receiptWindowWork = work
+        diagnosticWindowID = request.windowID
         defer {
             receiptWindowWork = nil
             endStateCreatingCall()
+            DiagnosticJournal.shared.event(id: request.windowID, network: network.rawValue, label: "Native call owner released")
+            diagnosticWindowID = nil
         }
         do {
             let result = try await work.value
@@ -1327,11 +1357,19 @@ final class WalletStore: ObservableObject {
               stateCreatingCallCount == 0, receiptWindowWork == nil else { throw CancellationError() }
         stateCreatingCallCount += 1
         DiagnosticJournal.shared.event(id: id, network: network.rawValue, label: "Native maintenance window")
-        let work = Task { try await client.runMaintenanceWindow(id, timeoutSeconds: 15) }
+        DiagnosticJournal.shared.context(id: id, nativeBudget: ReceiptFetchLease.nativeCeilingSeconds)
+        let work = Task {
+            try await DiagnosticJournal.shared.measure(id: id, network: network.rawValue, label: "Maintenance window") {
+                try await client.runMaintenanceWindow(id, timeoutSeconds: Int64(ReceiptFetchLease.nativeCeilingSeconds))
+            }
+        }
         receiptWindowWork = work
+        diagnosticWindowID = id
         defer {
             receiptWindowWork = nil
             endStateCreatingCall()
+            DiagnosticJournal.shared.event(id: id, network: network.rawValue, label: "Native call owner released")
+            diagnosticWindowID = nil
         }
         do {
             let result = try await work.value
