@@ -14,7 +14,9 @@ class WalletMaintenanceWorker(context: Context, parameters: WorkerParameters) : 
     val routeId = inputData.getString("route")
     val route = routeId?.let { id -> withContext(Dispatchers.Main.immediate) { RelayPushRegistry(applicationContext).resolve(id,wallet) } }
     if (routeId != null && route == null) return Result.success()
-    wallet.runBackground(inputData.getString("trigger") ?: "Scheduled",route?.network,route?.identity)
+    val trigger = inputData.getString("trigger") ?: "Scheduled"
+    wallet.runBackground(trigger,route?.network,route?.identity,
+      BackgroundWakeContext(if (trigger == "Scheduled") "WorkManager periodic" else "WorkManager one-time",id.toString(),runAttemptCount))
     // Another periodic/remote opportunity may retry existing native work. This
     // worker never retries a payment create/send or infers round completion.
     return Result.success()

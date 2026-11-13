@@ -25,7 +25,7 @@ class WalletSession(private val context: Context) {
   val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
   private val lifecycle = Mutex()
   private val reads = Mutex()
-  private val maintenance = MaintenanceOwner(scope,lifecycle) { lease ->
+  private val maintenance = MaintenanceOwner(scope,lifecycle,observedRelease = { lease -> backgroundHistory.stage(lease.id,"Host owner released") }) { lease ->
     if (lease.coldStarting) client.stop() else client.cancelMaintenanceWindow(lease.id)
   }
   private val mutable = MutableStateFlow(WalletUiState(network = preferences.selectedNetwork,
@@ -259,16 +259,26 @@ class WalletSession(private val context: Context) {
   }
 
   /** One native owner across cold start, expiry, foreground takeover and cleanup. */
-  suspend fun runBackground(trigger: String, expectedNetwork: String? = null, expectedIdentity: String? = null): BackgroundOutcome = withContext(Dispatchers.Main.immediate) {
+  suspend fun runBackground(trigger: String, expectedNetwork: String? = null, expectedIdentity: String? = null, wake: BackgroundWakeContext? = null): BackgroundOutcome = withContext(Dispatchers.Main.immediate) {
     maintenance.run { lease ->
       val network = state.value.network
-      backgroundHistory.begin(lease.id,network,trigger)
+      backgroundHistory.begin(lease.id,network,trigger,wake)
+      val preparationStart = backgroundHistory.mark()
       var outcome = BackgroundOutcome("Not admitted")
       var cold = false
       try {
         if (foreground || payments.state.value.busy || state.value.recoveryWords != null ||
           (expectedNetwork != null && expectedNetwork != network.wire) ||
-          !context.getSystemService(UserManager::class.java).isUserUnlocked) return@run outcome
+          !context.getSystemService(UserManager::class.java).isUserUnlocked) {
+          backgroundHistory.stage(lease.id,when {
+            foreground -> "App is in foreground"
+            payments.state.value.busy -> "Payment call is still running"
+            state.value.recoveryWords != null -> "Recovery backup is open"
+            expectedNetwork != null && expectedNetwork != network.wire -> "Another network is selected"
+            else -> "Device has not been unlocked after boot"
+          })
+          return@run outcome
+        }
         observations?.cancelAndJoin(); observations = null
         reads.withLock {
           fun permitted() = !foreground && !lease.expired && state.value.network == network
@@ -276,23 +286,25 @@ class WalletSession(private val context: Context) {
           if (!client.isRunning) {
             // Read before opening a database. Background never creates a wallet
             // or prompts for credentials, and it never grants a UI session.
-            val password = withContext(Dispatchers.IO) { vault.password(false,network) }
+            val password = backgroundHistory.measure(lease.id,"Credential read") { withContext(Dispatchers.IO) { vault.password(false,network) } }
             try {
               if (!permitted()) return@withLock
               cold = true; lease.coldStarting = true
+              backgroundHistory.context(lease.id,startup = "Cold")
               backgroundHistory.stage(lease.id,"Cold startup")
-              startCurrent()
+              backgroundHistory.measure(lease.id,"Daemon startup") { startCurrent() }
               if (!permitted()) return@withLock
               val info = client.getInfo()
               check(info.walletState != WalletState.NONE) { "Wallet has not been created" }
-              if (info.walletState == WalletState.LOCKED) client.unlockWallet(password)
+              if (info.walletState == WalletState.LOCKED) backgroundHistory.measure(lease.id,"Wallet unlock") { client.unlockWallet(password) }
             } finally { password.fill(0) }
           } else {
+            backgroundHistory.context(lease.id,startup = "Retained")
             backgroundHistory.stage(lease.id,"Retained runtime")
             // A retained daemon may have been started at the locked screen.
             if (client.getInfo().walletState == WalletState.LOCKED) {
-              val password = withContext(Dispatchers.IO) { vault.password(false,network) }
-              try { if (permitted()) client.unlockWallet(password) } finally { password.fill(0) }
+              val password = backgroundHistory.measure(lease.id,"Credential read") { withContext(Dispatchers.IO) { vault.password(false,network) } }
+              try { if (permitted()) backgroundHistory.measure(lease.id,"Wallet unlock") { client.unlockWallet(password) } } finally { password.fill(0) }
             }
           }
           if (!permitted()) return@withLock
@@ -300,13 +312,14 @@ class WalletSession(private val context: Context) {
           check(info.walletState != WalletState.NONE && info.identityPubKey.isNotBlank() &&
             (expectedIdentity == null || expectedIdentity == info.identityPubKey)) { "Wallet unavailable" }
           mutable.update { it.copy(info = info, phase = WalletPhase.LOCKED) }
-          client.setHostForeground(false)
+          backgroundHistory.measure(lease.id,"Pause foreground ingress") { client.setHostForeground(false) }
           lease.coldStarting = false
           if (!permitted()) return@withLock
-          backgroundHistory.stage(lease.id,"Wallet prepared; UI locked")
+          backgroundHistory.stage(lease.id,"Preparation; UI locked",backgroundHistory.duration(preparationStart))
           backgroundHistory.stage(lease.id,"Native maintenance window")
-          val result = client.runMaintenanceWindow(lease.id)
-          backgroundHistory.stage(lease.id,"Native returned: ${result.batches} batches, ${result.maintenanceChecked} checked")
+          backgroundHistory.context(lease.id,nativeBudget = 15)
+          val result = backgroundHistory.measure(lease.id,"Maintenance window") { client.runMaintenanceWindow(lease.id) }
+          backgroundHistory.nativeResult(lease.id,result)
           if (!permitted()) return@withLock
           outcome = BackgroundOutcome(when {
             result.budgetExhausted -> "Budget exhausted"
@@ -316,7 +329,10 @@ class WalletSession(private val context: Context) {
           },result.batches > 0 || result.maintenanceChecked > 0)
           val enrolled = notices.pending(network,info.identityPubKey,connectionFingerprint())
           if (enrolled.isNotEmpty()) {
-            val proofs = client.readLightningReceipts(enrolled.map { it.reference },enrolled.first().consent.since)
+            val proofs = backgroundHistory.measure(lease.id,"Receipt source reads") {
+              client.readLightningReceipts(enrolled.map { it.reference },enrolled.first().consent.since)
+            }
+            backgroundHistory.receipts(lease.id,proofs.size,proofs.count { it.state == "complete" })
             if (!permitted()) return@withLock
             enrolled.forEach { entry -> proofs.firstOrNull { it.reference == entry.reference }?.let { proof -> notices.present(network,entry,proof,visible = foreground) } }
             backgroundHistory.stage(lease.id,"Local receipts checked")
@@ -330,7 +346,7 @@ class WalletSession(private val context: Context) {
       } finally {
         // Only stop failed cold preparation. A prepared native runtime survives
         // bounded-window expiry, preserving existing signing/domain owners.
-        if (cold && lease.coldStarting) runCatching { client.stop() }
+        if (cold && lease.coldStarting) runCatching { backgroundHistory.measure(lease.id,"Cold preparation cleanup") { client.stop() } }
         if (!foreground && state.value.phase == WalletPhase.OPENING) mutable.update { it.copy(phase = WalletPhase.LOCKED) }
         backgroundHistory.finish(lease.id,lease.cancellationReason?.label ?: outcome.label)
       }
