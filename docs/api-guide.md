@@ -296,23 +296,33 @@ Task {
 Exit moves a VTXO out of Ark and back on-chain. By default the daemon queues a
 cooperative leave, where the operator folds your exit into a round and pays out
 to the address you give (or a fresh backing-wallet address when you omit one).
-Track it with `exitStatus` or the activity stream.
+Track cooperative exits with the activity stream. `exitStatus` describes
+unilateral recovery jobs.
 
 ```kotlin
-// Kotlin: cooperative leave, then poll its status
+// Kotlin: queue a cooperative leave
 val res = client.exit(outpoint = "txid:0", destination = myAddress)
 println("exit path: ${res.path}")        // "cooperative"
-val s = client.exitStatus(outpoint = "txid:0")
-println("${s.status} ${s.sweepTxid}")
 ```
 
 ```swift
-// Swift: cooperative leave, then poll its status
+// Swift: queue a cooperative leave
 let res = try await client.exit(outpoint: "txid:0", destination: myAddress)
 print("exit path: \(res.path)")          // "cooperative"
-let s = try await client.exitStatus(outpoint: "txid:0")
-print("\(s.status) \(s.sweepTxid)")
 ```
+
+Swift also supports one cooperative request for several exact inputs:
+
+```swift
+let batch = try await client.exitBatch(outpoints: selectedOutpoints, destination: myAddress)
+// Inspect every result. "accepted" means locally queued, not confirmed.
+// Track batch.activityID for the accepted subset only.
+```
+
+Persist the selection before calling. A partial response can contain accepted,
+failed and unknown inputs. A thrown transport/decoding error can hide accepted
+work. Never retry automatically, loop singular exits, or fall back to unilateral
+recovery. The sample app retains these outcomes across navigation and restart.
 
 To force a unilateral unroll that bypasses the operator, pass the
 acknowledgement string. It cannot be combined with a destination, and it starts

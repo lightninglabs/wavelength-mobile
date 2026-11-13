@@ -5,7 +5,7 @@ struct RecoveryOptionsView: View {
     @EnvironmentObject private var store: WalletStore
     var body: some View {
         WalletPage {
-            NavigationLink(destination: ExitWalletView(unilateral: true)) {
+            NavigationLink(destination: UnilateralExitView()) {
                 WalletNavigationRow(title: "Unilateral exit", icon: "arrow.up.right.square")
             }
                 .accessibilityIdentifier("recovery.unilateral")
@@ -35,71 +35,27 @@ struct RecoveryOptionsView: View {
     }
 }
 
-struct ExitWalletView: View {
+struct UnilateralExitView: View {
     @EnvironmentObject private var store: WalletStore
-    let unilateral: Bool
     @State private var funds: [WalletVTXO] = []
     @State private var selected: String?
-    @State private var destination = ""
-    @State private var externalDestination = false
     @State private var plan: ExitPlan?
     @State private var reviewed = false
     @State private var acknowledged = false
     @State private var submitted = false
     @State private var loading = false
     @State private var error: String?
-    @State private var feeState: ExitFeeState = .idle
-    @State private var feeAttempt = 0
     private var fund: WalletVTXO? { funds.first { $0.outpoint == selected } }
     private var planEntry: ExitPlanEntry? { plan?.plans?.first }
-    private var feeEstimate: ExitFeeEstimate? {
-        if case .ready(let estimate) = feeState { return estimate }
-        return nil
-    }
-    private var feeRequestKey: String {
-        reviewed && !unilateral ? "\(store.network.rawValue):\(selected ?? ""):\(feeAttempt)" : ""
-    }
-    private var activityEntry: Entry? {
-        store.activity.first { $0.kind == "exit" && $0.progress?.vtxoOutpoint == selected }
-    }
 
     var body: some View {
         WalletPage {
             if submitted, let selected {
-                if unilateral {
-                    RecoveryStatusView(outpoint: selected, amount: fund?.amountSat ?? 0, embedded: true,
-                                       startError: error)
-                } else {
-                    WalletAmount(amount: abs(activityEntry?.amountSat ?? fund?.amountSat ?? 0))
-                    WalletStatus(text: activityEntry?.displayStatus ?? "Checking status",
-                                 pending: activityEntry?.status != "complete",
-                                 complete: activityEntry?.status == "complete")
-                    if let entry = activityEntry { NavigationLink("Details", destination: ActivityDetailView(entry: entry)) }
-                    if let error { Text(error).font(.footnote).foregroundStyle(WalletTheme.secondary) }
-                    Button("Check status") { Task { await store.refresh() } }.buttonStyle(WalletButtonStyle(secondary: true))
-                }
+                RecoveryStatusView(outpoint: selected, amount: fund?.amountSat ?? 0, embedded: true,
+                                   startError: error)
             } else if reviewed, let fund {
                 WalletAmount(amount: fund.amountSat)
-                if unilateral { unilateralReview } else {
-                    if externalDestination {
-                        WalletField(title: "To") {
-                            TextField("Bitcoin address", text: $destination).textInputAutocapitalization(.never).autocorrectionDisabled(true)
-                        }
-                    } else {
-                        ValueRow(label: "To", value: "My on-chain wallet")
-                    }
-                    Toggle("Use another address", isOn: $externalDestination)
-                    cooperativeFee
-                    DisclosureGroup("Details") {
-                        ValueRow(label: "Selected funds", value: fund.outpoint, copyable: true)
-                        Text("The fee is an estimate. The final fee is set when the exit is confirmed.")
-                            .font(.footnote).foregroundStyle(WalletTheme.secondary)
-                    }
-                    Button("Confirm exit", action: submit).buttonStyle(WalletButtonStyle())
-                        .disabled(loading || feeEstimate?.canExit != true ||
-                                  (externalDestination && destination.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
-                        .accessibilityIdentifier("exit.confirm")
-                }
+                unilateralReview
                 if let error { Text(error).foregroundStyle(.red) }
             } else {
                 Text("Choose funds").font(.title2.weight(.medium))
@@ -119,49 +75,12 @@ struct ExitWalletView: View {
                     WalletDivider()
                 }
                 if let error { Text(error).font(.footnote).foregroundStyle(.red) }
-                Button(unilateral ? "Check recovery plan" : "Continue") { review() }
+                Button("Check recovery plan") { review() }
                     .buttonStyle(WalletButtonStyle()).disabled(fund == nil || loading)
             }
         }
-        .navigationTitle(unilateral ? "Unilateral exit" : "Exit").navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("Unilateral exit").navigationBarTitleDisplayMode(.inline)
         .task { await loadFunds() }
-        .task(id: feeRequestKey) { await loadFeeEstimate() }
-    }
-
-    @ViewBuilder private var cooperativeFee: some View {
-        HStack {
-            Text("Estimated fee")
-            Spacer()
-            switch feeState {
-            case .idle, .loading:
-                ProgressView().accessibilityLabel("Estimating exit fee")
-            case .ready(let estimate):
-                Text(WalletFormatting.sats(estimate.estimatedFeeSat))
-                    .foregroundStyle(WalletTheme.secondary)
-                    .accessibilityIdentifier("exit.fee")
-            case .failed:
-                Button("Retry") { feeAttempt += 1 }
-            }
-        }
-        if case .failed(let message) = feeState {
-            Text(message)
-                .font(.footnote).foregroundStyle(WalletTheme.secondary)
-        } else if let estimate = feeEstimate, !estimate.canExit {
-            Text("These funds are too small to exit at the current fee.")
-                .font(.footnote).foregroundStyle(WalletTheme.secondary)
-        }
-    }
-
-    private func loadFeeEstimate() async {
-        guard reviewed, !unilateral, !submitted, let selected else { return }
-        feeState = .loading
-        do {
-            let estimate = try await store.estimateExitFee(outpoint: selected)
-            try Task.checkCancellation()
-            feeState = .ready(estimate)
-        } catch {
-            if !Task.isCancelled { feeState = .failed(error.walletMessage) }
-        }
     }
 
     @ViewBuilder private var unilateralReview: some View {
@@ -209,14 +128,12 @@ struct ExitWalletView: View {
         loading = true
         defer { loading = false }
         do {
-            if unilateral { funds = try await store.recoveryFunds() }
-            else { funds = try await store.inventory() }
+            funds = try await store.recoveryFunds()
         } catch { self.error = error.walletMessage }
     }
     private func review() {
         guard let selected, !loading else { return }
         error = nil
-        if !unilateral { reviewed = true; return }
         loading = true
         Task {
             defer { loading = false }
@@ -226,7 +143,6 @@ struct ExitWalletView: View {
     }
     private func submit() {
         guard let selected, !loading else { return }
-        guard unilateral || feeEstimate?.canExit == true else { return }
         loading = true
         submitted = true
         // Consuming this screen before the call prevents an ambiguous failure
@@ -234,17 +150,10 @@ struct ExitWalletView: View {
         Task {
             defer { loading = false }
             do {
-                _ = try await store.exitFunds(outpoint: selected, destination: externalDestination ? destination : "", unilateral: unilateral)
+                _ = try await store.exitFunds(outpoint: selected, destination: "", unilateral: true)
             } catch { self.error = error.walletMessage }
         }
     }
-}
-
-private enum ExitFeeState {
-    case idle
-    case loading
-    case ready(ExitFeeEstimate)
-    case failed(String)
 }
 
 struct RecoveryStatusView: View {

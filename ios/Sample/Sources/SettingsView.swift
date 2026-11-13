@@ -12,7 +12,7 @@ struct SettingsView: View {
             WalletDivider()
             NavigationLink(destination: CreditSettingsView()) { settingsRow("Credit", "circle.grid.2x2") }
             WalletDivider()
-            NavigationLink(destination: ExitWalletView(unilateral: false)) { settingsRow("Exit", "arrow.up.right.square") }
+            NavigationLink(destination: CooperativeExitView()) { settingsRow("Exit", "arrow.up.right.square") }
                 .accessibilityIdentifier("settings.exit")
             WalletDivider()
             NavigationLink(destination: RefreshWalletView()) { settingsRow("Refresh", "arrow.triangle.2.circlepath") }
