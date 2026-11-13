@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.compose.compiler)
@@ -17,6 +19,16 @@ android {
         providers.gradleProperty("walletAbis").orNull?.split(",")?.let { ndk.abiFilters.addAll(it) }
     }
 
+    val firebaseProperties = Properties().apply {
+      val local = rootProject.file("firebase.local.properties")
+      if (local.exists()) local.inputStream().use { load(it) }
+    }
+    defaultConfig {
+      listOf("APP_ID", "PROJECT_ID", "SENDER_ID", "API_KEY").forEach { key ->
+        val value = firebaseProperties.getProperty(key, "").replace("\\", "\\\\").replace("\"", "\\\"")
+        buildConfigField("String", "FIREBASE_$key", "\"$value\"")
+      }
+    }
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -51,6 +63,9 @@ dependencies {
   // The idiomatic Kotlin wrapper (suspend + Flow + typed models) over the
   // gomobile bindings. It carries the Wavewalletdk.aar transitively.
   implementation(project(":walletkit"))
+  implementation("androidx.work:work-runtime-ktx:2.12.0")
+  implementation(platform("com.google.firebase:firebase-bom:35.2.0"))
+  implementation("com.google.firebase:firebase-messaging")
   implementation(libs.kotlinx.serialization.json)
   implementation(libs.kotlinx.coroutines.android)
   implementation("androidx.biometric:biometric:1.1.0")

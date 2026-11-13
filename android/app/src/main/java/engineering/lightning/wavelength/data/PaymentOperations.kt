@@ -64,13 +64,19 @@ interface PaymentGateway {
   suspend fun deposit(): DepositResult
 }
 
-class NativePaymentGateway(private val client: WalletClient, private val limits: () -> CreditLimits = { CreditLimits() }) : PaymentGateway {
+class NativePaymentGateway(private val client: WalletClient, private val limits: () -> CreditLimits = { CreditLimits() },
+  private val receiptAdmission: (Long) -> ((ReceiveResult) -> Unit)? = { null }) : PaymentGateway {
   override suspend fun entries() = client.list(limit = 1000).activity?.entries ?: error("Activity unavailable")
   override suspend fun prepare(invoice: String, note: String) = limits().let {
     client.prepareSend(invoice = invoice, note = note, maxCreditSat = it.use, maxCreditTopupSat = it.topup)
   }
   override suspend fun send(intentId: String) = client.send(intentId)
-  override suspend fun receive(amount: Long, note: String) = client.receiveLightning(amount, note)
+  override suspend fun receive(amount: Long, note: String): ReceiveResult {
+    val admitted = receiptAdmission(amount)
+    val result = client.receiveLightning(amount, note)
+    admitted?.invoke(result)
+    return result
+  }
   override suspend fun deposit() = client.newDepositAddress()
 }
 
