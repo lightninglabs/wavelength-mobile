@@ -140,3 +140,6 @@ force-stopping it. Inspect the persisted journal after the worker returns. Test
 foreground takeover while a window is running and repeat the same receipt to
 verify no duplicate banner. These tests prove a native attempt and local receipt
 presentation, not automatic completion of a round before its deadline.
+
+Richer wake context, startup timings, native result fields and related logs are
+described in [background traces](background-traces.md).

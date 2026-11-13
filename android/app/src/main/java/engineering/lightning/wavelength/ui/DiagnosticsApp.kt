@@ -35,8 +35,9 @@ import kotlinx.serialization.json.*
       "rounds" -> DiagnosticRounds(session, route.token, page, navigate)
       "round" -> DiagnosticRound(session, route.initial, page, navigate)
       "transfers" -> DiagnosticTransfers(session, page, navigate)
-      "logs" -> DiagnosticLogs(session, route.target, page, navigate)
-      "background" -> DiagnosticBackground(session,page)
+      "logs" -> DiagnosticLogs(session, route.target, page, navigate,route.since,route.until)
+      "background" -> DiagnosticBackground(session,page,navigate)
+      "backgroundRun" -> DiagnosticBackgroundRun(session,route.target,page,navigate)
       "runs" -> DiagnosticHostRuns(session, page)
       "log" -> DiagnosticPage(page) {
         SettingsValue("Time", route.initial["time"].text)
