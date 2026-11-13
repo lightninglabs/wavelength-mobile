@@ -31,7 +31,7 @@ import java.text.DateFormat
 import java.util.Date
 
 internal data class DiagnosticRoute(val kind: String, val title: String, val initial: JsonElement = JsonNull,
-  val target: String = "", val token: String = "")
+  val target: String = "", val token: String = "", val since: Long? = null, val until: Long? = null)
 internal data class DiagnosticResult(val value: JsonElement = JsonNull, val error: String? = null)
 
 @Composable internal fun diagnosticRead(session: WalletSession, view: DiagnosticView, outpoint: String = "", roundId: String = "",
