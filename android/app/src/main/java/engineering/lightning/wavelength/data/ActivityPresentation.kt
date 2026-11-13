@@ -4,6 +4,7 @@ import engineering.lightning.wavewalletdk.client.Entry
 import java.text.NumberFormat
 import java.time.Instant
 import java.time.ZoneId
+import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
 fun sats(amount: Long): String = "${NumberFormat.getIntegerInstance().format(amount)} sats"
@@ -40,5 +41,16 @@ fun visibleActivity(entries: List<Entry>): List<Entry> {
     .sortedWith(compareByDescending<Entry> { it.createdAt }.thenBy { it.id })
 }
 fun activityTime(value: String): String = runCatching {
-  DateTimeFormatter.ofPattern("MMM d, HH:mm").withZone(ZoneId.systemDefault()).format(Instant.parse(value))
+  val zone = ZoneId.systemDefault()
+  val instant = Instant.parse(value)
+  val pattern = if (instant.atZone(zone).toLocalDate() == LocalDate.now(zone)) "HH:mm" else "MMM d, HH:mm"
+  DateTimeFormatter.ofPattern(pattern).withZone(zone).format(instant)
 }.getOrDefault("")
+
+/** Snapshot entries have no event cursor. Only updates during this read win. */
+fun mergeActivitySnapshot(before: Map<String, Entry>, snapshot: List<Entry>, current: List<Entry>): List<Entry> {
+  val latest = current.associateBy { it.id }
+  val ids = snapshot.map { it.id }.toSet()
+  return snapshot.map { entry -> latest[entry.id]?.takeIf { it != before[entry.id] } ?: entry } +
+    current.filterNot { it.id in ids }
+}

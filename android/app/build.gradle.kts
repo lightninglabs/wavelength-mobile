@@ -5,12 +5,13 @@ plugins {
 }
 
 android {
-    namespace = "com.example.wavewalletdksample"
+    namespace = "engineering.lightning.wavelength"
     compileSdk = 36
     defaultConfig {
-        applicationId = "com.example.wavewalletdksample"
+        applicationId = "engineering.lightning.wavelength.wallet"
         minSdk = 24
         targetSdk = 36
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         versionCode = 1
         versionName = "1.0"
     }
@@ -22,13 +23,14 @@ android {
         }
     }
     compileOptions {
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
     buildFeatures {
       compose = true
       aidl = false
-      buildConfig = false
+      buildConfig = true
       shaders = false
     }
 
@@ -44,9 +46,12 @@ kotlin {
 }
 
 dependencies {
+  coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
   // The idiomatic Kotlin wrapper (suspend + Flow + typed models) over the
   // gomobile bindings. It carries the Wavewalletdk.aar transitively.
   implementation(project(":walletkit"))
+  implementation("androidx.biometric:biometric:1.1.0")
+  implementation("androidx.fragment:fragment-ktx:1.8.9")
 
   val composeBom = platform(libs.androidx.compose.bom)
   implementation(composeBom)
@@ -65,6 +70,7 @@ dependencies {
   implementation(libs.androidx.compose.ui)
   implementation(libs.androidx.compose.ui.tooling.preview)
   implementation(libs.androidx.compose.material3)
+  implementation("androidx.compose.material:material-icons-extended")
   // Tooling
   debugImplementation(libs.androidx.compose.ui.tooling)
   // Instrumented tests
