@@ -118,6 +118,7 @@ data class EntryRequest(
 data class ReceiveResult(
   @SerialName("Invoice") val invoice: String = "",
   @SerialName("Entry") val entry: Entry = Entry(),
+  @SerialName("ReceiptReference") val receiptReference: ReceiptReference? = null,
 )
 
 /** A fresh on-chain boarding address to deposit into, plus its initial entry. */
