@@ -225,7 +225,7 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
   suspend fun diagnosticLogs(): DiagnosticLogSnapshot = decode(io { Mobile.diagnosticLogs() })
 
   /** Advance persisted round/refresh work within the native maximum budget. */
-  suspend fun runMaintenanceWindow(id: String, timeoutSeconds: Long = 15): MaintenanceResult =
+  suspend fun runMaintenanceWindow(id: String, timeoutSeconds: Long = 30): MaintenanceResult =
     decode(io { Mobile.runMaintenanceWindow(id, timeoutSeconds) })
 
   /** Signal the exact window, retaining its caller until native cleanup returns. */

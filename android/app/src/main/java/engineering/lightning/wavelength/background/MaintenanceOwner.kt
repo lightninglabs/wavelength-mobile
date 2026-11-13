@@ -6,7 +6,7 @@ import kotlinx.coroutines.sync.withLock
 
 /** Cancellation signals native work; only its actual return releases ownership. */
 class MaintenanceOwner(private val scope: CoroutineScope, private val owner: Mutex,
-  private val budgetMillis: Long = 20_000,
+  private val budgetMillis: Long = BackgroundLease.FALLBACK_MILLIS,
   private val observedRelease: (BackgroundLease) -> Unit = {}, private val cancelNative: suspend (BackgroundLease) -> Unit) {
   var active: BackgroundLease? = null; private set
   fun interrupt() { active?.let { expire(it,BackgroundCancellation.FOREGROUND) } }
