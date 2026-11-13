@@ -31,15 +31,16 @@ class WalletVault(context: Context) {
       }.generateKey()
     }
 
-  fun password(create: Boolean): ByteArray = read("signet-password") ?: run {
+  fun password(create: Boolean, network: WalletNetwork = WalletNetwork.SIGNET): ByteArray = read("${network.wire}-password") ?: run {
     check(create) { "Wallet credential unavailable. Restore using your recovery words." }
     ByteArray(32).also {
       SecureRandom().nextBytes(it)
-      write("signet-password", it) // Durable before the daemon can create the wallet.
+      write("${network.wire}-password", it) // Durable before the daemon can create the wallet.
     }
   }
 
-  // Legacy encrypted backup files remain intact. New words are never persisted.
+  // Legacy encrypted *-backup files are intentionally left intact. New wallets
+  // keep their words only in memory until backup acknowledgment.
 
   private fun write(name: String, plaintext: ByteArray) {
     val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key) }
