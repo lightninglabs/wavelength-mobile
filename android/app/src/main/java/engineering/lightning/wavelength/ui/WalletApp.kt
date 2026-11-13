@@ -102,6 +102,7 @@ import kotlin.math.abs
   var selected by remember { mutableStateOf<String?>(null) }
   val scope = rememberCoroutineScope()
   BackHandler(stack.size > 1, back)
+  if (screen == WalletScreen.DIAGNOSTICS) { DiagnosticsApp(session, back); return }
   Scaffold(containerColor = MaterialTheme.colorScheme.background, topBar = {
     CenterAlignedTopAppBar(title = {
       if (screen != WalletScreen.HOME) Text(screen.title) else Row(verticalAlignment = Alignment.CenterVertically) {
@@ -113,7 +114,7 @@ import kotlin.math.abs
   }) { padding ->
     val page = Modifier.padding(padding)
     when (screen) {
-      WalletScreen.SETTINGS -> { SettingsScreen(session, state, page, navigate); return@Scaffold }
+      WalletScreen.SETTINGS -> { SettingsScreen(session, state, page, navigate, diagnostics = true); return@Scaffold }
       WalletScreen.SECURITY -> { SecurityScreen(session, state, page, authenticate); return@Scaffold }
       WalletScreen.CREDIT -> { CreditScreen(session, state, page, back); return@Scaffold }
       WalletScreen.CONNECTION -> { ConnectionScreen(session, state, page); return@Scaffold }
