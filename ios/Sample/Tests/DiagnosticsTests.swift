@@ -5,6 +5,19 @@ import WalletKit
 
 @MainActor
 final class DiagnosticsTests: XCTestCase {
+    func testCaptureLevelPreservesLegacyChoiceAndDefaultsToInfo() throws {
+        let name = "capture-level-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        XCTAssertEqual(DiagnosticCaptureLevel.saved(in: defaults), .info)
+        defaults.set(true, forKey: "diagnosticsDebugCapture")
+        XCTAssertEqual(DiagnosticCaptureLevel.saved(in: defaults), .debug)
+        defaults.set("trace", forKey: "diagnosticsCaptureLevel")
+        XCTAssertEqual(DiagnosticCaptureLevel.saved(in: defaults), .trace)
+        defaults.set("info", forKey: "diagnosticsCaptureLevel")
+        XCTAssertEqual(DiagnosticCaptureLevel.saved(in: defaults), .info)
+    }
+
     func testProtobufIntegerStringsRoundTripWithoutLosingPrecision() throws {
         let data = Data(#"{"asset_amount":"18446744073709551615","amount_sat":"136000","enabled":false}"#.utf8)
         let value = try JSONDecoder().decode(DiagnosticValue.self, from: data)
