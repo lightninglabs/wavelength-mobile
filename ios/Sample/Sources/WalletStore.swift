@@ -1325,10 +1325,10 @@ final class WalletStore: ObservableObject {
               stateCreatingCallCount == 0, receiptWindowWork == nil else { throw CancellationError() }
         stateCreatingCallCount += 1
         DiagnosticJournal.shared.event(id: request.windowID, network: network.rawValue, label: "Native receipt window")
-        DiagnosticJournal.shared.context(id: request.windowID, nativeBudget: 15)
+        DiagnosticJournal.shared.context(id: request.windowID, nativeBudget: ReceiptFetchLease.nativeCeilingSeconds)
         let work = Task {
             try await DiagnosticJournal.shared.measure(id: request.windowID, network: network.rawValue, label: "Receipt window") {
-                try await client.runReceiptWindow(request, timeoutSeconds: 15)
+                try await client.runReceiptWindow(request, timeoutSeconds: Int64(ReceiptFetchLease.nativeCeilingSeconds))
             }
         }
         receiptWindowWork = work
@@ -1357,10 +1357,10 @@ final class WalletStore: ObservableObject {
               stateCreatingCallCount == 0, receiptWindowWork == nil else { throw CancellationError() }
         stateCreatingCallCount += 1
         DiagnosticJournal.shared.event(id: id, network: network.rawValue, label: "Native maintenance window")
-        DiagnosticJournal.shared.context(id: id, nativeBudget: 15)
+        DiagnosticJournal.shared.context(id: id, nativeBudget: ReceiptFetchLease.nativeCeilingSeconds)
         let work = Task {
             try await DiagnosticJournal.shared.measure(id: id, network: network.rawValue, label: "Maintenance window") {
-                try await client.runMaintenanceWindow(id, timeoutSeconds: 15)
+                try await client.runMaintenanceWindow(id, timeoutSeconds: Int64(ReceiptFetchLease.nativeCeilingSeconds))
             }
         }
         receiptWindowWork = work

@@ -88,7 +88,7 @@ final class DiagnosticJournal: ObservableObject {
         guard !runs.contains(where: { $0.id == id }) else { return }
         beganAt[id] = uptime()
         runs.append(DiagnosticRun(id: id, network: network, started: Self.now,
-                                  trigger: trigger, wake: wake, hostBudgetSeconds: 20,
+                                  trigger: trigger, wake: wake, hostBudgetSeconds: ReceiptFetchLease.fallbackSeconds,
                                   events: [.init(time: Self.now, label: "Wake received", elapsedMilliseconds: 0)]))
         runs = Array(runs.suffix(50))
         beganAt = beganAt.filter { key, _ in runs.contains { $0.id == key } }

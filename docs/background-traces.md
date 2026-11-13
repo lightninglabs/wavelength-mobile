@@ -44,8 +44,10 @@ are retained without replacing the original expiry. On Android, the host records
 owner release only after the existing cancellation join. A late observation can
 therefore appear after the headline terminal duration.
 
-The overall time limit is the host deadline for the opportunity (20 seconds).
-The SDK work limit applies to the native call after preparation (15 seconds).
+The fallback deadline covers the whole opportunity (28 seconds).
+The SDK safety ceiling applies to the native call after preparation (30 seconds).
+OS expiry is the primary stop signal; either OS expiry or the host fallback
+cancels that exact native window before its separate safety ceiling.
 They overlap rather than add together; the OS can end an opportunity earlier.
 Mailbox batches count nonempty batches whose dispatch was attempted. Empty polls
 do not count, and dispatch does not prove downstream work succeeded.

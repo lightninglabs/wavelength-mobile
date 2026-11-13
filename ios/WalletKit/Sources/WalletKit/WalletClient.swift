@@ -129,10 +129,10 @@ public actor WalletClient {
         try await bg { try Bindings.setHostForeground(foreground) }
     }
 
-    /// Reconcile one enrolled invoice within a cooperative 1...20 second
+    /// Reconcile one enrolled invoice within a cooperative 1...30 second
     /// budget. The host must serialize against state-creating wallet calls.
     public func runReceiptWindow(
-        _ request: ReceiptWindowRequest, timeoutSeconds: Int64 = 15
+        _ request: ReceiptWindowRequest, timeoutSeconds: Int64 = 30
     ) async throws -> ReceiptWindowResult {
         let body = try encoder.encode(request)
         return try decode(await bg {
@@ -143,7 +143,7 @@ public actor WalletClient {
     /// Attempts current-tip expiry and native round work on a retained warm runtime.
     /// Uses the same unique-ID cancellation API as receipt windows. Produces no receipt.
     public func runMaintenanceWindow(
-        _ windowID: String, timeoutSeconds: Int64 = 15
+        _ windowID: String, timeoutSeconds: Int64 = 30
     ) async throws -> ReceiptWindowResult {
         let data = try await bg { try Bindings.runMaintenanceWindow(windowID, timeoutSeconds) }
         return try decode(data)

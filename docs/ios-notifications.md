@@ -93,19 +93,19 @@ window before resuming continuous ingress or considering a transport restart.
 resubmits at launch, background entry and task handling. The request's earliest
 begin date is fifteen minutes away; iOS chooses actual timing. Both scheduled
 tasks and known current relay routes may prepare the selected device-managed
-wallet, then attempt a fifteen-second native maintenance window. Startup leaves
-mailbox intake paused. Missing or unmigrated credentials skip the opportunity;
+wallet, then attempt a native maintenance window until OS expiry or the host
+fallback. Startup leaves mailbox intake paused. Missing or unmigrated credentials skip the opportunity;
 background execution never prompts, creates wallets or grants UI access. The
 native runtime samples chain height, applies existing expiry policy to a bounded
 page of existing VTXO owners and pumps native round events. Retained signing
 sessions can advance; cold startup must recover from durable state and cannot
-restore lost in-memory signing sessions. The outer twenty-second deadline covers
+restore lost in-memory signing sessions. The outer twenty-eight-second fallback covers
 preparation too. The UI lock still gates interaction; notification amount consent
 and verified source proof independently control amount presentation.
 
 The project declares `fetch`, `remote-notification` and the exact permitted task
 identifier `engineering.lightning.wavelength.wallet.maintenance`. System expiry
-and a twenty-second outer timer finish OS callbacks exactly once, signal the
+and a twenty-eight-second fallback finish OS callbacks exactly once, signal the
 matching unique native window and retain the original native owner until its
 actual return. During cold preparation, expiration cancels and joins only the
 runtime started by that preparation. Expiration of an established window never

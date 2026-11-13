@@ -464,21 +464,19 @@ final class WalletNotificationDelegate: NSObject, UIApplicationDelegate, UNUserN
     }
     func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any],
                      fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        let startedAt = ProcessInfo.processInfo.systemUptime
         Task { @MainActor in
             let windowID = UUID().uuidString
-            let lease = ReceiptFetchLease(completion: completionHandler)
-            let expire: () -> Void = {
+            let lease = ReceiptFetchLease(startedAt: startedAt, completion: completionHandler)
+            let expire: (String) -> Void = { reason in
                 guard !lease.finished else { return }
                 lease.expire()
-                Task { await WalletNotifications.shared.cancelReceiptRecovery(windowID) }
+                Task { await WalletNotifications.shared.cancelReceiptRecovery(windowID, reason: reason) }
             }
             lease.backgroundTask = application.beginBackgroundTask(withName: "Invoice receipt", expirationHandler: {
-                Task { @MainActor in expire() }
+                Task { @MainActor in expire("iOS window expired") }
             })
-            let deadline = Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 20_000_000_000)
-                if !Task.isCancelled { expire() }
-            }
+            let deadline = lease.fallback { expire("Fallback deadline reached") }
             let changed = await WalletNotifications.shared.received(userInfo, windowID: windowID, lease: lease)
             deadline.cancel()
             lease.finish(changed ? .newData : .noData)
@@ -542,9 +540,9 @@ extension WalletNotifications {
         ), now: now)
     }
 
-    func cancelReceiptRecovery(_ windowID: String) async {
+    func cancelReceiptRecovery(_ windowID: String, reason: String = "iOS window expired") async {
         if let store {
-            DiagnosticJournal.shared.finish(id: windowID, network: store.network.rawValue, status: "iOS window expired")
+            DiagnosticJournal.shared.finish(id: windowID, network: store.network.rawValue, status: reason)
         }
         guard activeReceiptWindow == windowID else { return }
         await store?.cancelReceiptWindow(windowID)

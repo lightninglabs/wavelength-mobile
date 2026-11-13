@@ -105,6 +105,49 @@ final class ReceiptNotificationTests: XCTestCase {
         XCTAssertEqual(ReceiptNotificationPresentation.body(enrollment: enrollment, result: nil), ReceiptNotificationPresentation.generic)
     }
 
+    func testFallbackIncludesCallbackQueueingAndPreservesTimeAfterOldCutoff() async {
+        var now: TimeInterval = 125
+        var completions = 0
+        let lease = ReceiptFetchLease(startedAt: 100, uptime: { now }) { _ in completions += 1 }
+        var delay: UInt64?
+        var wake: CheckedContinuation<Void, Never>?
+        let deadline = lease.fallback(sleep: { nanos in
+            delay = nanos
+            await withCheckedContinuation { wake = $0 }
+        }) { lease.expire() }
+        while wake == nil { await Task.yield() }
+        XCTAssertEqual(delay, 3_000_000_000, "Queueing and preparation share the 28-second fallback")
+        XCTAssertFalse(lease.expired, "Work still owns the window after the old 15/20-second cutoffs")
+        XCTAssertEqual(completions, 0)
+        now = 128
+        wake?.resume()
+        await deadline.value
+        XCTAssertTrue(lease.expired)
+        XCTAssertEqual(completions, 1)
+        lease.expire()
+        lease.finish(.newData)
+        XCTAssertEqual(completions, 1)
+    }
+
+    func testSystemExpiryAndNormalCompletionSuppressFallback() async {
+        for systemExpiry in [true, false] {
+            var completions = 0
+            var fallbackCalls = 0
+            let lease = ReceiptFetchLease { _ in completions += 1 }
+            var wake: CheckedContinuation<Void, Never>?
+            let deadline = lease.fallback(sleep: { _ in
+                await withCheckedContinuation { wake = $0 }
+            }) { fallbackCalls += 1; lease.expire() }
+            while wake == nil { await Task.yield() }
+            if systemExpiry { lease.expire() } else { lease.finish(.newData); deadline.cancel() }
+            wake?.resume()
+            await deadline.value
+            XCTAssertEqual(completions, 1)
+            XCTAssertEqual(fallbackCalls, 0)
+            XCTAssertEqual(lease.expired, systemExpiry)
+        }
+    }
+
     func testExpiryAndNormalReturnFinishFetchExactlyOnce() {
         var completions = 0
         let expired = ReceiptFetchLease { _ in completions += 1 }
