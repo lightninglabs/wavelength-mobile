@@ -537,3 +537,9 @@ come from requested recipients and exclude wallet change. Incoming OOR values
 come from local created-output bindings. Unknown legacy or pending values are
 shown as unavailable. The VTXO inventory enriches the lightweight listing with
 authoritative expiry reads, so Refresh due uses the same posture as details.
+
+Diagnostics → Logs → Log options → Capture level selects Error, Warning, Info,
+Debug or Trace for the next native wallet startup. Info is the default. Existing
+Debug capture preferences carry forward until a level is selected. The capture
+level controls which records the daemon produces; the display filter only
+selects records already captured.

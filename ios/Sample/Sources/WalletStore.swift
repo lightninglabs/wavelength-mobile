@@ -1427,7 +1427,7 @@ final class WalletStore: ObservableObject {
         config.durableRoundRuntime = true
         config.hostDrivenIngress = true
         config.diagnosticLogs = true
-        if defaults.bool(forKey: "diagnosticsDebugCapture") { config.debugLevel = "debug" }
+        config.debugLevel = DiagnosticCaptureLevel.saved(in: defaults).rawValue
         let diagnosticDirectory = directory.appendingPathComponent("diagnostics", isDirectory: true)
         try? FileManager.default.createDirectory(at: diagnosticDirectory, withIntermediateDirectories: true,
             attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])

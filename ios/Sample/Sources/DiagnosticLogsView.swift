@@ -4,7 +4,7 @@ import WalletKit
 struct DiagnosticLogsView: View {
     @EnvironmentObject private var store: WalletStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @AppStorage("diagnosticsDebugCapture") private var debugCapture = false
+    @AppStorage("diagnosticsCaptureLevel") private var captureLevel = DiagnosticCaptureLevel.saved(in: .standard).rawValue
     @FocusState private var filterFocused: Bool
     var since: Int64? = nil
     var until: Int64? = nil
@@ -123,9 +123,10 @@ struct DiagnosticLogsView: View {
                         Button("Add marker") {
                             DiagnosticJournal.shared.record(network: store.network.rawValue, label: "User marker")
                         }
-                        Picker("Capture detail", selection: $debugCapture) {
-                            Text("Info").tag(false)
-                            Text("Debug").tag(true)
+                        Picker("Capture level", selection: $captureLevel) {
+                            ForEach(DiagnosticCaptureLevel.allCases) { level in
+                                Text(level.title).tag(level.rawValue)
+                            }
                         }
                         Text("Applies on the next wallet startup.")
                     } label: { Image(systemName: "ellipsis.circle") }
