@@ -32,73 +32,96 @@ import engineering.lightning.wavewalletdk.client.Entry
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable fun WalletApp(session: WalletSession, authenticate: (() -> Unit) -> Unit) {
   val state by session.state.collectAsStateWithLifecycle()
-  Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-    Crossfade(state.phase, label = "wallet phase") { phase ->
-      when (phase) {
-        WalletPhase.OPENING -> Column(Modifier.fillMaxSize(), Arrangement.Center, Alignment.CenterHorizontally) {
-          WaveMark(Modifier.size(80.dp)); Spacer(Modifier.height(24.dp)); CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+  key(state.network) {
+    var connection by remember { mutableStateOf(false) }
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+      if (state.phase == WalletPhase.OPEN && state.recoveryWords != null) {
+        CreationBackup(state.recoveryWords!!, session::acknowledgeBackup)
+      } else Crossfade(state.phase, label = "wallet phase") { phase ->
+        when (phase) {
+          WalletPhase.OPENING -> Column(Modifier.fillMaxSize(), Arrangement.Center, Alignment.CenterHorizontally) {
+            WaveMark(Modifier.size(80.dp)); Spacer(Modifier.height(24.dp))
+            CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+          }
+          WalletPhase.SETUP -> Setup(session, state) { connection = true }
+          WalletPhase.LOCKED -> Column(Modifier.fillMaxSize().padding(24.dp), Arrangement.Center, Alignment.CenterHorizontally) {
+            WaveMark(Modifier.size(80.dp)); Spacer(Modifier.height(32.dp))
+            Text("Wavelength", style = MaterialTheme.typography.headlineMedium)
+            Text(state.network.title, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            WalletButton("Unlock") { authenticate { session.open() } }
+            Spacer(Modifier.height(24.dp)); NetworkControl(session, state)
+            TextButton({ connection = true }) { Text("Connection") }
+          }
+          WalletPhase.ERROR -> Column(Modifier.fillMaxSize().padding(24.dp), Arrangement.Center) {
+            Text("Wallet unavailable", style = MaterialTheme.typography.headlineMedium)
+            Text(state.error.orEmpty(), Modifier.padding(vertical = 24.dp))
+            WalletButton("Try again") { session.retry() }
+            NetworkControl(session, state); TextButton({ connection = true }) { Text("Connection") }
+          }
+          WalletPhase.OPEN -> WalletHome(session, state, authenticate)
         }
-        WalletPhase.SETUP -> Setup { words -> session.open(create = true, mnemonic = words) }
-        WalletPhase.LOCKED -> Column(Modifier.fillMaxSize().padding(24.dp), Arrangement.Center, Alignment.CenterHorizontally) {
-          WaveMark(Modifier.size(80.dp)); Spacer(Modifier.height(32.dp))
-          Text("Wavelength", style = MaterialTheme.typography.headlineMedium)
-          Text("Signet", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-          WalletButton("Unlock") { authenticate { session.open() } }
-        }
-        WalletPhase.ERROR -> Column(Modifier.fillMaxSize().padding(24.dp), Arrangement.Center) {
-          Text("Wallet unavailable", style = MaterialTheme.typography.headlineMedium)
-          Text(state.error.orEmpty(), Modifier.padding(vertical = 24.dp))
-          WalletButton("Try again") { session.resume() }
-        }
-        WalletPhase.OPEN -> WalletHome(session, state)
       }
+      if (state.error != null && state.phase == WalletPhase.OPEN) AlertDialog(onDismissRequest = session::dismissError,
+        title = { Text("Wallet") }, text = { Text(state.error.orEmpty()) }, confirmButton = { TextButton(session::dismissError) { Text("OK") } })
     }
-    if (state.error != null && state.phase == WalletPhase.OPEN) {
-      AlertDialog(onDismissRequest = session::dismissError, title = { Text("Wallet") },
-        text = { Text(state.error.orEmpty()) }, confirmButton = { TextButton(session::dismissError) { Text("OK") } })
+    if (connection) ModalBottomSheet(onDismissRequest = { connection = false }, containerColor = MaterialTheme.colorScheme.background) {
+      Text("Connection", Modifier.padding(horizontal = 24.dp, vertical = 16.dp), style = MaterialTheme.typography.titleLarge)
+      ConnectionScreen(session, state)
     }
   }
 }
 
-@Composable private fun Setup(create: (List<String>) -> Unit) {
+@Composable private fun Setup(session: WalletSession, state: WalletUiState, connection: () -> Unit) {
   var restore by remember { mutableStateOf(false) }
-  val words = rememberTextFieldState()
+  val words = remember { androidx.compose.foundation.text.input.TextFieldState() }
+  if (restore) SensitiveScreen()
   Column(Modifier.fillMaxSize().systemBarsPadding().padding(24.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
     Spacer(Modifier.weight(1f)); WaveMark(Modifier.size(80.dp))
     Text("Wavelength", fontSize = 36.sp)
-    Text("Signet", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(state.network.title, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Spacer(Modifier.weight(1f))
     if (restore) WalletField("Recovery words", words)
-    WalletButton(if (restore) "Restore wallet" else "Create wallet", !restore || words.text.toString().trim().split(Regex("\\s+")).size in listOf(12, 24)) {
-      create(if (restore) words.text.toString().trim().split(Regex("\\s+")) else emptyList())
+    WalletButton(if (restore) "Restore wallet" else "Create wallet", !restore || words.text.toString().trim().split(Regex("\\s+")).size == 24) {
+      session.open(create = true, mnemonic = if (restore) words.text.toString().trim().split(Regex("\\s+")) else emptyList())
     }
     TextButton({ restore = !restore }) { Text(if (restore) "Create a new wallet" else "Restore wallet") }
+    NetworkControl(session, state)
+    TextButton(connection) { Text("Connection") }
   }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable private fun WalletHome(session: WalletSession, state: WalletUiState) {
-  var settings by remember { mutableStateOf(false) }
+@Composable private fun WalletHome(session: WalletSession, state: WalletUiState, authenticate: (() -> Unit) -> Unit) {
+  var stack by remember { mutableStateOf(listOf(WalletScreen.HOME)) }
+  val screen = stack.last()
+  val navigate: (WalletScreen) -> Unit = { stack = stack + it }
+  val back: () -> Unit = { if (stack.size > 1) stack = stack.dropLast(1) }
   var selected by remember { mutableStateOf<String?>(null) }
   val scope = rememberCoroutineScope()
-  BackHandler(settings || selected != null) { settings = false; selected = null }
+  BackHandler(stack.size > 1, back)
   Scaffold(containerColor = MaterialTheme.colorScheme.background, topBar = {
     CenterAlignedTopAppBar(title = {
-      if (settings) Text("Settings") else if (selected != null) Text("Payment") else Row(verticalAlignment = Alignment.CenterVertically) {
+      if (screen != WalletScreen.HOME) Text(screen.title) else Row(verticalAlignment = Alignment.CenterVertically) {
         WaveMark(); Spacer(Modifier.width(8.dp)); Text("wavelength", fontSize = 21.sp, fontWeight = FontWeight.Medium)
       }
-    }, navigationIcon = { if (settings || selected != null) IconButton({ settings = false; selected = null }) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back") } },
-      actions = { if (!settings && selected == null) IconButton({ settings = true }) { Icon(Icons.Outlined.Settings, "Settings") } },
+    }, navigationIcon = { if (stack.size > 1) IconButton(back) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back") } },
+      actions = { if (screen == WalletScreen.HOME) IconButton({ navigate(WalletScreen.SETTINGS) }) { Icon(Icons.Outlined.Settings, "Settings") } },
       colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background))
   }) { padding ->
-    if (settings) {
-      Settings(session, state, Modifier.padding(padding)); return@Scaffold
-    }
-    val entry = state.activity.firstOrNull { it.id == selected }
-    if (entry != null) {
-      ActivityDetails(entry, Modifier.padding(padding), state.activity); return@Scaffold
+    val page = Modifier.padding(padding)
+    when (screen) {
+      WalletScreen.SETTINGS -> { SettingsScreen(session, state, page, navigate); return@Scaffold }
+      WalletScreen.SECURITY -> { SecurityScreen(session, state, page, authenticate); return@Scaffold }
+      WalletScreen.CREDIT -> { CreditScreen(session, state, page, back); return@Scaffold }
+      WalletScreen.CONNECTION -> { ConnectionScreen(session, state, page); return@Scaffold }
+      WalletScreen.ACTIVITY -> {
+        state.activity.firstOrNull { it.id == selected }?.let { ActivityDetails(it, page, state.activity) }
+        return@Scaffold
+      }
+      else -> Unit
     }
     LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(24.dp),
       verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -118,7 +141,7 @@ import kotlin.math.abs
       state.balance?.takeIf { it.creditAvailableSat > 0 }?.let { balance ->
         item {
           HorizontalDivider(); Spacer(Modifier.height(16.dp))
-          Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+          Row(Modifier.fillMaxWidth().clickable { navigate(WalletScreen.CREDIT) }.heightIn(min = 44.dp), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("Credit"); Text(sats(balance.creditAvailableSat))
           }
           Text("Provider-held", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -135,7 +158,7 @@ import kotlin.math.abs
       if (!state.activityLoaded && entries.isEmpty()) item { CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp) }
       else if (entries.isEmpty()) item { Text("No activity", color = MaterialTheme.colorScheme.onSurfaceVariant) }
       items(entries, key = { it.id }) { item ->
-        ActivityRow(item) { selected = item.id }
+        ActivityRow(item) { selected = item.id; navigate(WalletScreen.ACTIVITY) }
         HorizontalDivider()
       }
     }
@@ -182,25 +205,6 @@ import kotlin.math.abs
       entry.request?.onchainAddress?.takeIf { it.isNotEmpty() }?.let { CopyRow("On-chain", it) }
       if (entry.failureReason.isNotEmpty()) CopyRow("Status details", entry.failureReason)
     }
-  }
-}
-
-@Composable private fun Settings(session: WalletSession, state: WalletUiState, modifier: Modifier) {
-  var words by remember { mutableStateOf<List<String>>(emptyList()) }
-  val scope = rememberCoroutineScope()
-  Column(modifier.verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
-    CopyRow("Network", "Signet")
-    CopyRow("Client ID", state.info?.identityPubKey.orEmpty())
-    CopyRow("Operator", "signet.wavelength.lightning.finance:443")
-    CopyRow("Lightning", "swap.signet.wavelength.lightning.finance:443")
-    CopyRow("Version", state.info?.version.orEmpty())
-    HorizontalDivider()
-    WalletButton(if (words.isEmpty()) "Recovery words" else "Hide recovery words", secondary = true) {
-      if (words.isNotEmpty()) words = emptyList() else scope.launch {
-        try { words = session.backupWords() } catch (error: Exception) { session.reportError(error) }
-      }
-    }
-    if (words.isNotEmpty()) SelectionContainer { Text(words.mapIndexed { i, word -> "${i + 1}. $word" }.joinToString("\n")) }
   }
 }
 
