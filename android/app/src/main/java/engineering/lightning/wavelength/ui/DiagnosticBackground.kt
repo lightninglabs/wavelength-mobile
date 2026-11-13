@@ -4,11 +4,15 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import engineering.lightning.wavelength.BuildConfig
@@ -55,10 +59,18 @@ import kotlinx.serialization.json.Json
     SettingsValue("Entry point",run.wake?.entryPoint ?: "Not recorded")
     SettingsValue("Startup",run.startup ?: "Not recorded")
     run.wake?.attempt?.let { SettingsValue("Work attempt",(it+1).toString()) }
-    run.hostBudgetSeconds?.let { SettingsValue("Fallback deadline","$it s") }
-    run.nativeBudgetSeconds?.let { SettingsValue("SDK safety ceiling","$it s") }
-    run.stages.lastOrNull()?.elapsedMilliseconds?.let { last ->
-      if (run.durationMilliseconds != null && last > run.durationMilliseconds + 1) SettingsValue("Last observation","${last/1000.0}s")
+    var timingExpanded by remember(id) { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth().semantics { stateDescription = if (timingExpanded) "Expanded" else "Collapsed" }.clickable(role = Role.Button) { timingExpanded = !timingExpanded }.padding(vertical = 12.dp),verticalAlignment = Alignment.CenterVertically) {
+      Text("Timing details",Modifier.weight(1f),style = MaterialTheme.typography.bodyLarge)
+      Icon(if (timingExpanded) Icons.Outlined.ExpandMore else Icons.Outlined.ChevronRight,null)
+    }
+    if (timingExpanded) {
+      run.hostBudgetSeconds?.let { SettingsValue("Host fallback","$it s") }
+      run.nativeBudgetSeconds?.let { SettingsValue("SDK ceiling","$it s") }
+      run.stages.lastOrNull()?.elapsedMilliseconds?.let { last ->
+        if (run.durationMilliseconds != null && last > run.durationMilliseconds + 1) SettingsValue("Last observation","${last/1000.0}s")
+      }
+      Text("Android can stop work earlier. The host fallback bounds this work slice, including startup; it is not an Android execution limit.",style = MaterialTheme.typography.bodySmall,color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     run.native?.let { native ->
       HorizontalDivider()
@@ -71,7 +83,7 @@ import kotlinx.serialization.json.Json
       if (native.more) SettingsValue("Maintenance","More work remains")
       if (native.needsForeground) SettingsValue("Foreground","Required")
       if (native.interrupted) SettingsValue("Native result","Interrupted")
-      if (native.budgetExhausted) SettingsValue("SDK safety ceiling","Exhausted")
+      if (native.budgetExhausted) SettingsValue("Native result","SDK ceiling reached")
       Text("Mailbox batches count nonempty dispatch attempts. These counters do not prove a round completed.",style = MaterialTheme.typography.bodySmall,color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     HorizontalDivider()
