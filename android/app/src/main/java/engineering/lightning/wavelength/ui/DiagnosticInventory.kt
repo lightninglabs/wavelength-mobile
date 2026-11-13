@@ -114,7 +114,7 @@ import kotlinx.serialization.json.*
         if (free > 0) SettingsValue("Free window opens", (it.expiry-free).toString())
       }
     }
-    Text("Thresholds use the daemon’s expiry policy. Automatic refresh also needs an eligible zero-fee round and time to run. Android background scheduling is not enabled yet.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text("Thresholds use the daemon’s expiry policy. Automatic refresh also needs an eligible zero-fee round and time to run. Android chooses background opportunities; a scheduled check does not guarantee the round deadline.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     DiagnosticLoad(result); DiagnosticLoad(info)
   }
 }
