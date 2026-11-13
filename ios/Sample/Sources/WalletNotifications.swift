@@ -123,6 +123,8 @@ final class WalletNotifications: ObservableObject {
         self.registerDevice = registerDevice
     }
 
+    var diagnosticNetwork: String? { store?.network.rawValue }
+
     var enabled: Bool {
         guard let store else { return false }
         return defaults.bool(forKey: preference(store.network.rawValue))
@@ -556,7 +558,12 @@ extension WalletNotifications {
         guard !lease.expired, UIApplication.shared.applicationState != .active else { return false }
         let diagnosticNetwork = store?.network.rawValue
         if let diagnosticNetwork {
-            DiagnosticJournal.shared.begin(id: windowID, network: diagnosticNetwork, trigger: "Push")
+            let payment = ReceiptPaymentHint(userInfo: userInfo)
+            let known = payment.flatMap { validPaymentRoute($0.routeID) } ??
+                WalletNotificationRoute.parsePush(userInfo).flatMap { validWakeRoute($0) }
+            DiagnosticJournal.shared.begin(id: windowID, network: diagnosticNetwork,
+                trigger: known == nil ? "Unrecognized push" : payment == nil ? "Relay wake" : "Payment hint",
+                wake: .init(entryPoint: "APNs background callback", source: known?.source.rawValue))
         }
         defer {
             if let diagnosticNetwork {
@@ -564,7 +571,10 @@ extension WalletNotifications {
             }
         }
         guard let hint = ReceiptPaymentHint(userInfo: userInfo) else {
-            guard let id = WalletNotificationRoute.parsePush(userInfo), let route = validWakeRoute(id) else { return false }
+            guard let id = WalletNotificationRoute.parsePush(userInfo), let route = validWakeRoute(id) else {
+                if let diagnosticNetwork { DiagnosticJournal.shared.event(id: windowID, network: diagnosticNetwork, label: "No eligible local wake route") }
+                return false
+            }
             return await runMaintenance(windowID: windowID, lease: lease, expectedIdentity: route.identity)
         }
         guard let store, let route = validPaymentRoute(hint.routeID),
@@ -623,6 +633,7 @@ extension WalletNotifications {
                 identifier: "receipt." + NotificationRelayConfiguration.digest(Data((id + ":" + eventHash).utf8)),
                 content: content, trigger: nil
             ))
+            DiagnosticJournal.shared.event(id: windowID, network: route.network, label: "Local notification inserted")
             return result?.receipts.contains(where: { $0.state == "complete" }) == true
         } catch { return false }
     }

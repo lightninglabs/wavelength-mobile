@@ -13,6 +13,10 @@ enum WalletBackgroundMaintenance {
             Task { @MainActor in
                 schedule()
                 let windowID = UUID().uuidString
+                if let network = WalletNotifications.shared.diagnosticNetwork {
+                    DiagnosticJournal.shared.begin(id: windowID, network: network, trigger: "Scheduled refresh",
+                        wake: .init(entryPoint: "BGAppRefreshTask", taskID: identifier))
+                }
                 let lease = ReceiptFetchLease { result in
                     task.setTaskCompleted(success: result != .failed)
                 }
