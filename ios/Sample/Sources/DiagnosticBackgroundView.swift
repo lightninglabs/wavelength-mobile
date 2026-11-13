@@ -45,16 +45,20 @@ private struct DiagnosticRunView: View {
                 DiagnosticRow(label: "Entry point", value: run.wake?.entryPoint ?? "Not recorded")
                 DiagnosticRow(label: "Startup", value: run.startup ?? "Not recorded")
                 if let source = run.wake?.source { DiagnosticRow(label: "Source", value: source) }
-                if let host = run.hostBudgetSeconds { DiagnosticRow(label: "Fallback deadline", value: "\(host) s") }
-                if let native = run.nativeBudgetSeconds { DiagnosticRow(label: "SDK safety ceiling", value: "\(native) s") }
-                if let cleanup = run.observedDuration { DiagnosticRow(label: "Last observation", value: String(format: "%.2f s", cleanup)) }
+                DisclosureGroup("Timing details") {
+                    if let host = run.hostBudgetSeconds { DiagnosticRow(label: "Host fallback", value: "\(host) s") }
+                    if let native = run.nativeBudgetSeconds { DiagnosticRow(label: "SDK ceiling", value: "\(native) s") }
+                    if let cleanup = run.observedDuration { DiagnosticRow(label: "Last observation", value: String(format: "%.2f s", cleanup)) }
+                    Text("iOS can end the opportunity earlier. The host fallback includes startup; the SDK ceiling applies to native work.")
+                        .font(.caption).foregroundStyle(WalletTheme.secondary)
+                }
                 if let batches = run.batches { DiagnosticRow(label: "Mailbox batches", value: "\(batches)") }
                 if let checked = run.checked { DiagnosticRow(label: "VTXO owners checked", value: "\(checked)") }
                 if let proofs = run.receiptProofs { DiagnosticRow(label: "Receipt proofs", value: "\(proofs)") }
                 if let complete = run.completedReceipts { DiagnosticRow(label: "Complete proofs", value: "\(complete)") }
                 if run.deferred == true { DiagnosticRow(label: "Maintenance", value: "Deferred") }
                 if run.interrupted == true { DiagnosticRow(label: "Native result", value: "Interrupted") }
-                if run.budgetExhausted == true { DiagnosticRow(label: "SDK safety ceiling", value: "Exhausted") }
+                if run.budgetExhausted == true { DiagnosticRow(label: "Native result", value: "SDK ceiling reached") }
                 if run.more == true { DiagnosticRow(label: "Maintenance", value: "More work remains") }
                 if run.needsForeground == true { DiagnosticRow(label: "Foreground", value: "Required") }
                 Text("Mailbox batches count nonempty dispatch attempts. These counters do not prove a round completed.")
