@@ -224,6 +224,17 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
   /** Bounded wallet-scoped native log snapshot with the SDK’s sensitive-entry filter. */
   suspend fun diagnosticLogs(): DiagnosticLogSnapshot = decode(io { Mobile.diagnosticLogs() })
 
+  /** Advance persisted round/refresh work within the native maximum budget. */
+  suspend fun runMaintenanceWindow(id: String, timeoutSeconds: Long = 15): MaintenanceResult =
+    decode(io { Mobile.runMaintenanceWindow(id, timeoutSeconds) })
+
+  /** Signal the exact window, retaining its caller until native cleanup returns. */
+  suspend fun cancelMaintenanceWindow(id: String) = io { Mobile.cancelReceiptWindow(id) }
+
+  /** Source/canonical proof for locally enrolled invoices only. */
+  suspend fun readLightningReceipts(references: List<ReceiptReference>, since: Long): List<LightningReceipt> =
+    decode(io { Mobile.readLightningReceipts(encode(ReceiptReadRequest.serializer(), ReceiptReadRequest(references, since))) })
+
   // --- internals -----------------------------------------------------------
 
   private suspend inline fun <T> io(crossinline block: () -> T): T =

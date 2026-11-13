@@ -15,7 +15,7 @@ import engineering.lightning.wavelength.data.WalletSession
   val state by session.state.collectAsStateWithLifecycle()
   DiagnosticPage(modifier) {
     Text("Foreground activity", style = MaterialTheme.typography.titleLarge)
-    Text("This process only. Android push and background scheduling are not enabled yet.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+    Text("Foreground stages for this process. Scheduled work is recorded under Background.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
     runs.filter { it.network == state.network }.asReversed().forEach { run ->
       val first = run.stages.first().time
       DetailSection("${diagnosticTime(first,true)} · ${if (run.ended) run.stages.last().label else "Running"}") {

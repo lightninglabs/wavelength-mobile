@@ -1,6 +1,9 @@
 package engineering.lightning.wavelength.data
 
 import android.content.Context
+import android.os.UserManager
+import engineering.lightning.wavelength.background.*
+import kotlinx.coroutines.flow.first
 import engineering.lightning.wavewalletdk.client.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -11,15 +14,20 @@ import kotlinx.coroutines.sync.withLock
 import java.io.File
 
 /** One daemon with serialized ownership when moving between isolated wallets. */
-class WalletSession(context: Context) {
+class WalletSession(private val context: Context) {
   val client = WalletClient()
   val diagnostics = DiagnosticRuns()
+  val backgroundHistory = BackgroundJournal(File(context.noBackupFilesDir,"background-history.json"))
+  val notices = WalletNotices(context)
   private val root = context.noBackupFilesDir
   private val vault = WalletVault(context)
   private val preferences = WalletPreferences(context)
   val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
   private val lifecycle = Mutex()
   private val reads = Mutex()
+  private val maintenance = MaintenanceOwner(scope,lifecycle) { lease ->
+    if (lease.coldStarting) client.stop() else client.cancelMaintenanceWindow(lease.id)
+  }
   private val mutable = MutableStateFlow(WalletUiState(network = preferences.selectedNetwork,
     settings = preferences.network(preferences.selectedNetwork), appearance = preferences.appearance,
     authentication = preferences.authentication, captureLevel = preferences.captureLevel))
@@ -27,21 +35,28 @@ class WalletSession(context: Context) {
   private var observations: Job? = null
   private var foreground = false
   private var generation = 0L
+  private var pendingNotification: Pair<WalletNetwork,String>? = null
   private var pendingUnlock: WalletNetwork? = null
   var payments = paymentOperations(mutable.value.network, generation)
     private set
-  val canChangeWallet: Boolean get() = state.value.phase != WalletPhase.OPENING && state.value.recoveryWords == null &&
+  val canChangeWallet: Boolean get() = maintenance.active == null && state.value.phase != WalletPhase.OPENING && state.value.recoveryWords == null &&
     !payments.state.value.busy && payments.state.value.pending == null && !payments.state.value.blocked
 
   private fun directory(network: WalletNetwork) = File(root, "wallets/${network.wire}")
   private fun paymentOperations(network: WalletNetwork, epoch: Long) = PaymentOperations(scope,
-    NativePaymentGateway(client) { preferences.network(network).credit },
+    NativePaymentGateway(client, { preferences.network(network).credit }, receiptAdmission = { amount ->
+      val admission = notices.admission(network, state.value.info?.identityPubKey.orEmpty(), connectionFingerprint(),amount)
+      admission?.let { enrolled -> { result: ReceiveResult ->
+        if (epoch == generation) runCatching { enrolled(result) }.onFailure(::reportError)
+      } }
+    }),
     FilePaymentJournal(File(directory(network).apply { mkdirs() }, "pending-payment.json")),
     allowed = { foreground && epoch == generation && state.value.network == network && state.value.phase == WalletPhase.OPEN },
     onEntry = { if (epoch == generation) upsert(it) }, network = network)
 
   fun resume() {
     foreground = true
+    maintenance.interrupt()
     diagnostics.begin(state.value.network)
     scope.launch { lifecycle.withLock {
       if (!foreground) return@withLock
@@ -66,10 +81,15 @@ class WalletSession(context: Context) {
     diagnostics.finish("Paused")
     observations?.cancel()
     mutable.update { it.copy(phase = if (it.phase == WalletPhase.OPEN && it.authentication) WalletPhase.LOCKED else it.phase) }
-    scope.launch { lifecycle.withLock {
-      observations?.join(); observations = null
-      if (client.isRunning) reads.withLock { runCatching { client.setHostForeground(false) } }
-    } }
+    scope.launch {
+      // Let already admitted native payment calls return before pausing intake.
+      payments.state.first { !it.busy }
+      lifecycle.withLock {
+        if (foreground) return@withLock
+        observations?.join(); observations = null
+        if (client.isRunning) reads.withLock { runCatching { client.setHostForeground(false) } }
+      }
+    }
   }
 
   /** A credential fallback may return before onStart; consume its success there. */
@@ -212,7 +232,108 @@ class WalletSession(context: Context) {
       }
       launch { runCatching { client.getInfo() }.onSuccess { info -> if (epoch == generation) mutable.update { it.copy(info = info) } } }
       balance.join(); activity.join()
+      pendingNotification?.takeIf { it.first == state.value.network && state.value.activity.any { entry -> entry.id == it.second } }?.let { target ->
+        mutable.update { it.copy(notificationTarget = target.second) }
+      }
       if (epoch == generation) payments.reconcile(mutable.value.activity)
+    }
+  }
+
+  fun openNotification(network: String?, receipt: String?) {
+    val selected = WalletNetwork.entries.firstOrNull { it.wire == network } ?: return
+    if (receipt == null || !notices.knownReceipt(selected,receipt)) return
+    pendingNotification = selected to receipt
+    if (selected != state.value.network) reportError(IllegalStateException("Open ${selected.title} to view this payment."))
+    else if (state.value.activity.any { it.id == receipt }) mutable.update { it.copy(notificationTarget = receipt) }
+  }
+  fun consumeNotification() { pendingNotification = null; mutable.update { it.copy(notificationTarget = null) } }
+
+  fun connectionFingerprint(): String {
+    val settings = state.value.settings.endpoints
+    val raw = "${state.value.network.wire}\u0000${settings.operator}\u0000${settings.swap}\u0000${settings.esplora}"
+    return java.security.MessageDigest.getInstance("SHA-256").digest(raw.toByteArray()).joinToString("") { "%02x".format(it) }
+  }
+
+  fun configureNotifications(enabled: Boolean, amounts: Boolean = false) = preferenceChange {
+    notices.configure(state.value.network,state.value.info?.identityPubKey.orEmpty(),connectionFingerprint(),enabled,amounts)
+  }
+
+  /** One native owner across cold start, expiry, foreground takeover and cleanup. */
+  suspend fun runBackground(trigger: String, expectedNetwork: String? = null, expectedIdentity: String? = null): BackgroundOutcome = withContext(Dispatchers.Main.immediate) {
+    maintenance.run { lease ->
+      val network = state.value.network
+      backgroundHistory.begin(lease.id,network,trigger)
+      var outcome = BackgroundOutcome("Not admitted")
+      var cold = false
+      try {
+        if (foreground || payments.state.value.busy || state.value.recoveryWords != null ||
+          (expectedNetwork != null && expectedNetwork != network.wire) ||
+          !context.getSystemService(UserManager::class.java).isUserUnlocked) return@run outcome
+        observations?.cancelAndJoin(); observations = null
+        reads.withLock {
+          fun permitted() = !foreground && !lease.expired && state.value.network == network
+          if (!permitted()) return@withLock
+          if (!client.isRunning) {
+            // Read before opening a database. Background never creates a wallet
+            // or prompts for credentials, and it never grants a UI session.
+            val password = withContext(Dispatchers.IO) { vault.password(false,network) }
+            try {
+              if (!permitted()) return@withLock
+              cold = true; lease.coldStarting = true
+              backgroundHistory.stage(lease.id,"Cold startup")
+              startCurrent()
+              if (!permitted()) return@withLock
+              val info = client.getInfo()
+              check(info.walletState != WalletState.NONE) { "Wallet has not been created" }
+              if (info.walletState == WalletState.LOCKED) client.unlockWallet(password)
+            } finally { password.fill(0) }
+          } else {
+            backgroundHistory.stage(lease.id,"Retained runtime")
+            // A retained daemon may have been started at the locked screen.
+            if (client.getInfo().walletState == WalletState.LOCKED) {
+              val password = withContext(Dispatchers.IO) { vault.password(false,network) }
+              try { if (permitted()) client.unlockWallet(password) } finally { password.fill(0) }
+            }
+          }
+          if (!permitted()) return@withLock
+          val info = client.getInfo()
+          check(info.walletState != WalletState.NONE && info.identityPubKey.isNotBlank() &&
+            (expectedIdentity == null || expectedIdentity == info.identityPubKey)) { "Wallet unavailable" }
+          mutable.update { it.copy(info = info, phase = WalletPhase.LOCKED) }
+          client.setHostForeground(false)
+          lease.coldStarting = false
+          if (!permitted()) return@withLock
+          backgroundHistory.stage(lease.id,"Wallet prepared; UI locked")
+          backgroundHistory.stage(lease.id,"Native maintenance window")
+          val result = client.runMaintenanceWindow(lease.id)
+          backgroundHistory.stage(lease.id,"Native returned: ${result.batches} batches, ${result.maintenanceChecked} checked")
+          if (!permitted()) return@withLock
+          outcome = BackgroundOutcome(when {
+            result.budgetExhausted -> "Budget exhausted"
+            result.interrupted -> "Interrupted"
+            result.needsForeground -> "Needs foreground"
+            else -> "Window completed"
+          },result.batches > 0 || result.maintenanceChecked > 0)
+          val enrolled = notices.pending(network,info.identityPubKey,connectionFingerprint())
+          if (enrolled.isNotEmpty()) {
+            val proofs = client.readLightningReceipts(enrolled.map { it.reference },enrolled.first().consent.since)
+            if (!permitted()) return@withLock
+            enrolled.forEach { entry -> proofs.firstOrNull { it.reference == entry.reference }?.let { proof -> notices.present(network,entry,proof,visible = foreground) } }
+            backgroundHistory.stage(lease.id,"Local receipts checked")
+          }
+        }
+        if (lease.expired || foreground) outcome = BackgroundOutcome(lease.cancellationReason?.label ?: "Foreground takeover")
+        outcome
+      } catch (_: Exception) {
+        outcome = BackgroundOutcome(lease.cancellationReason?.label ?: "Preparation or native call failed")
+        outcome
+      } finally {
+        // Only stop failed cold preparation. A prepared native runtime survives
+        // bounded-window expiry, preserving existing signing/domain owners.
+        if (cold && lease.coldStarting) runCatching { client.stop() }
+        if (!foreground && state.value.phase == WalletPhase.OPENING) mutable.update { it.copy(phase = WalletPhase.LOCKED) }
+        backgroundHistory.finish(lease.id,lease.cancellationReason?.label ?: outcome.label)
+      }
     }
   }
 
@@ -227,7 +348,10 @@ class WalletSession(context: Context) {
   }
   fun dismissError() { mutable.update { it.copy(error = null) } }
   fun reportError(error: Throwable) = fail(error, fatal = false)
-  fun upsert(entry: Entry) { mutable.update { it.copy(activity = it.activity.filterNot { old -> old.id == entry.id } + entry) } }
+  fun upsert(entry: Entry) {
+    if (foreground && state.value.phase == WalletPhase.OPEN && entry.status == "complete")
+      runCatching { notices.suppressVisible(state.value.network, entry.id) }.onFailure(::reportError)
+    mutable.update { it.copy(activity = it.activity.filterNot { old -> old.id == entry.id } + entry) } }
   private fun fail(error: Throwable, fatal: Boolean = true) {
     if (error is CancellationException) throw error
     if (fatal) diagnostics.finish("Failed")
@@ -249,4 +373,5 @@ data class WalletUiState(
   val activity: List<Entry> = emptyList(),
   val activityLoaded: Boolean = false,
   val error: String? = null,
+  val notificationTarget: String? = null,
 )

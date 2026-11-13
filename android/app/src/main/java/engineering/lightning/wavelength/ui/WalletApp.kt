@@ -101,6 +101,13 @@ import kotlin.math.abs
   val back: () -> Unit = { if (stack.size > 1) stack = stack.dropLast(1) }
   var selected by remember { mutableStateOf<String?>(null) }
   val scope = rememberCoroutineScope()
+  LaunchedEffect(state.phase, state.notificationTarget, state.activity) {
+    val target = state.notificationTarget
+    if (state.phase == WalletPhase.OPEN && target != null && state.activity.any { it.id == target }) {
+      selected = target; stack = listOf(WalletScreen.HOME,WalletScreen.ACTIVITY)
+      session.consumeNotification()
+    }
+  }
   BackHandler(stack.size > 1, back)
   if (screen == WalletScreen.DIAGNOSTICS) { DiagnosticsApp(session, back); return }
   Scaffold(containerColor = MaterialTheme.colorScheme.background, topBar = {
@@ -115,6 +122,7 @@ import kotlin.math.abs
     val page = Modifier.padding(padding)
     when (screen) {
       WalletScreen.SETTINGS -> { SettingsScreen(session, state, page, navigate, diagnostics = true); return@Scaffold }
+      WalletScreen.NOTIFICATIONS -> { NotificationsScreen(session, state, page); return@Scaffold }
       WalletScreen.SECURITY -> { SecurityScreen(session, state, page, authenticate); return@Scaffold }
       WalletScreen.CREDIT -> { CreditScreen(session, state, page, back); return@Scaffold }
       WalletScreen.CONNECTION -> { ConnectionScreen(session, state, page); return@Scaffold }
