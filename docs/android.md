@@ -1,9 +1,12 @@
-# Android workflow
+# Android build and emulator workflow
 
-This walks through building and running the sample app, from a clean machine to
+This walks through building and running the Android app, from a clean machine to
 the wallet syncing on an emulator. It uses Google's
 [`android` CLI](https://developer.android.com/tools/agents/android-cli), which
 manages the SDK, emulators, and deployment from the command line.
+
+For the current wallet milestone and the remaining screen-parity plan, see
+[Android wallet port](android-port.md).
 
 ## Install the toolchain
 
@@ -91,8 +94,9 @@ android run --apks=app/build/outputs/apk/debug/app-debug.apk
 
 ## Watch what happens
 
-The app boots the embedded daemon, creates a wallet, and polls `getInfo` so you
-can see the block height climb as the wallet syncs. Two ways to observe it:
+Create or restore the Signet wallet, then use Send/Receive and Activity. The
+app keeps the native wallet in application scope and loads balance and history
+independently. Use these commands to inspect native logs or capture the UI:
 
 ```bash
 # Mirror the device logs (the embedded daemon logs under the GoLog tag).
