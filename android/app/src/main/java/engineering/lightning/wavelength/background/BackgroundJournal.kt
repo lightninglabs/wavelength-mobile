@@ -49,7 +49,7 @@ class BackgroundJournal(file: File, private val uptime: () -> Long = { android.o
   }
   fun begin(id: String, network: WalletNetwork, trigger: String, wake: BackgroundWakeContext? = null) {
     beganAt[id] = uptime()
-    save(mutable.value + BackgroundRun(id,network.wire,trigger,listOf(BackgroundStage("Opportunity started",elapsedMilliseconds = 0)),wake = wake,hostBudgetSeconds = 20))
+    save(mutable.value + BackgroundRun(id,network.wire,trigger,listOf(BackgroundStage("Opportunity started",elapsedMilliseconds = 0)),wake = wake,hostBudgetSeconds = (BackgroundLease.FALLBACK_MILLIS / 1000).toInt()))
     beganAt.keys.retainAll(mutable.value.map { it.id }.toSet())
   }
   fun stage(id: String, label: String, duration: Long? = null) = save(mutable.value.map {
