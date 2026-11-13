@@ -55,8 +55,8 @@ import kotlinx.serialization.json.Json
     SettingsValue("Entry point",run.wake?.entryPoint ?: "Not recorded")
     SettingsValue("Startup",run.startup ?: "Not recorded")
     run.wake?.attempt?.let { SettingsValue("Work attempt",(it+1).toString()) }
-    run.hostBudgetSeconds?.let { SettingsValue("Overall time limit","$it s") }
-    run.nativeBudgetSeconds?.let { SettingsValue("SDK work limit","$it s") }
+    run.hostBudgetSeconds?.let { SettingsValue("Fallback deadline","$it s") }
+    run.nativeBudgetSeconds?.let { SettingsValue("SDK safety ceiling","$it s") }
     run.stages.lastOrNull()?.elapsedMilliseconds?.let { last ->
       if (run.durationMilliseconds != null && last > run.durationMilliseconds + 1) SettingsValue("Last observation","${last/1000.0}s")
     }
@@ -71,7 +71,7 @@ import kotlinx.serialization.json.Json
       if (native.more) SettingsValue("Maintenance","More work remains")
       if (native.needsForeground) SettingsValue("Foreground","Required")
       if (native.interrupted) SettingsValue("Native result","Interrupted")
-      if (native.budgetExhausted) SettingsValue("SDK work limit","Exhausted")
+      if (native.budgetExhausted) SettingsValue("SDK safety ceiling","Exhausted")
       Text("Mailbox batches count nonempty dispatch attempts. These counters do not prove a round completed.",style = MaterialTheme.typography.bodySmall,color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     HorizontalDivider()

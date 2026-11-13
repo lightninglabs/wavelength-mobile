@@ -19,7 +19,7 @@ flowchart LR
     B -->|yes| C[Skip]
     B -->|no| D[Read existing device credential]
     D --> E[Prepare retained or cold wallet]
-    E --> F[15-second native window]
+    E --> F[Native window; host owns expiry]
     F --> G[Check enrolled receipts]
     G --> H[Retain runtime; keep UI locked]
 ```
@@ -30,7 +30,7 @@ normal UI authentication gate even when native keys are available unattended.
 A failed cold preparation stops only the runtime created by that preparation.
 A prepared retained runtime survives window expiry.
 
-A twenty-second outer deadline includes preparation and receipt checks. Expiry
+A twenty-eight-second fallback includes preparation and receipt checks. Expiry
 or foreground return signals the exact native window ID. Cancelling a worker
 retains and joins the host task; it never releases ownership merely because the
 OS callback was cancelled. Cancellation callbacks also join before another
@@ -143,3 +143,11 @@ presentation, not automatic completion of a round before its deadline.
 
 Richer wake context, startup timings, native result fields and related logs are
 described in [background traces](background-traces.md).
+
+The 28-second per-attempt fallback is an application work-slice policy, not an
+Android execution limit. WorkManager cancellation and foreground takeover still
+cancel immediately and join native ownership. We deliberately avoid holding an
+idle mailbox polling loop for WorkManager's much longer runtime allowance.
+The native safety ceiling is 30 seconds, so it does not truncate a host-owned
+attempt after 15 seconds. Scheduled work and authenticated hints can retry the
+existing persisted work on a later opportunity.

@@ -317,8 +317,8 @@ class WalletSession(private val context: Context) {
           if (!permitted()) return@withLock
           backgroundHistory.stage(lease.id,"Preparation; UI locked",backgroundHistory.duration(preparationStart))
           backgroundHistory.stage(lease.id,"Native maintenance window")
-          backgroundHistory.context(lease.id,nativeBudget = 15)
-          val result = backgroundHistory.measure(lease.id,"Maintenance window") { client.runMaintenanceWindow(lease.id) }
+          backgroundHistory.context(lease.id,nativeBudget = BackgroundLease.NATIVE_CEILING_SECONDS.toInt())
+          val result = backgroundHistory.measure(lease.id,"Maintenance window") { client.runMaintenanceWindow(lease.id,BackgroundLease.NATIVE_CEILING_SECONDS) }
           backgroundHistory.nativeResult(lease.id,result)
           if (!permitted()) return@withLock
           outcome = BackgroundOutcome(when {
