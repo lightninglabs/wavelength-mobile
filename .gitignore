@@ -23,3 +23,5 @@ ios/Sample/build/
 
 # Local/CI test reports.
 .ci-results/
+
+android/walletkit/libs/*.origin

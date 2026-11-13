@@ -45,6 +45,8 @@ data class Balance(
   @SerialName("ConfirmedSat") val confirmedSat: Long = 0,
   @SerialName("PendingInSat") val pendingInSat: Long = 0,
   @SerialName("PendingOutSat") val pendingOutSat: Long = 0,
+  @SerialName("CreditAvailableSat") val creditAvailableSat: Long = 0,
+  @SerialName("CreditReservedSat") val creditReservedSat: Long = 0,
 )
 
 /** Wallet readiness + pending activity (`status`). */
@@ -85,6 +87,30 @@ data class Entry(
   @SerialName("UpdatedAt") val updatedAt: String = "",
   @SerialName("Note") val note: String = "",
   @SerialName("FailureReason") val failureReason: String = "",
+  @SerialName("FailureCode") val failureCode: String = "",
+  @SerialName("Cursor") val cursor: Long = 0,
+  @SerialName("Progress") val progress: EntryProgress? = null,
+  @SerialName("Request") val request: EntryRequest? = null,
+)
+
+/** Durable lifecycle metadata used to correlate and present activity. */
+@Serializable
+data class EntryProgress(
+  @SerialName("Phase") val phase: String = "",
+  @SerialName("PhaseLabel") val phaseLabel: String = "",
+  @SerialName("PaymentHash") val paymentHash: String = "",
+  @SerialName("Txid") val txid: String = "",
+  @SerialName("VTXOOutpoint") val vtxoOutpoint: String = "",
+)
+
+/** Original request retained by the wallet, including receive invoices. */
+@Serializable
+data class EntryRequest(
+  @SerialName("Type") val type: String = "",
+  @SerialName("LightningInvoice") val lightningInvoice: String = "",
+  @SerialName("PaymentHash") val paymentHash: String = "",
+  @SerialName("OnchainAddress") val onchainAddress: String = "",
+  @SerialName("ArkAddress") val arkAddress: String = "",
 )
 
 /** A Lightning invoice to receive into the wallet, plus its initial entry. */
@@ -118,6 +144,11 @@ data class PrepareSendResult(
   @SerialName("DestinationSummary") val destinationSummary: String = "",
   @SerialName("PaymentHash") val paymentHash: String = "",
   @SerialName("Warning") val warning: String = "",
+  @SerialName("TotalOutflowKnown") val totalOutflowKnown: Boolean = false,
+  @SerialName("InvoiceDescription") val invoiceDescription: String = "",
+  @SerialName("ExpiresAtUnix") val expiresAtUnix: Long = 0,
+  @SerialName("SelectedOutpoints") val selectedOutpoints: List<String> = emptyList(),
+  @SerialName("CreditPreview") val creditPreview: CreditPreview? = null,
 )
 
 /**
@@ -221,4 +252,14 @@ data class ExitStatusResult(
   @SerialName("Status") val status: String = "",
   @SerialName("SweepTxid") val sweepTxid: String = "",
   @SerialName("LastError") val lastError: String = "",
+)
+
+/** Credit is provider-held value, separate from the wallet balance. */
+@Serializable
+data class CreditPreview(
+  @SerialName("MustUseCredit") val mustUseCredit: Boolean = false,
+  @SerialName("CreditAppliedSat") val creditAppliedSat: Long = 0,
+  @SerialName("CreditShortfallSat") val creditShortfallSat: Long = 0,
+  @SerialName("CreditTopupSat") val creditTopupSat: Long = 0,
+  @SerialName("ArkFundingSat") val arkFundingSat: Long = 0,
 )
