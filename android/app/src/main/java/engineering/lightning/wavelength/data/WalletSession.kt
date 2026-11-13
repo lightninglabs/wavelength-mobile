@@ -13,6 +13,7 @@ import java.io.File
 /** One daemon with serialized ownership when moving between isolated wallets. */
 class WalletSession(context: Context) {
   val client = WalletClient()
+  val diagnostics = DiagnosticRuns()
   private val root = context.noBackupFilesDir
   private val vault = WalletVault(context)
   private val preferences = WalletPreferences(context)
@@ -21,7 +22,7 @@ class WalletSession(context: Context) {
   private val reads = Mutex()
   private val mutable = MutableStateFlow(WalletUiState(network = preferences.selectedNetwork,
     settings = preferences.network(preferences.selectedNetwork), appearance = preferences.appearance,
-    authentication = preferences.authentication))
+    authentication = preferences.authentication, captureLevel = preferences.captureLevel))
   val state = mutable.asStateFlow()
   private var observations: Job? = null
   private var foreground = false
@@ -48,12 +49,14 @@ class WalletSession(context: Context) {
 
   fun resume() {
     foreground = true
+    diagnostics.begin(state.value.network)
     scope.launch { lifecycle.withLock {
       if (!foreground) return@withLock
       try {
         if (!client.isRunning) startCurrent()
         val info = client.getInfo()
         if (!foreground) return@withLock
+        diagnostics.stage("Daemon available")
         mutable.update { it.copy(info = info) }
         when {
           state.value.phase == WalletPhase.BACKUP -> Unit
@@ -72,6 +75,7 @@ class WalletSession(context: Context) {
       creation.discard()
       mutable.update { it.copy(phase = WalletPhase.SETUP, recoveryWords = null) }
     }
+    diagnostics.finish("Paused")
     observations?.cancel()
     mutable.update { it.copy(phase = if (it.phase == WalletPhase.OPEN && it.authentication) WalletPhase.LOCKED else it.phase) }
     scope.launch { lifecycle.withLock {
@@ -112,6 +116,7 @@ class WalletSession(context: Context) {
   private fun opened() {
     pendingUnlock = null
     if (!foreground) { mutable.update { it.copy(phase = WalletPhase.LOCKED) }; return }
+    diagnostics.stage("Wallet available")
     mutable.update { it.copy(phase = WalletPhase.OPEN) }
     startObservations()
   }
@@ -128,7 +133,7 @@ class WalletSession(context: Context) {
   private suspend fun startCurrent() {
     mutable.update { it.copy(phase = WalletPhase.OPENING, error = null) }
     val network = state.value.network
-    client.start(preferences.network(network).config(network, directory(network).absolutePath))
+    client.start(preferences.network(network).config(network, directory(network).absolutePath, preferences.captureLevel))
   }
 
   fun switchNetwork(network: WalletNetwork) {
@@ -148,10 +153,12 @@ class WalletSession(context: Context) {
       reads.withLock { client.stop() }
       if (endpoints != null) preferences.endpoints(network, endpoints)
       preferences.select(network)
+      diagnostics.finish("Network changed")
+      if (foreground) diagnostics.begin(network)
       generation++
       payments = paymentOperations(network, generation)
       mutable.value = WalletUiState(network = network, settings = preferences.network(network),
-        appearance = preferences.appearance, authentication = preferences.authentication)
+        appearance = preferences.appearance, authentication = preferences.authentication, captureLevel = preferences.captureLevel)
       startCurrent()
       val info = client.getInfo()
       mutable.update { it.copy(info = info, phase = if (info.walletState == WalletState.NONE) WalletPhase.SETUP else WalletPhase.LOCKED) }
@@ -172,6 +179,9 @@ class WalletSession(context: Context) {
     scope.launch { lifecycle.withLock { if (canChangeWallet) transition(state.value.network) } }
   }
 
+  fun setCaptureLevel(value: CaptureLevel) = preferenceChange {
+    preferences.captureLevel(value); mutable.update { it.copy(captureLevel = value) }
+  }
   fun setAppearance(value: WalletAppearance) = preferenceChange {
     preferences.appearance(value); mutable.update { it.copy(appearance = value) }
   }
@@ -194,7 +204,9 @@ class WalletSession(context: Context) {
       launch {
         while (isActive) {
           try {
+            diagnostics.stage("Starting ingress")
             client.setHostForeground(true)
+            diagnostics.stage("Ingress started")
             client.activity(includeExisting = true).collect { entry -> if (epoch == generation) upsert(entry) }
           } catch (error: CancellationException) { throw error }
           catch (_: Exception) { delay(3_000) }
@@ -209,7 +221,7 @@ class WalletSession(context: Context) {
     if (state.value.phase != WalletPhase.OPEN) return@withLock
     supervisorScope {
       val balance = launch {
-        try { val value = client.balance(); if (epoch == generation) mutable.update { it.copy(balance = value) } }
+        try { val value = client.balance(); if (epoch == generation) { mutable.update { it.copy(balance = value) }; diagnostics.stage("Balance loaded") } }
         catch (error: CancellationException) { throw error }
         catch (_: Exception) { /* Keep the last observed balance while reconnecting. */ }
       }
@@ -220,6 +232,7 @@ class WalletSession(context: Context) {
           if (epoch == generation) mutable.update { current ->
             current.copy(activity = mergeActivitySnapshot(before, result.entries, current.activity), activityLoaded = true, error = null)
           }
+          if (epoch == generation) diagnostics.stage("Activity loaded")
         } catch (error: CancellationException) { throw error }
         catch (error: Exception) { if (epoch == generation) fail(error, fatal = false) }
       }
@@ -244,6 +257,7 @@ class WalletSession(context: Context) {
   private fun fail(error: Throwable, fatal: Boolean = true) {
     if (error is CancellationException) throw error
     if (fatal) pendingUnlock = null
+    if (fatal) diagnostics.finish("Failed")
     mutable.update { it.copy(phase = if (fatal) WalletPhase.ERROR else it.phase, error = error.message ?: "Wallet unavailable") }
   }
 }
@@ -255,6 +269,7 @@ data class WalletUiState(
   val settings: NetworkSettings = NetworkSettings(),
   val appearance: WalletAppearance = WalletAppearance.SYSTEM,
   val authentication: Boolean = true,
+  val captureLevel: CaptureLevel = CaptureLevel.INFO,
   val recoveryWords: List<String>? = null,
   val info: Info? = null,
   val balance: Balance? = null,
