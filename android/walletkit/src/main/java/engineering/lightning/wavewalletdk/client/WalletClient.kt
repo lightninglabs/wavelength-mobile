@@ -2,6 +2,7 @@ package engineering.lightning.wavewalletdk.client
 
 import android.util.Base64
 import engineering.lightning.wavewalletdk.mobile.Mobile
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -44,6 +45,9 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
   /** Wallet readiness, balance, and pending-activity count. */
   suspend fun status(): Status = decode(io { Mobile.status() })
 
+  /** Foreground ownership of network ingress; serialized by the host. */
+  suspend fun setHostForeground(foreground: Boolean) = io { Mobile.setHostForeground(foreground) }
+
   /** Wallet balance summary. */
   suspend fun balance(): Balance = decode(io { Mobile.balance() })
 
@@ -78,7 +82,7 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
    * activity stream as it is paid.
    */
   suspend fun receiveLightning(amountSat: Long, memo: String = ""): ReceiveResult =
-    decode(io { Mobile.receive(encode(ReceiveReq.serializer(), ReceiveReq(amountSat, memo))) })
+    decode(io { Mobile.receive(encode(ReceiveReq.serializer(), ReceiveReq(amountSat, memo, 20))) })
 
   /**
    * Allocate a fresh on-chain boarding address to deposit into. The optional
@@ -99,12 +103,14 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
     note: String = "",
     maxFeeSat: Long = 0,
     sweepAll: Boolean = false,
+    maxCreditSat: Long = 10_000,
+    maxCreditTopupSat: Long = 10_000,
   ): PrepareSendResult = decode(
     io {
       Mobile.prepareSend(
         encode(
           PrepareSendReq.serializer(),
-          PrepareSendReq(invoice, onchainAddress, amountSat, note, maxFeeSat, sweepAll),
+          PrepareSendReq(invoice, onchainAddress, amountSat, note, maxFeeSat, sweepAll, maxCreditSat, maxCreditTopupSat),
         ),
       )
     },
@@ -144,7 +150,7 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
           } catch (e: Exception) {
             if (isEndOfStream(e)) break else throw WalletException(e.message)
           }
-          trySend(json.decodeFromString(Entry.serializer(), String(next)))
+          send(json.decodeFromString(Entry.serializer(), String(next)))
         }
         close()
       } catch (e: Throwable) {
@@ -213,6 +219,8 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
   private suspend inline fun <T> io(crossinline block: () -> T): T =
     try {
       withContext(Dispatchers.IO) { block() }
+    } catch (e: CancellationException) {
+      throw e
     } catch (e: WalletException) {
       throw e
     } catch (e: Exception) {
@@ -228,9 +236,11 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
   ): ByteArray = json.encodeToString(serializer, value).toByteArray()
 
   companion object {
-    private val DEFAULT_JSON = Json {
+    internal val DEFAULT_JSON = Json {
+      encodeDefaults = true
       ignoreUnknownKeys = true
       explicitNulls = false
+      coerceInputValues = true
     }
 
     private fun base64(b: ByteArray): String = Base64.encodeToString(b, Base64.NO_WRAP)
@@ -261,6 +271,7 @@ private data class SubscribeReq(
 private data class ReceiveReq(
   @SerialName("AmountSat") val amountSat: Long,
   @SerialName("Memo") val memo: String = "",
+  @SerialName("TimeoutSeconds") val timeoutSeconds: Long = 20,
 )
 
 @Serializable
@@ -269,13 +280,15 @@ private data class DepositReq(
 )
 
 @Serializable
-private data class PrepareSendReq(
+internal data class PrepareSendReq(
   @SerialName("Invoice") val invoice: String? = null,
   @SerialName("OnchainAddress") val onchainAddress: String? = null,
   @SerialName("AmountSat") val amountSat: Long = 0,
   @SerialName("Note") val note: String = "",
   @SerialName("MaxFeeSat") val maxFeeSat: Long = 0,
   @SerialName("SweepAll") val sweepAll: Boolean = false,
+  @SerialName("MaxCreditSat") val maxCreditSat: Long = 10_000,
+  @SerialName("MaxCreditTopupSat") val maxCreditTopupSat: Long = 10_000,
 )
 
 @Serializable

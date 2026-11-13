@@ -20,3 +20,5 @@ ios/Sample/*.xcodeproj
 ios/Sample/DerivedData/
 ios/Sample/DerivedData-Phone/
 ios/Sample/build/
+
+android/walletkit/libs/*.origin
