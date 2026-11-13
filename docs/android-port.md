@@ -8,7 +8,7 @@ permissions, navigation, sharing and accessibility behavior.
 
 ## First milestone: a real Signet wallet
 
-The first three PRs are a linear stack:
+The port is a native GitHub PR stack. Its first three layers are:
 
 1. **SDK alignment:** exact native pin and bridge provenance, typed activity and
    credit fields, bounded receive requests and foreground ownership.
@@ -17,8 +17,22 @@ The first three PRs are a linear stack:
 3. **Payments:** Lightning quote/confirm, invoice and on-chain receive QR, durable
    uncertain-operation tracking, and emulator Signet payment validation.
 
-This milestone intentionally exposes Signet only. No mainnet controls or
-placeholder buttons suggest that unfinished flows work. There is no Android push
+Signet is the first live payment test target. The next settings layer adds
+Mainnet, Testnet and Signet wallets, plus Regtest in debug builds. Each network
+has its own wallet directory, device-bound password, connection overrides, credit
+limits and unresolved-payment journal. Switching networks stops the old daemon
+and observers before starting the selected wallet. In-flight or ambiguous sends
+must resolve before switching.
+
+Authentication and appearance apply across wallets. Connection fields display
+the effective SDK defaults when overrides are empty; the client ID is copyable.
+New recovery words are shown once at creation, never written to a separate file
+or saved UI state. The backup and restore screens block screenshots in debug
+and release builds. Previously encrypted backup files are left intact, but are
+not exposed by a repeat viewer. The iOS app already has creation-only backup;
+the native SDK has no recovery-word export API.
+
+There is no Android push
 enrollment or background scheduler yet. Foreground ingress stops when the app
 leaves the foreground. Native payment records and unresolved host evidence stay
 on disk; returning to the app resumes observation rather than redispatching.
@@ -57,7 +71,7 @@ failure states. Do not replace these with generic dashboards.
 
 | Area | iOS reference | Required behavior |
 | --- | --- | --- |
-| Network wallets and connections | `SettingsView`, `Components`, `WalletAuthentication` | Per-network isolation, effective defaults, consistent authentication and tidy network selection. |
+| Network wallets and connections (implemented) | `SettingsView`, `Components`, `WalletAuthentication` | Per-network isolation, effective defaults, consistent authentication and tidy network selection. |
 | Payment completion | `SendView`, `ReceiveView`, `ActivityViews` | Camera/BIP-21 handling, on-chain sends, options, payment details, matched credit funding details, copy/share and ordinary QR codes. |
 | Exits and recovery | `CooperativeExitView`, `RecoveryViews` | Destination and fee order, safe selection, accepted/unknown results, unilateral plans, sweeps and exports. Batch exit follows the corresponding merged SDK/app contract. |
 | Expert inventory | `DiagnosticVTXOsView`, `DiagnosticVTXODetailView` | Out-of-round/confirmed status, expiry, copyable underlying UTXOs, raw JSON under Advanced. |

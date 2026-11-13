@@ -12,7 +12,7 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/** Device-bound encryption for the generated wallet password and recovery words.
+/** Device-bound encryption for generated wallet passwords.
  * The UI authentication gate is separate so native work can later run unattended.
  * No credential or recovery material is written to logs or Android backup.
  */
@@ -31,16 +31,16 @@ class WalletVault(context: Context) {
       }.generateKey()
     }
 
-  fun password(create: Boolean): ByteArray = read("signet-password") ?: run {
+  fun password(create: Boolean, network: WalletNetwork = WalletNetwork.SIGNET): ByteArray = read("${network.wire}-password") ?: run {
     check(create) { "Wallet credential unavailable. Restore using your recovery words." }
     ByteArray(32).also {
       SecureRandom().nextBytes(it)
-      write("signet-password", it) // Durable before the daemon can create the wallet.
+      write("${network.wire}-password", it) // Durable before the daemon can create the wallet.
     }
   }
 
-  fun saveWords(words: List<String>) = write("signet-backup", words.joinToString(" ").toByteArray())
-  fun words(): List<String> = read("signet-backup")?.toString(Charsets.UTF_8)?.split(" ") ?: emptyList()
+  // Legacy encrypted *-backup files are intentionally left intact. New wallets
+  // keep their words only in the creation response and the one-time backup UI.
 
   private fun write(name: String, plaintext: ByteArray) {
     val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key) }
