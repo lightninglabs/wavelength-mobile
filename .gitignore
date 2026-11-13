@@ -20,3 +20,6 @@ ios/Sample/*.xcodeproj
 ios/Sample/DerivedData/
 ios/Sample/DerivedData-Phone/
 ios/Sample/build/
+
+# Local/CI test reports.
+.ci-results/
