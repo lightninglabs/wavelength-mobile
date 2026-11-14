@@ -136,6 +136,12 @@ final class WalletStore: ObservableObject {
 
     var canChangeNetwork: Bool { stateCreatingCallCount == 0 && !isWorking && backgroundPreparation == nil && phase != .starting }
 
+    /// This guards known local refresh ownership, not every native obligation.
+    var networkSwitchBlockedReason: String? {
+        guard let operation = refreshOperation, operation.status != "Complete", operation.canRetry != true else { return nil }
+        return "Check the current refresh before changing networks or connections."
+    }
+
     var isReady: Bool { phase == .ready }
     var isSyncing: Bool { phase == .syncing }
     var canUnlockWallet: Bool {
@@ -236,8 +242,10 @@ final class WalletStore: ObservableObject {
         await restartForForegroundIfSafe()
     }
 
-    func switchNetwork(to selected: WalletNetwork) async {
-        guard selected != network, canChangeNetwork else { return }
+    @discardableResult
+    func switchNetwork(to selected: WalletNetwork) async -> Bool {
+        guard selected != network, canChangeNetwork else { return false }
+        if let reason = networkSwitchBlockedReason { alertMessage = reason; return false }
         network = selected
         defaults.set(selected.rawValue, forKey: "selectedNetwork")
         loadEndpointOverrides()
@@ -246,10 +254,12 @@ final class WalletStore: ObservableObject {
         isSessionLocked = false
         loadNetworkPreferences()
         await start()
+        return true
     }
 
     func saveEndpointOverrides(operatorAddress: String, swapServerAddress: String, esploraURL: String) async {
         guard canChangeNetwork, !isSessionLocked, applicationIsActive() else { return }
+        if let reason = networkSwitchBlockedReason { alertMessage = reason; return }
         self.operatorAddress = operatorAddress.trimmingCharacters(in: .whitespacesAndNewlines)
         self.swapServerAddress = swapServerAddress.trimmingCharacters(in: .whitespacesAndNewlines)
         self.esploraURL = esploraURL.trimmingCharacters(in: .whitespacesAndNewlines)
