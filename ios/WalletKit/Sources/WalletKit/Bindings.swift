@@ -65,6 +65,16 @@ enum Bindings {
         return try unwrap(MobileRunReceiptWindow(req, seconds, &err), err)
     }
 
+    static func runWorkWindow(_ req: Data, _ seconds: Int64) throws -> Data {
+        var err: NSError?
+        return try unwrap(MobileRunWorkWindow(req, seconds, &err), err)
+    }
+
+    static func readLightningReceipts(_ req: Data) throws -> Data {
+        var err: NSError?
+        return try unwrap(MobileReadLightningReceipts(req, &err), err)
+    }
+
     static func runMaintenanceWindow(_ id: String, _ seconds: Int64) throws -> Data {
         var err: NSError?
         return try unwrap(MobileRunMaintenanceWindow(id, seconds, &err), err)
@@ -225,6 +235,8 @@ enum Bindings {
     static func processNext(_ id: String, _ seconds: Int64) throws -> Data { throw missing() }
     static func setHostForeground(_ foreground: Bool) throws { throw missing() }
     static func runReceiptWindow(_ req: Data, _ seconds: Int64) throws -> Data { throw missing() }
+    static func runWorkWindow(_ req: Data, _ seconds: Int64) throws -> Data { throw missing() }
+    static func readLightningReceipts(_ req: Data) throws -> Data { throw missing() }
     static func runMaintenanceWindow(_ id: String, _ seconds: Int64) throws -> Data { throw missing() }
     static func cancelReceiptWindow(_ id: String) throws { throw missing() }
     static func getInfo() throws -> Data { throw missing() }

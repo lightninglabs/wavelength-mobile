@@ -55,6 +55,39 @@ public struct ReceiptWindowRequest: Encodable, Sendable {
     }
 }
 
+/// Locally admitted receive work, independent of banner consent. References
+/// are never selected by a push. The native invocation accepts zero to 64.
+public struct WorkWindowRequest: Encodable, Sendable {
+    public let windowID: String
+    public let references: [LightningReceiptReference]
+
+    public init(windowID: String, references: [LightningReceiptReference]) {
+        self.windowID = windowID
+        self.references = references
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case references
+        case windowID = "window_id"
+    }
+}
+
+/// Targeted foreground source lookup for already enrolled references.
+public struct LightningReceiptRequest: Encodable, Sendable {
+    public let references: [LightningReceiptReference]
+    public let createdAfterUnix: Int64
+
+    public init(references: [LightningReceiptReference], createdAfterUnix: Int64) {
+        self.references = references
+        self.createdAfterUnix = createdAfterUnix
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case references
+        case createdAfterUnix = "created_after_unix"
+    }
+}
+
 /// A bounded local attempt. No flag proves global catchup or safe suspension.
 public struct ReceiptWindowResult: Decodable, Sendable {
     public let receipts: [LightningReceipt]

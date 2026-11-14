@@ -134,6 +134,15 @@ final class ReceiptNotificationLedger {
         return value
     }
 
+    /// Copy only trusted local admissions into work recovery. This grants no
+    /// presentation authority and does not revive an old consent epoch.
+    func workEnrollments() throws -> [ReceiveWorkEnrollment] {
+        try load().enrolled.values.map {
+            ReceiveWorkEnrollment(network: $0.network, identity: $0.identity,
+                                  reference: $0.reference, canonicalID: nil)
+        }
+    }
+
     /// Commit at-most-once presentation authority before UNNotificationCenter.
     /// Storage unavailable before first unlock means no local presentation.
     func claim(routeID: String, eventHash: String, now: Int64) throws -> Bool {

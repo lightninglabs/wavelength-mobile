@@ -106,6 +106,9 @@ final class WalletNotifications: ObservableObject {
     private var reconcileAgain = false
     private var pendingTap: WalletNotificationRoute?
     private let receiptLedger: ReceiptNotificationLedger
+    private let receiveWorkLedger: ReceiveWorkLedger
+    private var unsavedReceiveWork: [ReceiveWorkEnrollment] = []
+    @Published private(set) var workRecoveryNotice: String?
     private let backgroundWork = BackgroundWorkAdmission()
     private var activeReceiptWindow: String? { backgroundWork.activeWindowID }
     private let authorize: @MainActor () async throws -> Bool
@@ -114,6 +117,7 @@ final class WalletNotifications: ObservableObject {
     private let prepareWork: @MainActor (WalletStore, String, ReceiptFetchLease, String?) async -> Bool
 
     init(defaults: UserDefaults = .standard, receiptLedger: ReceiptNotificationLedger? = nil,
+         receiveWorkLedger: ReceiveWorkLedger? = nil,
          configuration: @escaping @MainActor (WalletStore) -> NotificationRelayConfiguration? = { $0.notificationConfiguration },
          authorize: @escaping @MainActor () async throws -> Bool = {
              try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
@@ -123,6 +127,7 @@ final class WalletNotifications: ObservableObject {
          }) {
         self.defaults = defaults
         self.receiptLedger = receiptLedger ?? ReceiptNotificationLedger()
+        self.receiveWorkLedger = receiveWorkLedger ?? ReceiveWorkLedger()
         self.configurationForStore = configuration
         self.authorize = authorize
         self.registerDevice = registerDevice
@@ -146,6 +151,7 @@ final class WalletNotifications: ObservableObject {
     var available: Bool { guard let store else { return false }; return configurationForStore(store) != nil }
     var amountsAvailable: Bool { guard let store else { return false }; return configurationForStore(store)?.receiptHints == true }
     var settingsStatus: String {
+        if let workRecoveryNotice { return workRecoveryNotice }
         if let notice { return notice }
         return !available ? unavailableMessage : status
     }
@@ -576,6 +582,50 @@ extension WalletNotifications {
         return ReceiptCreationContext(route: route, consent: consent, generation: store.notificationGeneration)
     }
 
+    /// Local invoice admission is the only new enrollment boundary. This is
+    /// independent of work opt-out, banner consent and amount presentation.
+    func enrollReceiveWork(_ result: ReceiveResult, network: String, identity: String) {
+        guard let reference = result.receiptReference, reference.isSupported else { return }
+        unsavedReceiveWork.append(ReceiveWorkEnrollment(
+            network: network, identity: identity, reference: reference,
+            canonicalID: result.entry.id
+        ))
+        persistReceiveWork()
+    }
+
+    private func persistReceiveWork() {
+        do {
+            // Existing presentation entries were also admitted locally. Copy
+            // their work identity without copying consent or amount authority.
+            try receiveWorkLedger.enroll(unsavedReceiveWork)
+            unsavedReceiveWork.removeAll()
+            try receiveWorkLedger.importPresentationsOnce(try receiptLedger.workEnrollments())
+            workRecoveryNotice = nil
+        } catch {
+            workRecoveryNotice = "Background recovery is deferred. Keep the wallet open to retry."
+        }
+    }
+
+    /// Foreground-only targeted reconciliation. This never discovers arbitrary
+    /// history or uses an amount result to authorize a banner.
+    func reconcileReceiveWork(store: WalletStore, entries: [Entry]) async {
+        guard self.store === store, let identity = store.notificationRuntimeIdentity else { return }
+        let network = store.network.rawValue
+        persistReceiveWork()
+        do {
+            try receiveWorkLedger.reconcileCompleted(network: network, identity: identity, entries: entries)
+            let selected = try receiveWorkLedger.next(network: network, identity: identity, purpose: "foreground")
+            guard !selected.isEmpty else { return }
+            let receipts = try await store.readWorkReceipts(selected.map(\.reference), identity: identity)
+            guard store.network.rawValue == network, store.notificationRuntimeIdentity == identity else { return }
+            try receiveWorkLedger.reconcileSources(network: network, identity: identity,
+                                                  selected: selected, receipts: receipts)
+        } catch {
+            // A source read failure or lifecycle change preserves every ref.
+            // The next foreground snapshot retries; no invoice is reissued.
+        }
+    }
+
     func enrollCreatedReceive(_ result: ReceiveResult, context: ReceiptCreationContext?) {
         guard let context, let current = receiptCreationContext(),
               current.route.id == context.route.id, current.consent == context.consent,
@@ -735,7 +785,19 @@ extension WalletNotifications {
             guard enabled, store.network == network,
                   await prepareWork(store, windowID, lease, expectedIdentity),
                   !lease.expired else { return false }
-            let result = try? await store.runMaintenanceWindow(windowID)
+            guard let identity = store.notificationRuntimeIdentity else { return false }
+            persistReceiveWork()
+            let references: [LightningReceiptReference]
+            do {
+                references = try receiveWorkLedger.next(network: network.rawValue, identity: identity,
+                                                         purpose: "background").map(\.reference)
+            } catch {
+                workRecoveryNotice = "Background recovery is deferred. Open the wallet to retry."
+                // Generic round work remains useful even if enrollment storage
+                // is temporarily unavailable. Do not invent remote references.
+                references = []
+            }
+            let result = try? await store.runMaintenanceWindow(windowID, references: references)
             return (result?.batches ?? 0) > 0 || (result?.maintenanceChecked ?? 0) > 0
         } ?? false
     }
