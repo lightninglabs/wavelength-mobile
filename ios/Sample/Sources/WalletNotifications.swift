@@ -106,7 +106,8 @@ final class WalletNotifications: ObservableObject {
     private var reconcileAgain = false
     private var pendingTap: WalletNotificationRoute?
     private let receiptLedger: ReceiptNotificationLedger
-    private var activeReceiptWindow: String?
+    private let backgroundWork = BackgroundWorkAdmission()
+    private var activeReceiptWindow: String? { backgroundWork.activeWindowID }
     private let authorize: @MainActor () async throws -> Bool
     private let configurationForStore: @MainActor (WalletStore) -> NotificationRelayConfiguration?
     private let registerDevice: @MainActor () -> Void
@@ -541,6 +542,7 @@ extension WalletNotifications {
     }
 
     func cancelReceiptRecovery(_ windowID: String, reason: String = "iOS window expired") async {
+        backgroundWork.cancelPending(windowID)
         if let store {
             DiagnosticJournal.shared.finish(id: windowID, network: store.network.rawValue, status: reason)
         }
@@ -580,10 +582,10 @@ extension WalletNotifications {
         defer { receiptLedger.releasePresentation(routeID: hint.routeID, eventHash: hint.eventHash) }
         // One callback owns this event across awaits. Other events can still
         // use generic presentation while the native window belongs elsewhere.
-        if matchesSelectedConnection(route, store: store), activeReceiptWindow == nil {
-            activeReceiptWindow = windowID
-            _ = await store.prepareBackgroundWallet(windowID: windowID, lease: lease, expectedIdentity: route.identity)
-            if activeReceiptWindow == windowID { activeReceiptWindow = nil }
+        if matchesSelectedConnection(route, store: store) {
+            _ = await backgroundWork.runIfAvailable(id: windowID, lease: lease) {
+                await store.prepareBackgroundWallet(windowID: windowID, lease: lease, expectedIdentity: route.identity)
+            }
         }
         guard !lease.expired else { return false }
         let currentRoute = isCurrentPaymentRoute(route, store: store)
@@ -595,45 +597,59 @@ extension WalletNotifications {
         do { enrollment = try receiptLedger.enrolled(routeID: id, eventHash: eventHash, now: now) }
         catch { return false }
         var result: ReceiptWindowResult?
+        var deferredMaintenance = false
         if currentRoute, amountsEnabled, amountsAvailable, route.presentation == "receipt_hint",
            let enrolled = enrollment, enrolled.identity == store.notificationRuntimeIdentity,
            enrolled.configuration == route.configuration, activeReceiptWindow == nil {
-            activeReceiptWindow = windowID
-            await store.setReceiptBackgroundMode(enabled: true)
-            result = try? await store.runReceiptWindow(ReceiptWindowRequest(
-                windowID: windowID, reference: enrolled.reference,
-                createdAfterUnix: enrolled.consent.createdAfterUnix
-            ), identity: enrolled.identity)
-            if activeReceiptWindow == windowID { activeReceiptWindow = nil }
+            result = try? await backgroundWork.runIfAvailable(id: windowID, lease: lease) {
+                await store.setReceiptBackgroundMode(enabled: true)
+                return try await store.runReceiptWindow(ReceiptWindowRequest(
+                    windowID: windowID, reference: enrolled.reference,
+                    createdAfterUnix: enrolled.consent.createdAfterUnix
+                ), identity: enrolled.identity)
+            }
         } else if currentRoute {
-            _ = await runMaintenance(windowID: windowID, lease: lease)
+            if activeReceiptWindow != nil {
+                // Preserve prompt generic presentation, then retain this callback
+                // for its own serial native drain instead of dropping the wake.
+                deferredMaintenance = true
+            } else {
+                _ = await runMaintenance(windowID: windowID, lease: lease)
+            }
         }
-        guard !lease.expired, store.notificationGeneration == generation,
-              validPaymentRoute(id) != nil else { return false }
-        // Consent or account changes remove amount authority. The app lock is
-        // separate: amounts still require the user's explicit notification consent.
-        if !isCurrentPaymentRoute(route, store: store) || !amountsEnabled || !amountsAvailable ||
-            enrollment?.identity != store.notificationRuntimeIdentity ||
-            (try? receiptLedger.consent(network: route.network)) != enrollment?.consent {
-            enrollment = nil
-            result = nil
+        func present() async -> Bool {
+            guard !lease.expired, store.notificationGeneration == generation,
+                  validPaymentRoute(id) != nil else { return false }
+            // Consent or account changes remove amount authority. The app lock is
+            // separate: amounts still require the user's explicit notification consent.
+            if !isCurrentPaymentRoute(route, store: store) || !amountsEnabled || !amountsAvailable ||
+                enrollment?.identity != store.notificationRuntimeIdentity ||
+                (try? receiptLedger.consent(network: route.network)) != enrollment?.consent {
+                enrollment = nil
+                result = nil
+            }
+            let body = ReceiptNotificationPresentation.body(enrollment: enrollment, result: result)
+            do {
+                guard try receiptLedger.claim(routeID: id, eventHash: eventHash,
+                                              now: Int64(Date().timeIntervalSince1970)) else { return false }
+                let content = UNMutableNotificationContent()
+                content.title = "Wavelength"
+                content.body = body
+                content.sound = .default
+                content.userInfo = ["wavelength": ["version": 1, "route_id": id, "event_id": eventHash]]
+                try await UNUserNotificationCenter.current().add(UNNotificationRequest(
+                    identifier: "receipt." + NotificationRelayConfiguration.digest(Data((id + ":" + eventHash).utf8)),
+                    content: content, trigger: nil
+                ))
+                DiagnosticJournal.shared.event(id: windowID, network: route.network, label: "Local notification inserted")
+                return result?.receipts.contains(where: { $0.state == "complete" }) == true
+            } catch { return false }
         }
-        let body = ReceiptNotificationPresentation.body(enrollment: enrollment, result: result)
-        do {
-            guard try receiptLedger.claim(routeID: id, eventHash: eventHash,
-                                          now: Int64(Date().timeIntervalSince1970)) else { return false }
-            let content = UNMutableNotificationContent()
-            content.title = "Wavelength"
-            content.body = body
-            content.sound = .default
-            content.userInfo = ["wavelength": ["version": 1, "route_id": id, "event_id": eventHash]]
-            try await UNUserNotificationCenter.current().add(UNNotificationRequest(
-                identifier: "receipt." + NotificationRelayConfiguration.digest(Data((id + ":" + eventHash).utf8)),
-                content: content, trigger: nil
-            ))
-            DiagnosticJournal.shared.event(id: windowID, network: route.network, label: "Local notification inserted")
-            return result?.receipts.contains(where: { $0.state == "complete" }) == true
-        } catch { return false }
+        let changed = await present()
+        if deferredMaintenance, !lease.expired, isCurrentPaymentRoute(route, store: store) {
+            _ = await runMaintenance(windowID: windowID, lease: lease, expectedIdentity: route.identity)
+        }
+        return changed
     }
 
     /// A scheduled opportunity needs no notification consent: it advances only
@@ -647,15 +663,17 @@ extension WalletNotifications {
                 DiagnosticJournal.shared.finish(id: windowID, network: store.network.rawValue, status: "No native window")
             }
         }
-        guard !lease.expired, activeReceiptWindow == nil, let store else { return false }
-        activeReceiptWindow = windowID
-        defer { if activeReceiptWindow == windowID { activeReceiptWindow = nil } }
-        // Cancellation can arrive during this pause; the unique-ID fence still
-        // rejects the native invocation before admission.
-        guard await store.prepareBackgroundWallet(windowID: windowID, lease: lease, expectedIdentity: expectedIdentity),
-              !lease.expired else { return false }
-        let result = try? await store.runMaintenanceWindow(windowID)
-        return (result?.batches ?? 0) > 0 || (result?.maintenanceChecked ?? 0) > 0
+        guard !lease.expired, let store else { return false }
+        if activeReceiptWindow != nil {
+            DiagnosticJournal.shared.event(id: windowID, network: store.network.rawValue, label: "Waiting for native owner")
+        }
+        return await backgroundWork.run(id: windowID, lease: lease) {
+            // The prior owner has joined. Expiry still fences this exact callback.
+            guard await store.prepareBackgroundWallet(windowID: windowID, lease: lease, expectedIdentity: expectedIdentity),
+                  !lease.expired else { return false }
+            let result = try? await store.runMaintenanceWindow(windowID)
+            return (result?.batches ?? 0) > 0 || (result?.maintenanceChecked ?? 0) > 0
+        } ?? false
     }
 
     private func validWakeRoute(_ id: String) -> WalletNotificationRoute? {

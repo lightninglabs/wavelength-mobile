@@ -721,7 +721,9 @@ final class WalletStore: ObservableObject {
 
     private func endStateCreatingCall() {
         stateCreatingCallCount = max(0, stateCreatingCallCount - 1)
-        if stateCreatingCallCount == 0, receiptBackgroundRequested {
+        if stateCreatingCallCount == 0, receiptBackgroundRequested, diagnosticWindowID == nil {
+            // A completed background window already owns paused ingress. A late
+            // redundant pause could cancel the next callback after its handoff.
             Task { await setReceiptBackgroundMode(enabled: true) }
         }
         guard stateCreatingCallCount == 0, foregroundRestartPending else {
