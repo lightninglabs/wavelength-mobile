@@ -17,7 +17,7 @@ scheduler or proof that refresh or a round completed.
 | Native window duration and configured host/native budgets | Existing invocation and host policy, not the remaining OS execution allowance. |
 | Mailbox batches, VTXO owners checked, deferred/more work, foreground requirement and interruption/budget flags | The returned native result, without additional wallet RPCs. |
 | Receipt proof counts | Results already returned by the targeted source reads. Counts are not independent payment or settlement totals. |
-| Foreground request, expiry, native return and owner release | The corresponding host observations. |
+| Waiting for a native owner, foreground request, expiry, native return and owner release | The corresponding host observations. |
 
 The app cannot explain why the OS chose that delivery time, whether a silent
 push was dropped before reaching the process, or what another process did.
