@@ -172,13 +172,17 @@ private struct NotificationSettingsView: View {
     @ObservedObject private var notifications = WalletNotifications.shared
     var body: some View {
         WalletPage {
-            Toggle("Payment notifications", isOn: Binding(get: { notifications.enabled },
+            Toggle("Background updates", isOn: Binding(get: { notifications.enabled },
                 set: { value in Task { await notifications.setEnabled(value) } }))
                 .disabled(notifications.working)
+                .accessibilityIdentifier("settings.backgroundUpdates")
+            Toggle("Payment notifications", isOn: Binding(get: { notifications.alertsEnabled },
+                set: { value in Task { await notifications.setAlertsEnabled(value) } }))
+                .disabled(notifications.working || !notifications.enabled)
                 .accessibilityIdentifier("settings.notifications")
-            Toggle("Show received amounts", isOn: Binding(get: { notifications.amountsEnabled },
+            Toggle("Show received amounts", isOn: Binding(get: { notifications.alertsEnabled && notifications.amountsEnabled },
                 set: { notifications.setAmountsEnabled($0) }))
-                .disabled(notifications.working || !notifications.enabled || !notifications.amountsAvailable)
+                .disabled(notifications.working || !notifications.alertsEnabled || !notifications.amountsAvailable)
                 .accessibilityIdentifier("settings.notificationAmounts")
             HStack(spacing: 8) {
                 if notifications.working { ProgressView().controlSize(.small) }
@@ -187,7 +191,7 @@ private struct NotificationSettingsView: View {
             if !notifications.available {
                 NavigationLink(destination: ConnectionSettingsView()) { Text("Connection settings") }
             }
-            Text("Amounts are off by default. When enabled, new invoices can show received sats if this wallet updates in the background. Amounts may appear while the app is locked. Incomplete updates show payment activity. Delivery may be skipped when iOS does not allow background time.")
+            Text("Background updates advance the selected wallet without showing alerts. iOS decides when the app can run. Received amounts are off by default and may appear while the wallet is locked when enabled.")
                 .font(.footnote).foregroundStyle(WalletTheme.secondary)
             Button("Retry setup") { notifications.retrySetup() }.disabled(notifications.working)
             Button("Replace device enrollment") { Task { await notifications.resetSetup() } }
