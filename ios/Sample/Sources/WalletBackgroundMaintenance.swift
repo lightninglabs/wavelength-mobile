@@ -37,6 +37,10 @@ enum WalletBackgroundMaintenance {
     }
 
     static func schedule() {
+        guard WalletNotifications.shared.scheduledWorkEnabled else {
+            BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: identifier)
+            return
+        }
         let request = BGAppRefreshTaskRequest(identifier: identifier)
         request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
         // A pending request with this identifier is replaced. iOS owns timing;

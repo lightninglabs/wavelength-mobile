@@ -149,6 +149,21 @@ public actor WalletClient {
         return try decode(data)
     }
 
+    /// Re-arm trusted pending receive sources and pump bounded native work.
+    /// No returned receipt or amount authority; cancellation uses the same ID.
+    public func runWorkWindow(
+        _ request: WorkWindowRequest, timeoutSeconds: Int64 = 30
+    ) async throws -> ReceiptWindowResult {
+        let body = try encoder.encode(request)
+        return try decode(await bg { try Bindings.runWorkWindow(body, timeoutSeconds) })
+    }
+
+    /// Read only explicitly enrolled sources. Unknown references are omitted.
+    public func readLightningReceipts(_ request: LightningReceiptRequest) async throws -> [LightningReceipt] {
+        let body = try encoder.encode(request)
+        return try decode(await bg { try Bindings.readLightningReceipts(body) })
+    }
+
     /// Signal expiry without releasing the running call's retained owner.
     public func cancelReceiptWindow(_ windowID: String) async throws {
         try await bg { try Bindings.cancelReceiptWindow(windowID) }

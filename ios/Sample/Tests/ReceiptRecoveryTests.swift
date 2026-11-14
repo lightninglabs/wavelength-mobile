@@ -47,6 +47,30 @@ final class ReceiptRecoveryTests: XCTestCase {
         XCTAssertFalse(result.needsForeground)
     }
 
+    func testWorkRequestCarriesOnlyTrustedReferencesAndWindowIdentity() throws {
+        let request = WorkWindowRequest(windowID: "window", references: [
+            .init(source: "lightning_swap", id: "local-source")
+        ])
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
+        XCTAssertEqual(Set(body.keys), ["window_id", "references"])
+        XCTAssertEqual(body["window_id"] as? String, "window")
+        let read = LightningReceiptRequest(references: request.references, createdAfterUnix: 0)
+        let readBody = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(read)) as? [String: Any])
+        XCTAssertEqual(readBody["created_after_unix"] as? Int, 0)
+        XCTAssertNil(readBody["window_id"])
+    }
+
+    func testPinnedSourceReadArrayFixturePreservesUnknownOmission() throws {
+        // ReadLightningReceipts marshals []LightningReceipt directly. Unknown
+        // sources are omitted; there is no envelope or per-reference error DTO.
+        let raw = Data(#"[{"reference":{"source":"lightning_swap","id":"local-source"},"canonical_id":"entry","state":"complete","amount_sat":123,"created_at_unix":1}]"#.utf8)
+        let receipts = try JSONDecoder().decode([LightningReceipt].self, from: raw)
+        XCTAssertEqual(receipts.count, 1)
+        XCTAssertEqual(receipts.first?.reference.id, "local-source")
+        XCTAssertEqual(receipts.first?.state, "complete")
+        XCTAssertTrue(try JSONDecoder().decode([LightningReceipt].self, from: Data("[]".utf8)).isEmpty)
+    }
+
     func testNativeWindowAPIsRejectUnstartedRuntime() async {
         let client = WalletClient()
         do {
@@ -56,6 +80,16 @@ final class ReceiptRecoveryTests: XCTestCase {
         do {
             try await client.cancelReceiptWindow("window")
             XCTFail("Unstarted native runtime accepted window cancellation")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("not started")) }
+        do {
+            _ = try await client.runWorkWindow(.init(windowID: "work", references: []))
+            XCTFail("Unstarted native runtime accepted work recovery")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("not started")) }
+        do {
+            _ = try await client.readLightningReceipts(.init(references: [
+                .init(source: "lightning_swap", id: "local-source")
+            ], createdAfterUnix: 0))
+            XCTFail("Unstarted native runtime accepted a source read")
         } catch { XCTAssertTrue(error.localizedDescription.contains("not started")) }
         do {
             _ = try await client.runMaintenanceWindow("maintenance")

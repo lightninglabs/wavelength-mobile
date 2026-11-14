@@ -136,6 +136,12 @@ final class WalletStore: ObservableObject {
 
     var canChangeNetwork: Bool { stateCreatingCallCount == 0 && !isWorking && backgroundPreparation == nil && phase != .starting }
 
+    /// This guards known local refresh ownership, not every native obligation.
+    var networkSwitchBlockedReason: String? {
+        guard let operation = refreshOperation, operation.status != "Complete", operation.canRetry != true else { return nil }
+        return "Check the current refresh before changing networks or connections."
+    }
+
     var isReady: Bool { phase == .ready }
     var isSyncing: Bool { phase == .syncing }
     var canUnlockWallet: Bool {
@@ -236,8 +242,10 @@ final class WalletStore: ObservableObject {
         await restartForForegroundIfSafe()
     }
 
-    func switchNetwork(to selected: WalletNetwork) async {
-        guard selected != network, canChangeNetwork else { return }
+    @discardableResult
+    func switchNetwork(to selected: WalletNetwork) async -> Bool {
+        guard selected != network, canChangeNetwork else { return false }
+        if let reason = networkSwitchBlockedReason { alertMessage = reason; return false }
         network = selected
         defaults.set(selected.rawValue, forKey: "selectedNetwork")
         loadEndpointOverrides()
@@ -246,10 +254,12 @@ final class WalletStore: ObservableObject {
         isSessionLocked = false
         loadNetworkPreferences()
         await start()
+        return true
     }
 
     func saveEndpointOverrides(operatorAddress: String, swapServerAddress: String, esploraURL: String) async {
         guard canChangeNetwork, !isSessionLocked, applicationIsActive() else { return }
+        if let reason = networkSwitchBlockedReason { alertMessage = reason; return }
         self.operatorAddress = operatorAddress.trimmingCharacters(in: .whitespacesAndNewlines)
         self.swapServerAddress = swapServerAddress.trimmingCharacters(in: .whitespacesAndNewlines)
         self.esploraURL = esploraURL.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -452,6 +462,9 @@ final class WalletStore: ObservableObject {
                 timeoutSeconds: 20
             )
             upsert(result.entry)
+            if let identity = notificationRuntimeIdentity {
+                WalletNotifications.shared.enrollReceiveWork(result, network: network.rawValue, identity: identity)
+            }
             WalletNotifications.shared.enrollCreatedReceive(result, context: receiptContext)
             return result
         } catch {
@@ -687,6 +700,7 @@ final class WalletStore: ObservableObject {
         let unresolvedCount = unresolvedDispatches.count
         unresolvedDispatches.removeAll { attempt in entries.contains(where: attempt.matches) }
         if unresolvedDispatches.count != unresolvedCount { persistUnresolvedChecks() }
+        await WalletNotifications.shared.reconcileReceiveWork(store: self, entries: entries)
     }
 
     /// UI authentication is separate from native unlock. Recheck after waiting
@@ -721,7 +735,9 @@ final class WalletStore: ObservableObject {
 
     private func endStateCreatingCall() {
         stateCreatingCallCount = max(0, stateCreatingCallCount - 1)
-        if stateCreatingCallCount == 0, receiptBackgroundRequested {
+        if stateCreatingCallCount == 0, receiptBackgroundRequested, diagnosticWindowID == nil {
+            // A completed background window already owns paused ingress. A late
+            // redundant pause could cancel the next callback after its handoff.
             Task { await setReceiptBackgroundMode(enabled: true) }
         }
         guard stateCreatingCallCount == 0, foregroundRestartPending else {
@@ -1351,7 +1367,7 @@ final class WalletStore: ObservableObject {
     }
 
     /// Advances the prepared native runtime while preserving the UI lock.
-    func runMaintenanceWindow(_ id: String) async throws -> ReceiptWindowResult {
+    func runMaintenanceWindow(_ id: String, references: [LightningReceiptReference] = []) async throws -> ReceiptWindowResult {
         guard phase.isWalletAvailable, notificationKnownIdentity != nil,
               receiptBackgroundRequested, !applicationIsActive(),
               stateCreatingCallCount == 0, receiptWindowWork == nil else { throw CancellationError() }
@@ -1360,7 +1376,8 @@ final class WalletStore: ObservableObject {
         DiagnosticJournal.shared.context(id: id, nativeBudget: ReceiptFetchLease.nativeCeilingSeconds)
         let work = Task {
             try await DiagnosticJournal.shared.measure(id: id, network: network.rawValue, label: "Maintenance window") {
-                try await client.runMaintenanceWindow(id, timeoutSeconds: Int64(ReceiptFetchLease.nativeCeilingSeconds))
+                try await client.runWorkWindow(WorkWindowRequest(windowID: id, references: references),
+                                               timeoutSeconds: Int64(ReceiptFetchLease.nativeCeilingSeconds))
             }
         }
         receiptWindowWork = work
@@ -1380,6 +1397,17 @@ final class WalletStore: ObservableObject {
             DiagnosticJournal.shared.finish(id: id, network: network.rawValue, status: "Native call failed")
             throw error
         }
+    }
+
+    /// A foreground source read borrows the same operation gate as other
+    /// wallet calls so a network switch or background preparation cannot
+    /// replace the runtime until its final native access.
+    func readWorkReceipts(_ references: [LightningReceiptReference], identity: String) async throws -> [LightningReceipt] {
+        guard stateCreatingCallCount == 0 else { throw CancellationError() }
+        try await beginStateCreatingCall()
+        defer { endStateCreatingCall() }
+        guard notificationRuntimeIdentity == identity else { throw CancellationError() }
+        return try await client.readLightningReceipts(.init(references: references, createdAfterUnix: 0))
     }
 
     func cancelReceiptWindow(_ id: String) async {

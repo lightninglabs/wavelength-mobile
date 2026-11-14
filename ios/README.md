@@ -452,18 +452,24 @@ amount, after the host validates consent, identity and event correlation.
 `runMaintenanceWindow` needs no invoice. It attempts current-tip expiry for a
 bounded page of existing VTXO owners and pumps native round work. It returns no
 receipts and never authorizes a payment banner. Use it for ordinary protocol wakes
-and scheduled background opportunities. Both windows accept 1 through 20 seconds
+and scheduled background opportunities when there are no targeted receive refs.
+`runWorkWindow` adds zero to 64 trusted local receive references to that same
+window, re-arms existing workers after its first restricted pump, and also returns
+no receipts. Work enrollment is independent of banner consent. All three
+windows accept 1 through 30 seconds
 and share `cancelReceiptWindow` with a unique invocation ID. Cancellation signals
 expiry; the original call retains native ownership until its actual return.
 
 The app may prepare the selected wallet from a cold process using its saved
-credential before entering either window. It never creates a wallet, prompts for
+credential before entering a window. It never creates a wallet, prompts for
 biometrics, switches networks, or accepts an endpoint from a push. Missing keys,
 legacy keys awaiting migration, and device storage before first unlock skip the
 opportunity. Receipt amounts still require explicit notification consent and
 matching enrolled invoice proof, independently of the UI lock.
 
-The OS callback's twenty-second deadline includes preparation. Expiration cancels
+OS expiry is the primary stop signal. The host's twenty-eight-second fallback
+includes preparation; the SDK's thirty-second ceiling applies to the native
+call. Expiration cancels
 an owned cold startup through SDK stop, or signals an admitted window by ID.
 Ownership remains retained until the original native call returns. A warm runtime
 is not torn down because a background opportunity failed. Foreground takeover
@@ -474,7 +480,9 @@ one. Cold startup loses in-memory signing sessions, so durable recovery cannot
 promise continuation of every round. iOS may relaunch a system-terminated app,
 but a user force-quit prevents ordinary background-push relaunch. Wake delivery
 and execution time are best-effort, not a guarantee of refresh before expiry.
-Preserve wallet files after durable-runtime adoption.
+Preserve wallet files after durable-runtime adoption. See the
+[client wake event inventory](../docs/ios-wake-events.md) for callback ownership,
+settings migration and selected-wallet limits.
 
 
 ## Diagnostics

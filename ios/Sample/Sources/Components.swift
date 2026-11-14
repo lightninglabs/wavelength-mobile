@@ -85,7 +85,7 @@ private struct NetworkSelectionView: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .disabled(switching)
+                        .disabled(switching || store.networkSwitchBlockedReason != nil)
                         .accessibilityIdentifier("network.\(network.rawValue)")
                         .accessibilityAddTraits(store.network == network ? .isSelected : [])
                         if network == .mainnet && proposedMainnet {
@@ -100,7 +100,7 @@ private struct NetworkSelectionView: View {
                                         .buttonStyle(WalletButtonStyle())
                                         .accessibilityIdentifier("network.confirmMainnet")
                                 }
-                                .disabled(switching)
+                                .disabled(switching || store.networkSwitchBlockedReason != nil)
                             }
                             .padding(.bottom, 20)
                             .transition(.opacity)
@@ -109,6 +109,9 @@ private struct NetworkSelectionView: View {
                     }
                 }
                 .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: proposedMainnet)
+                Text(store.networkSwitchBlockedReason ?? "Background updates use the selected wallet.")
+                    .font(.footnote).foregroundStyle(WalletTheme.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 if switching { WalletStatus(text: "Connecting", pending: true) }
             }
             .navigationTitle("Network").navigationBarTitleDisplayMode(.inline)
@@ -127,8 +130,11 @@ private struct NetworkSelectionView: View {
     private func switchTo(_ network: WalletNetwork) {
         switching = true
         Task {
-            await store.switchNetwork(to: network)
-            presentationMode.wrappedValue.dismiss()
+            if await store.switchNetwork(to: network) {
+                presentationMode.wrappedValue.dismiss()
+            } else {
+                switching = false
+            }
         }
     }
 }

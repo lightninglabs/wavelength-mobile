@@ -1,7 +1,7 @@
 # iOS payment activity notifications
 
-The app supports optional payment-activity alerts, verified receipt amounts and
-local Activity navigation. Valid relay pushes and scheduled background tasks
+The app separates background protocol updates from optional payment-activity
+alerts, verified receipt amounts and local Activity navigation. Valid relay pushes and scheduled background tasks
 attempt native round and refresh work on a retained runtime or a cold wallet
 with a device-managed credential.
 A push remains a hint; only local wallet proof can supply a received amount.
@@ -20,7 +20,8 @@ Before a release, add a dictionary for each supported Bitcoin network with:
 | `receiptHints` | Optional string `true` enabling verified-amount consent |
 
 These are build configuration, never fields from a notification. Custom
-operator or swap endpoint overrides disable new enrollment. Original relay
+operator or swap endpoint overrides disable new push enrollment; scheduled work
+still honors the separate local background-updates preference. Original relay
 configuration stays with local route metadata so old grants remain revocable.
 No secret APNs key belongs in the app.
 
@@ -37,7 +38,8 @@ modify Apple portal capabilities or provision a profile.
 - `NotificationRelayClient` serializes complete App Attest operations across
   network awaits. It stores installation identity and grants in device-only
   Keychain, separately from wallet secrets. It rejects redirects.
-- `WalletNotifications` owns per-network consent and local route metadata. It
+- `WalletNotifications` owns separate per-network work and banner preferences,
+  amount consent and local route metadata. It
   retries setup and revocation on foreground entry. Grant expiry is renewed
   within its last day. Turning off removes source delegation when the matching
   wallet is available and revokes relay delivery. Expiry cleanup is independent.
@@ -77,13 +79,24 @@ are ignored. Cross-network taps ask the user to open that network. They never
 switch an active payment's network automatically. Push event hashes, amounts
 and external links cannot choose navigation targets or authorize a payment.
 
+## Work preferences
+
+Background updates do not request permission for banners. Payment notifications
+request that permission separately. Denial leaves background work enabled. Legacy
+explicit notification opt-outs preserve work off; legacy opt-ins preserve both
+work and banners on. An unset preference defaults to work on and banners off.
+Amount consent remains explicit and is never inferred from either preference.
+Only the selected wallet can execute background work. See the
+[client wake event inventory](ios-wake-events.md) for event admission, overlapping
+callbacks, selected-network limits and observation boundaries.
+
 ## Verified receipts and background maintenance
 
 Simulator unit tests inject an attester and HTTP fixture. They do not disable
 App Attest in the production client or relay. Real enrollment and push delivery
 require a physical supported device and separately provisioned infrastructure.
 
-The app always enables the durable native round runtime. Notification consent
+The app always enables the durable native round runtime. Banner consent
 does not disable that runtime after adoption. Background entry pauses mailbox
 intake after state-creating calls finish. The daemon, domain actors, swap workers,
 egress and database stay retained. Foreground entry cancels and joins any bounded
@@ -92,11 +105,15 @@ window before resuming continuous ingress or considering a transport restart.
 `WalletBackgroundMaintenance` registers a `BGAppRefreshTask` at launch and
 resubmits at launch, background entry and task handling. The request's earliest
 begin date is fifteen minutes away; iOS chooses actual timing. Both scheduled
-tasks and known current relay routes may prepare the selected device-managed
+tasks and known current relay routes, with background updates enabled, may
+prepare the selected device-managed
 wallet, then attempt a native maintenance window until OS expiry or the host
 fallback. Startup leaves mailbox intake paused. Missing or unmigrated credentials skip the opportunity;
 background execution never prompts, creates wallets or grants UI access. The
-native runtime samples chain height, applies existing expiry policy to a bounded
+native work window pumps protocol ingress before maintenance and re-arms
+trusted locally enrolled receive sources without banner consent. The
+[client wake inventory](ios-wake-events.md#pending-receive-recovery) describes
+the enrollment, rotation and legacy limits. The native runtime samples chain height, applies existing expiry policy to a bounded
 page of existing VTXO owners and pumps native round events. Retained signing
 sessions can advance; cold startup must recover from durable state and cannot
 restore lost in-memory signing sessions. The outer twenty-eight-second fallback covers
