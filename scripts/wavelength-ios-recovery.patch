@@ -304,15 +304,18 @@ index 0000000000000000000000000000000000000000..c420147cb3905402df3f9161a329f642
 +}
 diff --git a/sdk/wavewalletdk/client_recovery_mobile_test.go b/sdk/wavewalletdk/client_recovery_mobile_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..d5e220f3d2122e3402ff18db5c6362750130d908
+index 0000000000000000000000000000000000000000..eef589f8f5d6347fe8f106ce9afd880b5554d3e5
 --- /dev/null
 +++ b/sdk/wavewalletdk/client_recovery_mobile_test.go
-@@ -0,0 +1,167 @@
+@@ -0,0 +1,314 @@
 +package wavewalletdk
 +
 +import (
 +	"context"
 +	"encoding/json"
++	"errors"
++	"fmt"
++	"strings"
 +	"testing"
 +
 +	"github.com/lightninglabs/wavelength/rpc/wavewalletrpc"
@@ -366,7 +369,10 @@ index 0000000000000000000000000000000000000000..d5e220f3d2122e3402ff18db5c636275
 +// recoveryDaemonClient returns the wallet's persisted VTXO settlement records.
 +type recoveryDaemonClient struct {
 +	waverpc.DaemonServiceClient
-+	result *waverpc.ListVTXOsResponse
++	result   *waverpc.ListVTXOsResponse
++	rounds   []*waverpc.RoundInfo
++	listErr  error
++	roundErr error
 +}
 +
 +// ListVTXOs returns persisted records for the observation test.
@@ -374,7 +380,19 @@ index 0000000000000000000000000000000000000000..d5e220f3d2122e3402ff18db5c636275
 +	_ *waverpc.ListVTXOsRequest, _ ...grpc.CallOption) (
 +	*waverpc.ListVTXOsResponse, error) {
 +
-+	return c.result, nil
++	return c.result, c.listErr
++}
++
++// ListRounds includes temporary round owners in refresh-release observations.
++func (c *recoveryDaemonClient) ListRounds(_ context.Context,
++	req *waverpc.ListRoundsRequest, _ ...grpc.CallOption) (
++	*waverpc.ListRoundsResponse, error) {
++
++	if req.GetPersistedOnly() {
++		return nil, errors.New("pending rounds must be included")
++	}
++
++	return &waverpc.ListRoundsResponse{Rounds: c.rounds}, c.roundErr
 +}
 +
 +// TestRecoveryInventoryEmptyArray preserves the host JSON contract when a new
@@ -475,12 +493,141 @@ index 0000000000000000000000000000000000000000..d5e220f3d2122e3402ff18db5c636275
 +	require.True(t, result.RetryAllowed)
 +	require.False(t, result.Complete)
 +}
++
++// TestRefreshObservationMixedSettlement preserves the original selection while
++// offering only positively live remaining inputs for another reviewed attempt.
++func TestRefreshObservationMixedSettlement(t *testing.T) {
++	t.Parallel()
++	pending := waverpc.RoundState_ROUND_STATE_PENDING_ASSEMBLY
++	confirmed := waverpc.RoundState_ROUND_STATE_CONFIRMED
++	failed := waverpc.RoundState_ROUND_STATE_FAILED
++
++	for _, blocked := range []string{
++		"none", "terminal", "terminal before temporary", "missing",
++		"reserved", "spent",
++		"unconfirmed",
++		"unknown round", "temporary round", "round read failed",
++		"inventory read failed",
++	} {
++		t.Run(blocked, func(t *testing.T) {
++			t.Parallel()
++
++			inputs := make([]string, 0, 12)
++			daemon := &recoveryDaemonClient{
++				result: &waverpc.ListVTXOsResponse{},
++			}
++			for i := range 12 {
++				outpoint := fmt.Sprintf("input-%d:0", i)
++				inputs = append(inputs, outpoint)
++				v := &waverpc.VTXO{
++					Outpoint:  outpoint,
++					AmountSat: 1000,
++					Status: waverpc.
++						VTXOStatus_VTXO_STATUS_LIVE,
++				}
++				if i < 8 {
++					v.Status = waverpc.
++						VTXOStatus_VTXO_STATUS_FORFEITED
++					v.Settlement = &waverpc.VTXOSettlement{
++						Height: 100,
++					}
++				}
++				daemon.result.Vtxos = append(
++					daemon.result.Vtxos, v,
++				)
++			}
++			switch blocked {
++			case "terminal":
++				daemon.rounds = []*waverpc.RoundInfo{
++					{
++						State: confirmed,
++					},
++					{
++						State: failed,
++					},
++				}
++
++			case "terminal before temporary":
++				// In-memory rounds bypass persisted pagination,
++				// including when a terminal FSM appears before
++				// a temporary one.
++				daemon.rounds = []*waverpc.RoundInfo{
++					{
++						State: confirmed,
++					},
++					{
++						State:  pending,
++						IsTemp: true,
++					},
++				}
++
++			case "missing":
++				daemon.result.Vtxos = daemon.result.Vtxos[:11]
++
++			case "reserved":
++				daemon.result.Vtxos[11].Status = waverpc.
++					VTXOStatus_VTXO_STATUS_PENDING_FORFEIT
++
++			case "spent":
++				daemon.result.Vtxos[11].Status = waverpc.
++					VTXOStatus_VTXO_STATUS_SPENT
++
++			case "unconfirmed":
++				daemon.result.Vtxos[0].Settlement.Height = 0
++
++			case "unknown round":
++				daemon.rounds = []*waverpc.RoundInfo{{}}
++
++			case "temporary round":
++				daemon.rounds = []*waverpc.RoundInfo{{
++					IsTemp: true,
++					State:  pending,
++				}}
++
++			case "round read failed":
++				daemon.roundErr = errors.New("round read " +
++					"failed")
++
++			case "inventory read failed":
++				daemon.listErr = errors.New("inventory read " +
++					"failed")
++			}
++			client := newExitTestClient(&recoveryExportClient{})
++			client.daemon = daemon
++			result, err := client.ObserveRefresh(
++				t.Context(), inputs,
++			)
++			if strings.HasSuffix(blocked, "read failed") {
++				require.Error(t, err)
++
++				return
++			}
++			require.NoError(t, err)
++			require.False(t, result.Complete)
++			retry := blocked == "none" || blocked == "terminal"
++			require.Equal(t, retry, result.RetryAllowed)
++			if retry {
++				require.Equal(t, 8, result.ConfirmedCount)
++				require.EqualValues(
++					t, 8000, result.ConfirmedAmountSat,
++				)
++				require.Equal(
++					t, inputs[8:],
++					result.RemainingOutpoints,
++				)
++				require.EqualValues(
++					t, 4000, result.RemainingAmountSat,
++				)
++			}
++		})
++	}
++}
 diff --git a/sdk/wavewalletdk/client_refresh_status.go b/sdk/wavewalletdk/client_refresh_status.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..7a087ec3f5ee9d21127cf362d73f5d62167a30cb
+index 0000000000000000000000000000000000000000..85d6c9114f2b6ccb4253a12c7bd76af368900f64
 --- /dev/null
 +++ b/sdk/wavewalletdk/client_refresh_status.go
-@@ -0,0 +1,128 @@
+@@ -0,0 +1,167 @@
 +package wavewalletdk
 +
 +import (
@@ -494,10 +641,13 @@ index 0000000000000000000000000000000000000000..7a087ec3f5ee9d21127cf362d73f5d62
 +// RefreshObservation reports confirmed forfeits for a caller's refresh inputs.
 +// Absence from the live inventory alone is not proof of completed refresh.
 +type RefreshObservation struct {
-+	Complete       bool
-+	ConfirmedCount int
-+	Total          int
-+	RetryAllowed   bool
++	Complete           bool
++	ConfirmedCount     int
++	ConfirmedAmountSat int64
++	Total              int
++	RemainingOutpoints []string
++	RemainingAmountSat int64
++	RetryAllowed       bool
 +}
 +
 +// RecoveryInventory includes expired and in-flight Bitcoin funds that the
@@ -561,19 +711,23 @@ index 0000000000000000000000000000000000000000..7a087ec3f5ee9d21127cf362d73f5d62
 +		return nil, fmt.Errorf("observe refresh settlement: %w", err)
 +	}
 +
-+	confirmed := make(map[string]bool)
++	confirmed := make(map[string]int64)
 +	for _, v := range resp.GetVtxos() {
 +		if v.GetStatus() == waverpc.VTXOStatus_VTXO_STATUS_FORFEITED &&
 +			v.GetSettlement().GetHeight() > 0 {
 +
-+			confirmed[v.GetOutpoint()] = true
++			confirmed[v.GetOutpoint()] = v.GetAmountSat()
 +		}
 +	}
 +
-+	result := &RefreshObservation{Total: len(outpoints)}
++	result := &RefreshObservation{
++		Total:              len(outpoints),
++		RemainingOutpoints: []string{},
++	}
 +	for _, outpoint := range outpoints {
-+		if confirmed[outpoint] {
++		if amount, ok := confirmed[outpoint]; ok {
 +			result.ConfirmedCount++
++			result.ConfirmedAmountSat += amount
 +		}
 +	}
 +	result.Complete = result.Total > 0 &&
@@ -582,11 +736,9 @@ index 0000000000000000000000000000000000000000..7a087ec3f5ee9d21127cf362d73f5d62
 +		return result, nil
 +	}
 +
-+	// The wallet reserves refresh inputs before returning acceptance. A
-+	// restart or rejected round can release them back to live. Only
-+	// positive live records for every input permit a new user-reviewed
-+	// attempt; a missing record or a failed read must keep the existing
-+	// operation.
++	// Separate rounds can settle subsets of the original selection. Only
++	// positive confirmed-settlement or live evidence for every input can
++	// resolve the attempt; absence never proves completion or release.
 +	live, err := c.daemon.ListVTXOs(ctx, &waverpc.ListVTXOsRequest{
 +		StatusFilter:           waverpc.VTXOStatus_VTXO_STATUS_LIVE,
 +		ExcludeCheckpointPsbts: true,
@@ -594,18 +746,52 @@ index 0000000000000000000000000000000000000000..7a087ec3f5ee9d21127cf362d73f5d62
 +	if err != nil {
 +		return nil, fmt.Errorf("observe refresh release: %w", err)
 +	}
-+	liveInputs := make(map[string]bool)
++	liveInputs := make(map[string]int64)
 +	for _, v := range live.GetVtxos() {
 +		if v.GetStatus() == waverpc.VTXOStatus_VTXO_STATUS_LIVE {
-+			liveInputs[v.GetOutpoint()] = true
++			liveInputs[v.GetOutpoint()] = v.GetAmountSat()
++		}
++	}
++	for _, outpoint := range outpoints {
++		if _, ok := confirmed[outpoint]; ok {
++			continue
++		}
++		if amount, ok := liveInputs[outpoint]; ok {
++			result.RemainingOutpoints = append(
++				result.RemainingOutpoints, outpoint,
++			)
++			result.RemainingAmountSat += amount
++		}
++	}
++	if result.ConfirmedCount+
++		len(result.RemainingOutpoints) != result.Total {
++		return result, nil
++	}
++
++	// SQL-live inputs alone cannot rule out a queued round intent. Include
++	// every in-memory round, including temporary rounds awaiting a reply,
++	// before permitting review of the remaining inputs. This observation
++	// is not a wallet-wide safe-to-stop certificate or a new submission.
++	rounds, err := c.daemon.ListRounds(ctx, &waverpc.ListRoundsRequest{
++		// This limits persisted history, never the live/temporary
++		// rounds.
++		PageSize: 1,
++	})
++	if err != nil {
++		return nil, fmt.Errorf("observe refresh rounds: %w", err)
++	}
++	for _, round := range rounds.GetRounds() {
++		switch round.GetState() {
++		case waverpc.RoundState_ROUND_STATE_CONFIRMED,
++			waverpc.RoundState_ROUND_STATE_FAILED:
++
++			continue
++
++		default:
++			return result, nil
 +		}
 +	}
 +	result.RetryAllowed = true
-+	for _, outpoint := range outpoints {
-+		if !liveInputs[outpoint] {
-+			result.RetryAllowed = false
-+		}
-+	}
 +
 +	return result, nil
 +}
