@@ -575,3 +575,9 @@ uses a short registration jitter and keeps the normal signing validation and
 nonce recovery fence. Neither an APNs acceptance nor a returned maintenance
 window proves a round completed. Physical-device background registration and
 signing remain a separate end-to-end acceptance test.
+
+Amountless BOLT-11 invoices prompt for a positive whole-satoshi amount after
+local invoice validation. The invoice description stays visible in a compact
+row. Fixed invoices display their signed amount. Review uses the normal fee and
+total receipt; editing an amount requires a fresh quote. Invalid, expired and
+wrong-network invoices cannot proceed to amount entry.
