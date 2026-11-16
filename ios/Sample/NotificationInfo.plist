@@ -46,6 +46,8 @@
 	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
+	<key>WavelengthDiagnosticCaptureDefault</key>
+	<string>$(WAVELENGTH_DIAGNOSTIC_CAPTURE_DEFAULT)</string>
 	<key>WavelengthNotificationRelays</key>
 	<dict/>
 </dict>

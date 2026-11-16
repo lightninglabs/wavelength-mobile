@@ -513,7 +513,7 @@ Scrolling holds the displayed snapshot while native capture and the captured
 match count stay live. Buffer rotation cannot move the row being read.
 Only “Follow latest” switches back to the current buffer and resumes scrolling. Log options can add a timestamped user
 marker for a reproduction without changing wallet state.
-The capture menu selects Info or Debug for the next wallet startup; it never
+The capture menu selects the level for the next wallet startup; it never
 restarts an active wallet. Native history retains up to 2,000 records and two
 rotating files of at most 1 MiB each. Capture is enabled by the app's
 `diagnostic_logs` config flag, while other SDK hosts keep the default off.
@@ -547,8 +547,12 @@ shown as unavailable. The VTXO inventory enriches the lightweight listing with
 authoritative expiry reads, so Refresh due uses the same posture as details.
 
 Diagnostics → Logs → Log options → Capture level selects Error, Warning, Info,
-Debug or Trace for the next native wallet startup. Info is the default. Existing
-Debug capture preferences carry forward until a level is selected. The capture
+Debug or Trace for the next native wallet startup. An explicit saved choice,
+including the legacy Debug switch, takes precedence over the build default.
+The build default is Info. TestFlight builds can select Debug with
+`WAVELENGTH_DIAGNOSTIC_CAPTURE_DEFAULT=debug`, or set
+`WavelengthDiagnosticCaptureDefault` to `debug` in their distribution Info.plist.
+This applies on upgrade when the user has not selected a capture level. The capture
 level controls which records the daemon produces; the display filter only
 selects records already captured.
 
