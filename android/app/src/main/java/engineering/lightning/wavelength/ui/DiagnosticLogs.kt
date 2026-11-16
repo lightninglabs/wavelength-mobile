@@ -106,7 +106,7 @@ import kotlinx.serialization.json.*
     }
     Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
       TextButton({ window.follow(); following = true }) { Text("Follow latest") }
-      DiagnosticShare(shown.joinToString("\n") { "${diagnosticTime(it.time,true)} ${it.level} ${it.source} ${it.message}" })
+      DiagnosticLogShare(shown, state.network.wire, interval = since != null)
     }
   }
 }
