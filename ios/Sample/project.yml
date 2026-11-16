@@ -43,6 +43,7 @@ targets:
         UIBackgroundModes: [remote-notification, fetch]
         BGTaskSchedulerPermittedIdentifiers: [engineering.lightning.wavelength.wallet.maintenance]
         WavelengthNotificationRelays: {}
+        WavelengthDiagnosticCaptureDefault: $(WAVELENGTH_DIAGNOSTIC_CAPTURE_DEFAULT)
     settings:
       configs:
         Debug:
@@ -58,6 +59,7 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
+        WAVELENGTH_DIAGNOSTIC_CAPTURE_DEFAULT: info
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Automatic
