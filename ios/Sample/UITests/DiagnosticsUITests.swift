@@ -85,6 +85,15 @@ final class DiagnosticsUITests: XCTestCase {
         XCTAssertEqual(follow.value as? String, "Browsing")
         follow.tap()
         XCTAssertEqual(follow.value as? String, "Following")
+        app.buttons["Share filtered logs"].tap()
+        let zip = app.buttons["diagnostics.share.zip"]
+        XCTAssertTrue(zip.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["diagnostics.share.file"].exists)
+        XCTAssertTrue(app.buttons["diagnostics.share.text"].exists)
+        attach(app, name: "Log export formats")
+        zip.tap()
+        XCTAssertTrue(app.cells["Save to Files"].waitForExistence(timeout: 15))
+        attach(app, name: "ZIP attachment in native share sheet")
     }
 
     private func attach(_ app: XCUIApplication, name: String) {

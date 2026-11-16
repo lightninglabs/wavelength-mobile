@@ -8,9 +8,11 @@ struct DiagnosticShare: Identifiable {
 }
 
 struct DiagnosticShareSheet: UIViewControllerRepresentable {
-    let text: String
+    var text: String = ""
+    var file: URL? = nil
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: [text], applicationActivities: nil)
+        let items: [Any] = file.map { [$0] } ?? [text]
+        return UIActivityViewController(activityItems: items, applicationActivities: nil)
     }
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }

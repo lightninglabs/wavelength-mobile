@@ -18,12 +18,13 @@ struct DiagnosticLogsView: View {
     @State private var records: [DiagnosticLogRecord] = []
     @State private var error: String?
     @State private var historyUnavailable = false
-    @State private var share: DiagnosticShare?
+    @State private var share: DiagnosticLogSnapshot?
 
     init(initialQuery: String = "", since: Int64? = nil, until: Int64? = nil) {
         _query = State(initialValue: initialQuery); self.since = since; self.until = until
     }
     private var matches: [DiagnosticLogRecord] { filtered(records) }
+    private var exportRecords: [DiagnosticLogRecord] { filtered(logWindow.records(live: records)) }
     private func filtered(_ records: [DiagnosticLogRecord]) -> [DiagnosticLogRecord] {
         records.filter { record in
             record.matches(query) && (level == "All levels" || record.level == level) &&
@@ -121,9 +122,19 @@ struct DiagnosticLogsView: View {
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
                     Button { paused.toggle(); filterFocused = false } label: { Image(systemName: paused ? "play" : "pause") }
                         .accessibilityLabel(paused ? "Resume logs" : "Pause logs")
-                    Button { share = .init(text: diagnosticLogExport(matches)) } label: { Image(systemName: "square.and.arrow.up") }
+                    Button {
+                        share = .init(records: exportRecords,
+                                      network: store.network.rawValue, interval: since != nil)
+                    } label: { Image(systemName: "square.and.arrow.up") }
                         .accessibilityLabel("Share filtered logs")
+                        .disabled(exportRecords.isEmpty)
                     Menu {
+                        if since != nil {
+                            Button("Share as file") {
+                                share = .init(records: exportRecords,
+                                              network: store.network.rawValue, interval: false)
+                            }.disabled(exportRecords.isEmpty)
+                        }
                         Button("Add marker") {
                             DiagnosticJournal.shared.record(network: store.network.rawValue, label: "User marker")
                         }
@@ -137,7 +148,7 @@ struct DiagnosticLogsView: View {
                         .accessibilityLabel("Log options")
                 }
             }
-            .sheet(item: $share) { DiagnosticShareSheet(text: $0.text) }
+            .sheet(item: $share) { DiagnosticLogShareView(snapshot: $0) }
             .task { await poll() }
     }
 
@@ -196,7 +207,10 @@ func diagnosticLogTime(_ milliseconds: Int64) -> String {
 }
 
 func diagnosticLogExport(_ records: [DiagnosticLogRecord]) -> String {
-    records.map { "\(DiagnosticDates.utc.string(from: Date(timeIntervalSince1970: Double($0.time) / 1000))) \($0.level) \($0.source) \($0.message)" }.joined(separator: "\n")
+    // Exports run off the UI thread. Do not share the view's DateFormatter.
+    let utc = ISO8601DateFormatter()
+    utc.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return records.map { "\(utc.string(from: Date(timeIntervalSince1970: Double($0.time) / 1000))) \($0.level) \($0.source) \($0.message)" }.joined(separator: "\n")
 }
 
 enum DiagnosticDates {
