@@ -112,6 +112,11 @@ private struct NetworkSelectionView: View {
                 Text(store.networkSwitchBlockedReason ?? "Background updates use the selected wallet.")
                     .font(.footnote).foregroundStyle(WalletTheme.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                if store.networkSwitchBlockedReason != nil {
+                    NavigationLink(destination: RefreshWalletView()) {
+                        WalletNavigationRow(title: "View refresh", icon: "arrow.triangle.2.circlepath")
+                    }.buttonStyle(.plain)
+                }
                 if switching { WalletStatus(text: "Connecting", pending: true) }
             }
             .navigationTitle("Network").navigationBarTitleDisplayMode(.inline)

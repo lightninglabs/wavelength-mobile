@@ -7,6 +7,35 @@ struct DiagnosticBackgroundView: View {
 
     var body: some View {
         WalletPage {
+            if let operation = store.refreshOperation {
+                VStack(alignment: .leading, spacing: 16) {
+                    NavigationLink(destination: RefreshWalletView()) {
+                        WalletNavigationRow(title: "Current refresh", icon: "arrow.triangle.2.circlepath")
+                    }.buttonStyle(.plain)
+                    DiagnosticRow(label: "Status", value: operation.status)
+                    if let count = operation.confirmedCount {
+                        DiagnosticRow(label: "Confirmed inputs", value: "\(count) of \(operation.outpoints.count)")
+                    }
+                    if let amount = operation.confirmedAmountSat, amount > 0 {
+                        DiagnosticRow(label: "Refreshed", value: WalletFormatting.sats(amount))
+                    }
+                    if let remaining = operation.remainingOutpoints {
+                        DiagnosticRow(label: operation.canRetry == true ? "Available inputs" : "Live inputs", value: "\(remaining.count)")
+                    }
+                    if let amount = operation.remainingAmountSat, amount > 0 {
+                        DiagnosticRow(label: operation.canRetry == true ? "Available to refresh" : "Live amount", value: WalletFormatting.sats(amount))
+                    }
+                    if let unresolved = operation.unresolvedInputCount {
+                        DiagnosticRow(label: "Unclassified inputs", value: "\(unresolved)")
+                    }
+                    NavigationLink(destination: DiagnosticRoundsView()) { Text("View rounds") }
+                        .buttonStyle(.plain)
+                    Text("Current wallet state. The runs below are earlier observations.")
+                        .font(.caption).foregroundStyle(WalletTheme.secondary)
+                    DiagnosticFailure(message: store.refreshCheckError)
+                }
+                WalletDivider()
+            }
             let runs = journal.runs.filter { $0.network == store.network.rawValue }.reversed()
             if runs.isEmpty {
                 Text("No background runs recorded yet").foregroundStyle(WalletTheme.secondary)
@@ -28,6 +57,7 @@ struct DiagnosticBackgroundView: View {
                 WalletDivider()
             }
         }.navigationTitle("Background").navigationBarTitleDisplayMode(.inline)
+            .task { await store.checkRefreshStatus() }
     }
 }
 

@@ -5,6 +5,24 @@ wake context, measured startup, native work summary, connected timeline, raw
 trace export and related logs. The trace is diagnostic evidence, not a wake
 scheduler or proof that refresh or a round completed.
 
+On iOS, a saved refresh appears above the run history with its **current**
+reconciled state: confirmed input count and amount, available inputs and amount,
+and unresolved input count. These are wallet reads made while viewing the app,
+not a reconstruction of what happened during an earlier background run.
+
+A refresh can settle across several rounds. The app keeps the original selection
+and reports partial settlement instead of leaving it permanently in progress.
+An explicit review can select only the remaining available inputs. The observer
+requires positive confirmed or live evidence for every original input and no
+nonterminal round, including temporary registrations, before allowing another
+review or releasing the known-refresh network-switch guard. Missing records,
+unconfirmed settlement, active rounds and read failures remain unresolved.
+This guard does not certify that every unrelated native obligation can stop.
+
+The refresh screen checks automatically and supports pull-to-refresh. Failed
+status reads remain visible and preserve the saved operation. Reading status
+does not queue a refresh or replay a join.
+
 ## What the app knows
 
 | Observation | Source |

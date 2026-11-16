@@ -136,5 +136,14 @@ public struct SweepPreview: Decodable, Sendable {
 public struct RefreshObservation: Decodable, Sendable {
     public let complete: Bool
     public let retryAllowed: Bool?
-    enum CodingKeys: String, CodingKey { case complete = "Complete", retryAllowed = "RetryAllowed" }
+    public let confirmedCount: Int?
+    public let confirmedAmountSat: Int64?
+    public let total: Int?
+    public let remainingOutpoints: [String]?
+    public let remainingAmountSat: Int64?
+    enum CodingKeys: String, CodingKey {
+        case complete = "Complete", retryAllowed = "RetryAllowed"
+        case confirmedCount = "ConfirmedCount", confirmedAmountSat = "ConfirmedAmountSat", total = "Total"
+        case remainingOutpoints = "RemainingOutpoints", remainingAmountSat = "RemainingAmountSat"
+    }
 }
