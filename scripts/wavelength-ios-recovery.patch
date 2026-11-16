@@ -1,37 +1,3 @@
-diff --git a/sdk/wavewalletdk/client.go b/sdk/wavewalletdk/client.go
-index d34d82f8..0e6525ee 100644
---- a/sdk/wavewalletdk/client.go
-+++ b/sdk/wavewalletdk/client.go
-@@ -288,7 +288,28 @@ func (c *Client) GetInfo(ctx context.Context) (*Info, error) {
- 	return info, nil
- }
- 
--// CreateWallet creates or imports the embedded daemon wallet.
-+// GenerateSeed prepares fresh aezeed recovery words without creating a wallet.
-+// Only an uninitialized self-managed wallet supports this operation. Abandoned
-+// words can be discarded safely; the daemon does not retain them. Back up the
-+// returned words before supplying them to CreateWallet.
-+func (c *Client) GenerateSeed(ctx context.Context, req GenerateSeedRequest) (
-+	*GenerateSeedResult, error) {
-+
-+	seed, err := c.daemon.GenSeed(ctx, &waverpc.GenSeedRequest{
-+		SeedPassphrase: bytes.Clone(req.SeedPassphrase),
-+	})
-+	if err != nil {
-+		return nil, fmt.Errorf("generate wallet seed: %w", err)
-+	}
-+
-+	return &GenerateSeedResult{
-+		Mnemonic: append([]string(nil), seed.GetMnemonic()...),
-+	}, nil
-+}
-+
-+// CreateWallet creates or imports the embedded daemon wallet. When Mnemonic is
-+// empty, its generated words are returned only after initialization succeeds.
-+// Backup-first hosts should use GenerateSeed before calling this method.
- func (c *Client) CreateWallet(ctx context.Context, req CreateWalletRequest) (
- 	*CreateWalletResult, error) {
- 
 diff --git a/sdk/wavewalletdk/client_exit_fee_mobile.go b/sdk/wavewalletdk/client_exit_fee_mobile.go
 new file mode 100644
 index 00000000..753f06bb
@@ -1057,39 +1023,7 @@ diff --git a/sdk/wavewalletdk/mobile/wallet.go b/sdk/wavewalletdk/mobile/wallet.
 index e7657cfd..332fa567 100644
 --- a/sdk/wavewalletdk/mobile/wallet.go
 +++ b/sdk/wavewalletdk/mobile/wallet.go
-@@ -112,6 +112,31 @@ func GetInfo() ([]byte, error) {
- 	return marshal(info)
- }
- 
-+// GenerateSeed prepares recovery words without creating a wallet. reqJSON
-+// decodes to wavewalletdk.GenerateSeedRequest; the response is
-+// wavewalletdk.GenerateSeedResult. Keep the response private, back it up, and
-+// pass its exact Mnemonic to CreateWallet. A timeout leaves no new wallet.
-+func GenerateSeed(reqJSON []byte) ([]byte, error) {
-+	client, parentCtx, err := activeClient()
-+	if err != nil {
-+		return nil, err
-+	}
-+	ctx, cancel := readContext(parentCtx)
-+	defer cancel()
-+
-+	var req wavewalletdk.GenerateSeedRequest
-+	if err := decode(reqJSON, &req); err != nil {
-+		return nil, err
-+	}
-+
-+	res, err := client.GenerateSeed(ctx, req)
-+	if err != nil {
-+		return nil, err
-+	}
-+
-+	return marshal(res)
-+}
-+
- // CreateWallet creates or imports the embedded wallet. reqJSON decodes to
- // wavewalletdk.CreateWalletRequest; the response is
- // wavewalletdk.CreateWalletResult.
-@@ -247,17 +272,17 @@ func PrepareSend(reqJSON []byte) ([]byte, error) {
+@@ -272,17 +272,17 @@ func PrepareSend(reqJSON []byte) ([]byte, error) {
  func SendPrepared(reqJSON []byte) ([]byte, error) {
  	client, ctx, err := activeClient()
  	if err != nil {
@@ -1110,32 +1044,3 @@ index e7657cfd..332fa567 100644
  	}
  
  	return marshal(res)
-diff --git a/sdk/wavewalletdk/types.go b/sdk/wavewalletdk/types.go
-index a7a241e1..f6e44212 100644
---- a/sdk/wavewalletdk/types.go
-+++ b/sdk/wavewalletdk/types.go
-@@ -150,7 +150,23 @@ type RefreshFeeEstimate struct {
- 	EstimateError string
- }
- 
--// CreateWalletRequest creates or imports a daemon wallet.
-+// GenerateSeedRequest prepares recovery words without initializing a wallet.
-+type GenerateSeedRequest struct {
-+	// SeedPassphrase protects the aezeed, independently of the wallet
-+	// password.
-+	SeedPassphrase []byte
-+}
-+
-+// GenerateSeedResult holds transient recovery words for backup before creation.
-+// The caller must keep them private and pass these exact words to CreateWallet
-+// after backup. The daemon does not persist them or initialize a wallet.
-+type GenerateSeedResult struct {
-+	Mnemonic []string
-+}
-+
-+// CreateWalletRequest creates or imports a daemon wallet. Hosts that need a
-+// recoverable onboarding flow should back up GenerateSeed's words first and
-+// supply them in Mnemonic; an empty Mnemonic retains automatic generation.
- type CreateWalletRequest struct {
- 	Mnemonic       []string
- 	SeedPassphrase []byte
