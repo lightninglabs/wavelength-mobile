@@ -489,7 +489,8 @@ final class WalletStore: ObservableObject {
             let result = try await client.send(quote.sendIntentID)
             upsert(result.entry)
             clearPendingDispatch()
-            await refresh()
+            // Show the authoritative result while independent snapshots catch up.
+            Task { await refresh() }
             return result
         } catch {
             if (error as? WalletError)?.isSendRejectedBeforeDispatch == true {
