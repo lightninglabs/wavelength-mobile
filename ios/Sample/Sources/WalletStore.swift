@@ -16,6 +16,16 @@ struct RefreshOperation: Codable {
     let amountSat: Int64
     var status: String
     var canRetry: Bool? = nil
+    var id: String? = UUID().uuidString
+    var confirmedCount: Int? = nil
+    var confirmedAmountSat: Int64? = nil
+    var remainingOutpoints: [String]? = nil
+    var remainingAmountSat: Int64? = nil
+
+    var unresolvedInputCount: Int? {
+        guard let confirmedCount, let remainingOutpoints else { return nil }
+        return max(0, outpoints.count - confirmedCount - remainingOutpoints.count)
+    }
 }
 
 @MainActor
@@ -36,6 +46,8 @@ final class WalletStore: ObservableObject {
     @Published private(set) var unresolvedDispatches: [PendingDispatch] = []
     @Published private(set) var unresolvedSweeps: [SweepOperation] = []
     @Published private(set) var refreshOperation: RefreshOperation?
+    @Published private(set) var isCheckingRefresh = false
+    @Published private(set) var refreshCheckError: String?
     @Published private(set) var exitBatches: [BatchExitOperation] = []
     @Published private(set) var exitBatchJournalError: String?
     @Published private(set) var recoveryInventory: [WalletVTXO] = []
@@ -75,6 +87,7 @@ final class WalletStore: ObservableObject {
     private let startClient: (WalletConfig) async throws -> Void
     private let stopClient: () async throws -> Void
     private let submitExitBatch: ([String], String) async throws -> ExitBatchResult
+    private let observeRefresh: ([String]) async throws -> RefreshObservation
     private let dataRoot: URL?
     private let defaults: UserDefaults
     private var refreshTask: Task<Void, Never>?
@@ -93,12 +106,14 @@ final class WalletStore: ObservableObject {
          applicationIsActive: @escaping @MainActor () -> Bool = { UIApplication.shared.applicationState == .active },
          startClient: ((WalletConfig) async throws -> Void)? = nil,
          stopClient: (() async throws -> Void)? = nil,
-         submitExitBatch: (([String], String) async throws -> ExitBatchResult)? = nil) {
+         submitExitBatch: (([String], String) async throws -> ExitBatchResult)? = nil,
+         observeRefresh: (([String]) async throws -> RefreshObservation)? = nil) {
         self.defaults = defaults
         self.client = client
         self.startClient = startClient ?? { try await client.start($0) }
         self.stopClient = stopClient ?? { try await client.stop() }
         self.submitExitBatch = submitExitBatch ?? { try await client.exitBatch(outpoints: $0, destination: $1) }
+        self.observeRefresh = observeRefresh ?? { try await client.observeRefresh(outpoints: $0) }
         self.dataRoot = dataRoot
         self.authenticate = authenticate
         self.waitForForeground = waitForForeground
@@ -139,7 +154,7 @@ final class WalletStore: ObservableObject {
     /// This guards known local refresh ownership, not every native obligation.
     var networkSwitchBlockedReason: String? {
         guard let operation = refreshOperation, operation.status != "Complete", operation.canRetry != true else { return nil }
-        return "Check the current refresh before changing networks or connections."
+        return "A refresh is still in progress on \(network.title)."
     }
 
     var isReady: Bool { phase == .ready }
@@ -187,6 +202,7 @@ final class WalletStore: ObservableObject {
         }
         guard phase != .starting, stateCreatingCallCount == 0 else { return }
         generation += 1
+        isCheckingRefresh = false
         let currentGeneration = generation
         stopMonitoring()
         phase = .starting
@@ -378,7 +394,8 @@ final class WalletStore: ObservableObject {
                 // and a history error must not suppress a valid balance.
                 async let balanceRefresh: Void = refreshBalanceSnapshot()
                 async let activityRefresh: Void = refreshActivitySnapshot()
-                _ = await (balanceRefresh, activityRefresh)
+                async let operationCheck: Void = checkRefreshStatus()
+                _ = await (balanceRefresh, activityRefresh, operationCheck)
                 await refreshMaintenanceState()
             }
         } catch {
@@ -1067,9 +1084,9 @@ final class WalletStore: ObservableObject {
         return try await client.exportRecovery(outpoints: outpoints)
     }
 
-    func previewRefresh() async throws -> RefreshResult {
+    func previewRefresh(outpoints: [String] = []) async throws -> RefreshResult {
         try requireForegroundInteraction()
-        return try await client.refreshFunds(dryRun: true)
+        return try await client.refreshFunds(outpoints: outpoints, dryRun: true)
     }
 
     func startRefresh(outpoints: [String], amountSat: Int64) async throws {
@@ -1100,6 +1117,7 @@ final class WalletStore: ObservableObject {
         guard !isSessionLocked, applicationIsActive() else { return }
         guard refreshOperation?.status == "Complete" || refreshOperation?.canRetry == true else { return }
         refreshOperation = nil
+        refreshCheckError = nil
         defaults.removeObject(forKey: preferenceKey("refresh"))
     }
 
@@ -1129,15 +1147,43 @@ final class WalletStore: ObservableObject {
         }
 
         if let summary = try? await client.exitSummary() { recoveryJobs = summary.exits ?? [] }
-        if let operation = refreshOperation, operation.status != "Complete",
-           let observation = try? await client.observeRefresh(outpoints: operation.outpoints) {
+    }
+
+    /// Reconcile only the selected refresh. Read failures preserve its evidence
+    /// and stay visible instead of disappearing behind optional recovery reads.
+    func checkRefreshStatus() async {
+        guard let operation = refreshOperation, operation.status != "Complete", !isCheckingRefresh,
+              stateCreatingCallCount == 0 else { return }
+        let checkedGeneration = generation
+        let checkedNetwork = network
+        isCheckingRefresh = true
+        defer { if checkedGeneration == generation { isCheckingRefresh = false } }
+        do {
+            let observation = try await observeRefresh(operation.outpoints)
+            guard checkedGeneration == generation, checkedNetwork == network,
+                  stateCreatingCallCount == 0, refreshOperation?.id == operation.id,
+                  refreshOperation?.outpoints == operation.outpoints else { return }
+            refreshCheckError = nil
+            refreshOperation?.confirmedCount = observation.confirmedCount
+            refreshOperation?.confirmedAmountSat = observation.confirmedAmountSat
+            refreshOperation?.remainingOutpoints = observation.remainingOutpoints
+            refreshOperation?.remainingAmountSat = observation.remainingAmountSat
+            refreshOperation?.canRetry = observation.retryAllowed == true
             if observation.complete {
                 refreshOperation?.status = "Complete"
             } else if observation.retryAllowed == true {
-                refreshOperation?.status = "Action needed"
-                refreshOperation?.canRetry = true
+                refreshOperation?.status = (observation.confirmedCount ?? 0) > 0 ? "Partially refreshed" : "Not completed"
+            } else {
+                refreshOperation?.status = "In progress"
             }
             persistRefresh()
+        } catch {
+            guard checkedGeneration == generation, checkedNetwork == network,
+                  stateCreatingCallCount == 0, refreshOperation?.id == operation.id else { return }
+            if refreshCheckError == nil {
+                DiagnosticJournal.shared.record(network: network.rawValue, label: "Refresh status check failed")
+            }
+            refreshCheckError = "Couldn’t check refresh status. Pull down to try again."
         }
     }
 
@@ -1183,6 +1229,8 @@ final class WalletStore: ObservableObject {
     private func preferenceKey(_ name: String) -> String { "\(network.rawValue).\(name)" }
 
     private func loadNetworkPreferences() {
+        isCheckingRefresh = false
+        refreshCheckError = nil
         do {
             exitBatches = try BatchExitJournal.load(exitBatchJournalURL())
             exitBatchJournalLoaded = true

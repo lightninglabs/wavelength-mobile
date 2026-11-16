@@ -351,19 +351,31 @@ struct RefreshWalletView: View {
     @State private var amount: Int64 = 0
     @State private var loading = false
     @State private var error: String?
+    @State private var reviewOutpoints: [String] = []
     var body: some View {
         WalletPage {
             if let operation = store.refreshOperation {
                 if operation.amountSat > 0 { WalletAmount(amount: operation.amountSat) }
                 WalletStatus(text: operation.status, pending: operation.status == "In progress" || operation.status == "Checking status",
                              complete: operation.status == "Complete", failed: operation.status == "Action needed")
+                if let refreshed = operation.confirmedAmountSat, refreshed > 0, operation.status != "Complete" {
+                    ValueRow(label: "Refreshed", value: WalletFormatting.sats(refreshed))
+                    if let remaining = operation.remainingAmountSat, operation.canRetry == true {
+                        ValueRow(label: "Available to refresh", value: WalletFormatting.sats(remaining))
+                    }
+                }
                 if let error { Text(error).font(.footnote).foregroundStyle(.red) }
-                Button("Check status") { Task { await store.refresh() } }.buttonStyle(WalletButtonStyle(secondary: true))
+                if let message = store.refreshCheckError {
+                    Text(message).font(.footnote).foregroundStyle(WalletTheme.secondary)
+                }
                 if operation.status == "Complete" || operation.canRetry == true {
                     if operation.canRetry == true {
-                        Text("Funds are available. Review a new refresh.").font(.footnote).foregroundStyle(WalletTheme.secondary)
+                        Text((operation.confirmedCount ?? 0) > 0 ? "The remaining funds are available." : "Funds are available. Review a new refresh.")
+                            .font(.footnote).foregroundStyle(WalletTheme.secondary)
                     }
-                    Button(operation.canRetry == true ? "Review again" : "New refresh") {
+                    Button(operation.canRetry == true ? ((operation.confirmedCount ?? 0) > 0 ? "Review remaining" : "Review again") : "New refresh") {
+                        let remaining = operation.remainingOutpoints ?? operation.outpoints
+                        reviewOutpoints = operation.canRetry == true ? remaining : []
                         store.clearCompletedRefresh()
                         Task { await load() }
                     }
@@ -394,13 +406,20 @@ struct RefreshWalletView: View {
             }
         }
         .navigationTitle("Refresh").navigationBarTitleDisplayMode(.inline)
-        .task { if store.refreshOperation == nil { await load() } }
+        .task {
+            if store.refreshOperation == nil { await load() }
+            else { await store.checkRefreshStatus() }
+        }
+        .refreshable {
+            if store.refreshOperation == nil { await load() }
+            else { await store.checkRefreshStatus() }
+        }
     }
     private func load() async {
         loading = true
         defer { loading = false }
         do {
-            let result = try await store.previewRefresh()
+            let result = try await store.previewRefresh(outpoints: reviewOutpoints)
             preview = result
             let selected = Set(result.queuedOutpoints ?? [])
             amount = (try await store.inventory()).filter { selected.contains($0.outpoint) }.reduce(0) { $0 + $1.amountSat }
