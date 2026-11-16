@@ -442,6 +442,10 @@ final class WalletStore: ObservableObject {
         }
     }
 
+    func decodeInvoice(_ invoice: String) async throws -> InvoiceDetails {
+        try await client.decodeInvoice(invoice, network: network)
+    }
+
     func prepareSend(
         destination: String,
         amountSat: Int64,
@@ -455,6 +459,7 @@ final class WalletStore: ObservableObject {
         if destination.lowercased().hasPrefix("ln") {
             return try await client.prepareSend(
                 invoice: destination,
+                amountSat: amountSat,
                 note: note,
                 maxFeeSat: maxFeeSat,
                 maxCreditSat: maxCreditSat,
