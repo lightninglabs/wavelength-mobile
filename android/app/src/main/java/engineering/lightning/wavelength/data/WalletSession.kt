@@ -22,6 +22,13 @@ class WalletSession(context: Context) {
   val state = mutable.asStateFlow()
   private var observations: Job? = null
   private var foreground = false
+  private val creation = WalletCreation(
+    generate = { client.generateSeed().mnemonic },
+    initialize = { words ->
+      val password = withContext(Dispatchers.IO) { vault.password(true) }
+      try { client.createWallet(password, words) } finally { password.fill(0) }
+    },
+  )
 
 
   fun resume() {
@@ -35,7 +42,9 @@ class WalletSession(context: Context) {
           }
           val info = client.getInfo()
           mutable.update { it.copy(info = info) }
-          if (info.walletState == WalletState.NONE) {
+          if (mutable.value.phase == WalletPhase.BACKUP) {
+            // Awaiting backup never grants a wallet session.
+          } else if (info.walletState == WalletState.NONE) {
             mutable.update { it.copy(phase = WalletPhase.SETUP) }
           } else if (mutable.value.phase != WalletPhase.OPEN) {
             mutable.update { it.copy(phase = WalletPhase.LOCKED) }
@@ -48,32 +57,51 @@ class WalletSession(context: Context) {
 
   fun pause() {
     foreground = false
+    if (state.value.phase == WalletPhase.BACKUP) {
+      creation.discard()
+      mutable.update { it.copy(phase = WalletPhase.SETUP, recoveryWords = null) }
+    }
     observations?.cancel(); observations = null
     mutable.update { it.copy(phase = if (it.phase == WalletPhase.OPEN) WalletPhase.LOCKED else it.phase) }
     scope.launch { lifecycle.withLock { if (client.isRunning) runCatching { client.setHostForeground(false) } } }
   }
 
   fun open(create: Boolean = false, mnemonic: List<String> = emptyList()) {
-    scope.launch {
-      lifecycle.withLock {
-        mutable.update { it.copy(phase = WalletPhase.OPENING, error = null) }
-        try {
-          val password = withContext(Dispatchers.IO) { vault.password(create) }
-          try {
-            if (create) {
-              val result = client.createWallet(password, mnemonic)
-              withContext(Dispatchers.IO) { vault.saveWords(result.mnemonic) }
-            } else if (client.getInfo().walletState == WalletState.LOCKED) {
-              client.unlockWallet(password)
-            }
-          } finally { password.fill(0) }
-          if (!foreground) { mutable.update { it.copy(phase = WalletPhase.LOCKED) }; return@withLock }
-          mutable.update { it.copy(phase = WalletPhase.OPEN) }
-          // The wallet shell opens first. Network startup and snapshots follow.
-          startObservations()
-        } catch (error: Exception) { fail(error) }
-      }
-    }
+    scope.launch { lifecycle.withLock {
+      if (!foreground || (create && state.value.phase != WalletPhase.SETUP)) return@withLock
+      mutable.update { it.copy(phase = WalletPhase.OPENING, error = null) }
+      try {
+        if (create && mnemonic.isEmpty()) {
+          val words = creation.prepare()
+          if (foreground) mutable.update { it.copy(phase = WalletPhase.BACKUP, recoveryWords = words) }
+          else {
+            creation.discard()
+            mutable.update { it.copy(phase = WalletPhase.SETUP) }
+          }
+          return@withLock
+        }
+        if (create) creation.restore(mnemonic)
+        else if (client.getInfo().walletState == WalletState.LOCKED) {
+          val password = withContext(Dispatchers.IO) { vault.password(false) }
+          try { client.unlockWallet(password) } finally { password.fill(0) }
+        }
+        opened()
+      } catch (error: Exception) { fail(error) }
+    } }
+  }
+
+  fun acknowledgeBackup() {
+    scope.launch { lifecycle.withLock {
+      if (!foreground || state.value.phase != WalletPhase.BACKUP) return@withLock
+      mutable.update { it.copy(phase = WalletPhase.OPENING, recoveryWords = null, error = null) }
+      try { creation.acknowledge(); opened() } catch (error: Exception) { fail(error) }
+    } }
+  }
+
+  private fun opened() {
+    if (!foreground) { mutable.update { it.copy(phase = WalletPhase.LOCKED) }; return }
+    mutable.update { it.copy(phase = WalletPhase.OPEN) }
+    startObservations()
   }
 
   private fun startObservations() {
@@ -120,16 +148,16 @@ class WalletSession(context: Context) {
   fun dismissError() { mutable.update { it.copy(error = null) } }
   fun reportError(error: Throwable) = fail(error, fatal = false)
   fun upsert(entry: Entry) { mutable.update { it.copy(activity = it.activity.filterNot { old -> old.id == entry.id } + entry) } }
-  suspend fun backupWords(): List<String> = withContext(Dispatchers.IO) { vault.words() }
   private fun fail(error: Throwable, fatal: Boolean = true) {
     if (error is CancellationException) throw error
     mutable.update { it.copy(phase = if (fatal) WalletPhase.ERROR else it.phase, error = error.message ?: "Wallet unavailable") }
   }
 }
 
-enum class WalletPhase { OPENING, SETUP, LOCKED, OPEN, ERROR }
+enum class WalletPhase { OPENING, SETUP, BACKUP, LOCKED, OPEN, ERROR }
 data class WalletUiState(
   val phase: WalletPhase = WalletPhase.OPENING,
+  val recoveryWords: List<String>? = null,
   val info: Info? = null,
   val balance: Balance? = null,
   val activity: List<Entry> = emptyList(),

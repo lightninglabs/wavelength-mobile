@@ -40,6 +40,7 @@ import kotlin.math.abs
         WalletPhase.OPENING -> Column(Modifier.fillMaxSize(), Arrangement.Center, Alignment.CenterHorizontally) {
           WaveMark(Modifier.size(80.dp)); Spacer(Modifier.height(24.dp)); CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
         }
+        WalletPhase.BACKUP -> CreationBackup(state.recoveryWords.orEmpty(), session::acknowledgeBackup)
         WalletPhase.SETUP -> Setup { words -> session.open(create = true, mnemonic = words) }
         WalletPhase.LOCKED -> Column(Modifier.fillMaxSize().padding(24.dp), Arrangement.Center, Alignment.CenterHorizontally) {
           WaveMark(Modifier.size(80.dp)); Spacer(Modifier.height(32.dp))
@@ -64,7 +65,8 @@ import kotlin.math.abs
 
 @Composable private fun Setup(create: (List<String>) -> Unit) {
   var restore by remember { mutableStateOf(false) }
-  val words = rememberTextFieldState()
+  val words = remember { androidx.compose.foundation.text.input.TextFieldState() }
+  if (restore) SensitiveScreen()
   Column(Modifier.fillMaxSize().systemBarsPadding().padding(24.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
     Spacer(Modifier.weight(1f)); WaveMark(Modifier.size(80.dp))
     Text("Wavelength", fontSize = 36.sp)
@@ -186,21 +188,13 @@ import kotlin.math.abs
 }
 
 @Composable private fun Settings(session: WalletSession, state: WalletUiState, modifier: Modifier) {
-  var words by remember { mutableStateOf<List<String>>(emptyList()) }
-  val scope = rememberCoroutineScope()
   Column(modifier.verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
     CopyRow("Network", "Signet")
     CopyRow("Client ID", state.info?.identityPubKey.orEmpty())
     CopyRow("Operator", "signet.wavelength.lightning.finance:443")
     CopyRow("Lightning", "swap.signet.wavelength.lightning.finance:443")
     CopyRow("Version", state.info?.version.orEmpty())
-    HorizontalDivider()
-    WalletButton(if (words.isEmpty()) "Recovery words" else "Hide recovery words", secondary = true) {
-      if (words.isNotEmpty()) words = emptyList() else scope.launch {
-        try { words = session.backupWords() } catch (error: Exception) { session.reportError(error) }
-      }
-    }
-    if (words.isNotEmpty()) SelectionContainer { Text(words.mapIndexed { i, word -> "${i + 1}. $word" }.joinToString("\n")) }
+
   }
 }
 
