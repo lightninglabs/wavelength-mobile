@@ -184,7 +184,15 @@ public actor WalletClient {
         try decode(await bg { try Bindings.balance() })
     }
 
-    /// Create or import the wallet. An empty mnemonic generates a fresh seed.
+    /// Generate private recovery words without initializing a wallet. Back up
+    /// the result before passing those exact words to `createWallet`.
+    public func generateSeed() async throws -> [String] {
+        let result: GenerateSeedResult = try decode(await bg { try Bindings.generateSeed() })
+        return result.mnemonic
+    }
+
+    /// Create or import the wallet. Backup-first callers supply the words from
+    /// `generateSeed`; an empty mnemonic retains automatic SDK generation.
     public func createWallet(
         walletPassword: Data,
         mnemonic: [String] = []

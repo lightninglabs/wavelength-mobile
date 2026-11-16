@@ -76,6 +76,15 @@ public struct Status: Decodable, Sendable {
     }
 }
 
+/// Transient words generated before any wallet database is initialized.
+public struct GenerateSeedResult: Decodable, Sendable {
+    public let mnemonic: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case mnemonic = "Mnemonic"
+    }
+}
+
 /// Result of creating or importing a wallet (`createWallet`).
 public struct CreateWalletResult: Decodable, Sendable {
     public let mnemonic: [String]
