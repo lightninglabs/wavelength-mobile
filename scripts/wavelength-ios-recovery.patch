@@ -1,6 +1,40 @@
+diff --git a/sdk/wavewalletdk/client.go b/sdk/wavewalletdk/client.go
+index d34d82f8..0e6525ee 100644
+--- a/sdk/wavewalletdk/client.go
++++ b/sdk/wavewalletdk/client.go
+@@ -288,7 +288,28 @@ func (c *Client) GetInfo(ctx context.Context) (*Info, error) {
+ 	return info, nil
+ }
+ 
+-// CreateWallet creates or imports the embedded daemon wallet.
++// GenerateSeed prepares fresh aezeed recovery words without creating a wallet.
++// Only an uninitialized self-managed wallet supports this operation. Abandoned
++// words can be discarded safely; the daemon does not retain them. Back up the
++// returned words before supplying them to CreateWallet.
++func (c *Client) GenerateSeed(ctx context.Context, req GenerateSeedRequest) (
++	*GenerateSeedResult, error) {
++
++	seed, err := c.daemon.GenSeed(ctx, &waverpc.GenSeedRequest{
++		SeedPassphrase: bytes.Clone(req.SeedPassphrase),
++	})
++	if err != nil {
++		return nil, fmt.Errorf("generate wallet seed: %w", err)
++	}
++
++	return &GenerateSeedResult{
++		Mnemonic: append([]string(nil), seed.GetMnemonic()...),
++	}, nil
++}
++
++// CreateWallet creates or imports the embedded daemon wallet. When Mnemonic is
++// empty, its generated words are returned only after initialization succeeds.
++// Backup-first hosts should use GenerateSeed before calling this method.
+ func (c *Client) CreateWallet(ctx context.Context, req CreateWalletRequest) (
+ 	*CreateWalletResult, error) {
+ 
 diff --git a/sdk/wavewalletdk/client_exit_fee_mobile.go b/sdk/wavewalletdk/client_exit_fee_mobile.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..753f06bb8b1e106511e84ca5f109f57c7f30fb43
+index 00000000..753f06bb
 --- /dev/null
 +++ b/sdk/wavewalletdk/client_exit_fee_mobile.go
 @@ -0,0 +1,99 @@
@@ -105,7 +139,7 @@ index 0000000000000000000000000000000000000000..753f06bb8b1e106511e84ca5f109f57c
 +}
 diff --git a/sdk/wavewalletdk/client_exit_fee_mobile_test.go b/sdk/wavewalletdk/client_exit_fee_mobile_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..cd43f3cd18f7721ff44f5c62d505a088dd7431aa
+index 00000000..cd43f3cd
 --- /dev/null
 +++ b/sdk/wavewalletdk/client_exit_fee_mobile_test.go
 @@ -0,0 +1,146 @@
@@ -257,7 +291,7 @@ index 0000000000000000000000000000000000000000..cd43f3cd18f7721ff44f5c62d505a088
 +}
 diff --git a/sdk/wavewalletdk/client_export.go b/sdk/wavewalletdk/client_export.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..c420147cb3905402df3f9161a329f642488528f0
+index 00000000..c420147c
 --- /dev/null
 +++ b/sdk/wavewalletdk/client_export.go
 @@ -0,0 +1,41 @@
@@ -304,7 +338,7 @@ index 0000000000000000000000000000000000000000..c420147cb3905402df3f9161a329f642
 +}
 diff --git a/sdk/wavewalletdk/client_recovery_mobile_test.go b/sdk/wavewalletdk/client_recovery_mobile_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..eef589f8f5d6347fe8f106ce9afd880b5554d3e5
+index 00000000..eef589f8
 --- /dev/null
 +++ b/sdk/wavewalletdk/client_recovery_mobile_test.go
 @@ -0,0 +1,314 @@
@@ -624,7 +658,7 @@ index 0000000000000000000000000000000000000000..eef589f8f5d6347fe8f106ce9afd880b
 +}
 diff --git a/sdk/wavewalletdk/client_refresh_status.go b/sdk/wavewalletdk/client_refresh_status.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..85d6c9114f2b6ccb4253a12c7bd76af368900f64
+index 00000000..85d6c911
 --- /dev/null
 +++ b/sdk/wavewalletdk/client_refresh_status.go
 @@ -0,0 +1,167 @@
@@ -797,7 +831,7 @@ index 0000000000000000000000000000000000000000..85d6c9114f2b6ccb4253a12c7bd76af3
 +}
 diff --git a/sdk/wavewalletdk/mobile/exit_fee.go b/sdk/wavewalletdk/mobile/exit_fee.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..cfd824c4c72f096976e6a06386287b72a82445f6
+index 00000000..cfd824c4
 --- /dev/null
 +++ b/sdk/wavewalletdk/mobile/exit_fee.go
 @@ -0,0 +1,25 @@
@@ -828,7 +862,7 @@ index 0000000000000000000000000000000000000000..cfd824c4c72f096976e6a06386287b72
 +}
 diff --git a/sdk/wavewalletdk/mobile/recovery.go b/sdk/wavewalletdk/mobile/recovery.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..369fbf84aee98f6641bc730041e16d6f29b8c0e0
+index 00000000..369fbf84
 --- /dev/null
 +++ b/sdk/wavewalletdk/mobile/recovery.go
 @@ -0,0 +1,88 @@
@@ -922,7 +956,7 @@ index 0000000000000000000000000000000000000000..369fbf84aee98f6641bc730041e16d6f
 +}
 diff --git a/sdk/wavewalletdk/mobile/send_failure.go b/sdk/wavewalletdk/mobile/send_failure.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..5214e1c4e6f5b6b3400de3ee5801d409f5ccdd06
+index 00000000..5214e1c4
 --- /dev/null
 +++ b/sdk/wavewalletdk/mobile/send_failure.go
 @@ -0,0 +1,37 @@
@@ -965,7 +999,7 @@ index 0000000000000000000000000000000000000000..5214e1c4e6f5b6b3400de3ee5801d409
 +}
 diff --git a/sdk/wavewalletdk/mobile/send_failure_test.go b/sdk/wavewalletdk/mobile/send_failure_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..3b7fe0c9d22189ac4f511affe95d85b0c13c2557
+index 00000000..3b7fe0c9
 --- /dev/null
 +++ b/sdk/wavewalletdk/mobile/send_failure_test.go
 @@ -0,0 +1,50 @@
@@ -1020,10 +1054,42 @@ index 0000000000000000000000000000000000000000..3b7fe0c9d22189ac4f511affe95d85b0
 +	}
 +}
 diff --git a/sdk/wavewalletdk/mobile/wallet.go b/sdk/wavewalletdk/mobile/wallet.go
-index e7657cfd48ff5d2d1bd079b6b398a8448047f78b..c0bf983d099094f59c671b05d51d94599cfa639a 100644
+index e7657cfd..332fa567 100644
 --- a/sdk/wavewalletdk/mobile/wallet.go
 +++ b/sdk/wavewalletdk/mobile/wallet.go
-@@ -247,17 +247,17 @@ func PrepareSend(reqJSON []byte) ([]byte, error) {
+@@ -112,6 +112,31 @@ func GetInfo() ([]byte, error) {
+ 	return marshal(info)
+ }
+ 
++// GenerateSeed prepares recovery words without creating a wallet. reqJSON
++// decodes to wavewalletdk.GenerateSeedRequest; the response is
++// wavewalletdk.GenerateSeedResult. Keep the response private, back it up, and
++// pass its exact Mnemonic to CreateWallet. A timeout leaves no new wallet.
++func GenerateSeed(reqJSON []byte) ([]byte, error) {
++	client, parentCtx, err := activeClient()
++	if err != nil {
++		return nil, err
++	}
++	ctx, cancel := readContext(parentCtx)
++	defer cancel()
++
++	var req wavewalletdk.GenerateSeedRequest
++	if err := decode(reqJSON, &req); err != nil {
++		return nil, err
++	}
++
++	res, err := client.GenerateSeed(ctx, req)
++	if err != nil {
++		return nil, err
++	}
++
++	return marshal(res)
++}
++
+ // CreateWallet creates or imports the embedded wallet. reqJSON decodes to
+ // wavewalletdk.CreateWalletRequest; the response is
+ // wavewalletdk.CreateWalletResult.
+@@ -247,17 +272,17 @@ func PrepareSend(reqJSON []byte) ([]byte, error) {
  func SendPrepared(reqJSON []byte) ([]byte, error) {
  	client, ctx, err := activeClient()
  	if err != nil {
@@ -1044,3 +1110,32 @@ index e7657cfd48ff5d2d1bd079b6b398a8448047f78b..c0bf983d099094f59c671b05d51d9459
  	}
  
  	return marshal(res)
+diff --git a/sdk/wavewalletdk/types.go b/sdk/wavewalletdk/types.go
+index a7a241e1..f6e44212 100644
+--- a/sdk/wavewalletdk/types.go
++++ b/sdk/wavewalletdk/types.go
+@@ -150,7 +150,23 @@ type RefreshFeeEstimate struct {
+ 	EstimateError string
+ }
+ 
+-// CreateWalletRequest creates or imports a daemon wallet.
++// GenerateSeedRequest prepares recovery words without initializing a wallet.
++type GenerateSeedRequest struct {
++	// SeedPassphrase protects the aezeed, independently of the wallet
++	// password.
++	SeedPassphrase []byte
++}
++
++// GenerateSeedResult holds transient recovery words for backup before creation.
++// The caller must keep them private and pass these exact words to CreateWallet
++// after backup. The daemon does not persist them or initialize a wallet.
++type GenerateSeedResult struct {
++	Mnemonic []string
++}
++
++// CreateWalletRequest creates or imports a daemon wallet. Hosts that need a
++// recoverable onboarding flow should back up GenerateSeed's words first and
++// supply them in Mnemonic; an empty Mnemonic retains automatic generation.
+ type CreateWalletRequest struct {
+ 	Mnemonic       []string
+ 	SeedPassphrase []byte

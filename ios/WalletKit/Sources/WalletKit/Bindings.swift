@@ -102,6 +102,11 @@ enum Bindings {
         return try unwrap(MobileBalance(&err), err)
     }
 
+    static func generateSeed() throws -> Data {
+        var err: NSError?
+        return try unwrap(MobileGenerateSeed(Data("{}".utf8), &err), err)
+    }
+
     static func createWallet(_ req: Data) throws -> Data {
         var err: NSError?
         return try unwrap(MobileCreateWallet(req, &err), err)
@@ -242,6 +247,7 @@ enum Bindings {
     static func getInfo() throws -> Data { throw missing() }
     static func status() throws -> Data { throw missing() }
     static func balance() throws -> Data { throw missing() }
+    static func generateSeed() throws -> Data { throw missing() }
     static func createWallet(_ req: Data) throws -> Data { throw missing() }
     static func unlockWallet(_ req: Data) throws -> Data { throw missing() }
     static func receive(_ req: Data) throws -> Data { throw missing() }

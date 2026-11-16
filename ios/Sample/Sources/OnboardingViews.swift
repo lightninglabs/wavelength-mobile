@@ -10,7 +10,7 @@ struct WalletSetupView: View {
                 Text("Wallet").font(.largeTitle.weight(.medium))
                 Spacer(minLength: 180)
                 NetworkSelectionButton()
-                Button("Create wallet") { Task { await store.createWallet() } }
+                Button("Create wallet") { Task { await store.prepareWalletBackup() } }
                     .buttonStyle(WalletButtonStyle())
                 Button("Restore wallet") { showsRestore = true }.buttonStyle(WalletButtonStyle(secondary: true))
             }
@@ -34,7 +34,7 @@ private struct RestoreWalletForm: View {
                 }
                 Button {
                     Task {
-                        await store.createWallet(mnemonic: mnemonic, showBackup: false)
+                        await store.restoreWallet(mnemonic: mnemonic)
                         if store.phase.isWalletAvailable { presentationMode.wrappedValue.dismiss() }
                     }
                 } label: {
@@ -109,7 +109,10 @@ struct SeedBackupView: View {
     var body: some View {
         NavigationView {
             WalletPage {
+                Text("New \(store.network.title) wallet").font(.headline)
                 Text("Store offline. Keep private.").foregroundStyle(WalletTheme.secondary)
+                Text("Save these words before creating your wallet. Leaving this screen before confirmation starts setup again.")
+                    .font(.footnote).foregroundStyle(WalletTheme.secondary)
                 Text("Recovery words alone may not recover off-chain funds. Move your funds before replacing or erasing this iPhone.")
                     .font(.footnote).foregroundStyle(WalletTheme.secondary)
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 20) {
@@ -122,8 +125,12 @@ struct SeedBackupView: View {
                 }.privacySensitive()
                 Button(revealed ? "Hide words" : "Reveal words") { revealed.toggle() }
                 Toggle("I saved my recovery words", isOn: $acknowledged)
-                Button("Done") { store.acknowledgeSeedBackup() }
+                Button("Create wallet") {
+                    revealed = false
+                    Task { await store.acknowledgeSeedBackup() }
+                }
                     .buttonStyle(WalletButtonStyle()).disabled(!acknowledged)
+                    .accessibilityIdentifier("backup.create")
             }
             .navigationTitle("Recovery words").navigationBarTitleDisplayMode(.inline)
         }.navigationViewStyle(.stack)

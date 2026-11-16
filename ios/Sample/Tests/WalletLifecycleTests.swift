@@ -69,7 +69,8 @@ final class WalletLifecycleTests: XCTestCase {
         }
         let setup = WalletStore(defaults: defaults, client: client, dataRoot: root)
         await setup.start()
-        await setup.createWallet(showBackup: false)
+        await setup.prepareWalletBackup()
+        await setup.acknowledgeSeedBackup()
         XCTAssertTrue(setup.phase.isWalletAvailable, setup.alertMessage ?? "")
         try await client.stop()
         var active = false
@@ -109,7 +110,7 @@ final class WalletLifecycleTests: XCTestCase {
         do {
             let setup = WalletStore(defaults: defaults, client: client, dataRoot: root)
             await setup.start()
-            await setup.createWallet(showBackup: false, password: "mainnet-test-password")
+            await setup.restoreWallet(mnemonic: try await client.generateSeed(), password: "mainnet-test-password")
             XCTAssertTrue(setup.phase.isWalletAvailable, setup.alertMessage ?? "")
         }
         // Simulate an older installation where only Signet had Face ID enabled.
@@ -167,7 +168,7 @@ final class WalletLifecycleTests: XCTestCase {
 
             // A failed prior attempt must not override a newly supplied password.
             try KeychainStore.save(Data("prior attempt".utf8), account: account)
-            await setup.createWallet(showBackup: false, password: password)
+            await setup.restoreWallet(mnemonic: try await client.generateSeed(), password: password)
             XCTAssertEqual(try KeychainStore.read(account: account), secret)
         }
 

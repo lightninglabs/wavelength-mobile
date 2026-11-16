@@ -60,7 +60,7 @@ final class BackgroundWalletTests: XCTestCase {
         fixture.defaults.set(false, forKey: "biometricUnlockEnabled")
         var setup: WalletStore? = fixture.store(client, active: { true })
         await setup!.start()
-        await setup!.createWallet(showBackup: false, password: "legacy-wallet-password")
+        await setup!.restoreWallet(mnemonic: try await client.generateSeed(), password: "legacy-wallet-password")
         XCTAssertTrue(setup!.phase.isWalletAvailable, setup!.alertMessage ?? "")
         let originalIdentity = try await client.getInfo().identityPubKey
         let originalSecret = try XCTUnwrap(KeychainStore.read(account: fixture.account))
@@ -177,7 +177,10 @@ final class BackgroundWalletTests: XCTestCase {
             authenticate: { authentications += 1; active = false },
             waitForForeground: { active = true }, applicationIsActive: { active })
         await store.start()
-        let creation = Task { await store.createWallet(showBackup: false) }
+        let creation = Task {
+            await store.prepareWalletBackup()
+            await store.acknowledgeSeedBackup()
+        }
         let deadline = Date().addingTimeInterval(5)
         while try KeychainStore.read(account: fixture.account) == nil && Date() < deadline {
             try await Task.sleep(nanoseconds: 10_000_000)
@@ -193,7 +196,8 @@ final class BackgroundWalletTests: XCTestCase {
         XCTAssertTrue(store.biometricUnlockEnabled)
         XCTAssertEqual(authentications, 1)
         XCTAssertEqual(try KeychainStore.read(account: fixture.account), durableSecret)
-        try await client.stop()
+        // Restart through the store, as the app does. Direct native Stop here
+        // races the foreground restart deliberately queued during creation.
         store.lockForBackground()
         await store.start()
         XCTAssertTrue(store.isSessionLocked)
