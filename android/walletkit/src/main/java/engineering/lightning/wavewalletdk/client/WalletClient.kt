@@ -54,6 +54,10 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
   /** Confirmed balance in satoshis, without decoding a JSON payload. */
   suspend fun confirmedBalanceSat(): Long = io { Mobile.confirmedBalanceSat() }
 
+  /** Generate recovery words without creating a wallet or storing a phrase copy. */
+  suspend fun generateSeed(): GenerateSeedResult =
+    decode(io { Mobile.generateSeed("{}".toByteArray()) })
+
   /** Create or import the wallet. An empty mnemonic generates a fresh seed. */
   suspend fun createWallet(
     walletPassword: ByteArray,

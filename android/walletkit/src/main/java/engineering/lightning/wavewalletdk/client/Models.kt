@@ -59,6 +59,12 @@ data class Status(
   @SerialName("PendingCount") val pendingCount: Long = 0,
 )
 
+/** Fresh recovery words for backup before wallet initialization. */
+@Serializable
+data class GenerateSeedResult(
+  @SerialName("Mnemonic") val mnemonic: List<String> = emptyList(),
+)
+
 /** Result of creating or importing a wallet (`createWallet`). */
 @Serializable
 data class CreateWalletResult(
