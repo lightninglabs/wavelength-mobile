@@ -50,7 +50,14 @@ creates a second one after ambiguous cancellation.
 
 New wallets use a random 32-byte encryption password stored in the device-only
 Keychain with `AfterFirstUnlockThisDeviceOnly` accessibility. Creation and restore
-no longer ask the user to invent a wallet password. Device authentication is on
+no longer ask the user to invent a wallet password. New-wallet setup generates
+recovery words without initializing a wallet. After backup acknowledgment it
+creates the wallet from those exact words. Leaving the backup screen for the
+background discards the volatile phrase and returns to setup. A terminated
+process before acknowledgment leaves no wallet to reopen. Startup failure after
+acknowledgment preserves an initialized wallet for ordinary unlock. If creation
+fails before a wallet exists, foreground retry keeps the same acknowledged
+words in memory; backgrounding still discards them. Device authentication is on
 by default for a new installation when available; an existing explicit preference
 is preserved. Face ID or Touch ID uses the device passcode as its system fallback.
 

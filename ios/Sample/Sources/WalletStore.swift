@@ -37,7 +37,7 @@ final class WalletStore: ObservableObject {
     @Published private(set) var isWorking = false
     @Published private(set) var unlockStage: WalletUnlockStage?
     @Published private(set) var activityLoaded = false
-    @Published var pendingMnemonic: [String]?
+    @Published private(set) var pendingMnemonic: [String]?
     @Published var alertMessage: String?
     @Published private(set) var isSessionLocked = false
     @Published private(set) var biometricUnlockEnabled = false
@@ -149,7 +149,7 @@ final class WalletStore: ObservableObject {
 
     var visibleActivity: [Entry] { WalletActivityPresentation.entries(activity) }
 
-    var canChangeNetwork: Bool { stateCreatingCallCount == 0 && !isWorking && backgroundPreparation == nil && phase != .starting }
+    var canChangeNetwork: Bool { stateCreatingCallCount == 0 && !isWorking && backgroundPreparation == nil && phase != .starting && pendingMnemonic == nil }
 
     /// This guards known local refresh ownership, not every native obligation.
     var networkSwitchBlockedReason: String? {
@@ -288,23 +288,53 @@ final class WalletStore: ObservableObject {
         await start()
     }
 
-    func createWallet(mnemonic: [String] = [], showBackup: Bool = true, password suppliedPassword: String = "") async {
-        guard phase == .needsSetup else { return }
+    /// Prepare volatile recovery words while no wallet exists. Initialization
+    /// is a separate action after explicit backup acknowledgment.
+    func prepareWalletBackup() async {
+        guard phase == .needsSetup, !isWorking, pendingMnemonic == nil else { return }
         isWorking = true
         defer { isWorking = false }
-
         do {
             try await beginStateCreatingCall()
             defer { endStateCreatingCall() }
-            // Enable device authentication for new wallets when available.
-            if defaults.object(forKey: "biometricUnlockEnabled") == nil,
-               WalletAuthentication.available {
-                let epoch = authenticationEpoch
-                try await authenticate()
-                try await finishForegroundAuthentication(epoch: epoch)
-                defaults.set(true, forKey: "biometricUnlockEnabled")
-                biometricUnlockEnabled = true
-            }
+            let epoch = authenticationEpoch
+            try await enableDefaultAuthentication(epoch: epoch)
+            let words = try await client.generateSeed()
+            try requireCurrentAuthentication(epoch: epoch)
+            pendingMnemonic = words
+        } catch {
+            alertMessage = "Couldn’t prepare recovery words: \(error.walletMessage)"
+            _ = await refreshLifecycleAfterAmbiguousSetup()
+        }
+    }
+
+    /// Restore from words already held by the user. A pending new-wallet
+    /// backup owns its own initialization and cannot be replaced by a restore.
+    func restoreWallet(mnemonic: [String], password: String = "") async {
+        guard pendingMnemonic == nil else { return }
+        await initializeWallet(mnemonic: mnemonic, password: password)
+    }
+
+    private func enableDefaultAuthentication(epoch: Int) async throws {
+        guard defaults.object(forKey: "biometricUnlockEnabled") == nil,
+              WalletAuthentication.available else { return }
+        try await authenticate()
+        try await finishForegroundAuthentication(epoch: epoch)
+        defaults.set(true, forKey: "biometricUnlockEnabled")
+        biometricUnlockEnabled = true
+    }
+
+    /// Both callers already possess the words. Retain a confirmed backup in
+    /// memory until initialization is known to have persisted the wallet.
+    private func initializeWallet(mnemonic: [String], password suppliedPassword: String = "") async {
+        guard phase == .needsSetup, !isWorking, !mnemonic.isEmpty else { return }
+        isWorking = true
+        defer { isWorking = false }
+        let epoch = authenticationEpoch
+        do {
+            try await beginStateCreatingCall()
+            defer { endStateCreatingCall() }
+            try await enableDefaultAuthentication(epoch: epoch)
             // Persist the exact password before creating the wallet. If the
             // daemon succeeds but its response is lost, a later unlock must
             // use this same durable secret rather than creating a new one.
@@ -314,18 +344,24 @@ final class WalletStore: ObservableObject {
                 : Data(suppliedPassword.utf8)
             try KeychainStore.save(password, account: account)
 
-            let result = try await client.createWallet(
-                walletPassword: password,
-                mnemonic: mnemonic
-            )
-            pendingMnemonic = showBackup ? result.mnemonic : nil
+            _ = try await client.createWallet(walletPassword: password, mnemonic: mnemonic)
+            pendingMnemonic = nil
             defaults.set(!suppliedPassword.isEmpty, forKey: preferenceKey("userPassword"))
             if !suppliedPassword.isEmpty { try await savePasswordVerifier(password) }
             sessionPassword = password
             try await activateWallet()
         } catch {
-            alertMessage = "Wallet setup didn’t finish. Your device keeps the same encrypted wallet key so it can safely resume: \(error.walletMessage)"
-            await refreshLifecycleAfterAmbiguousSetup()
+            let state = await refreshLifecycleAfterAmbiguousSetup()
+            switch state {
+            case .locked?, .ready?, .syncing?:
+                pendingMnemonic = nil
+                alertMessage = "Wallet setup didn’t finish. Your device keeps the same encrypted wallet key so it can safely resume: \(error.walletMessage)"
+            default:
+                // Backgrounding invalidates the volatile backup. Transient
+                // foreground admission errors may retry the same saved words.
+                if epoch != authenticationEpoch { pendingMnemonic = nil }
+                alertMessage = "Wallet setup didn’t finish. Try again when ready: \(error.walletMessage)"
+            }
         }
     }
 
@@ -368,9 +404,10 @@ final class WalletStore: ObservableObject {
         }
     }
 
-    func acknowledgeSeedBackup() {
-        guard !isSessionLocked, applicationIsActive() else { return }
-        pendingMnemonic = nil
+    func acknowledgeSeedBackup() async {
+        guard !isSessionLocked, applicationIsActive(), !isWorking,
+              let words = pendingMnemonic else { return }
+        await initializeWallet(mnemonic: words)
     }
 
     func refresh() async {
@@ -609,11 +646,13 @@ final class WalletStore: ObservableObject {
         WalletNotifications.shared.reconcile()
     }
 
-    private func refreshLifecycleAfterAmbiguousSetup() async {
-        guard let snapshot = try? await client.getInfo() else { return }
+    private func refreshLifecycleAfterAmbiguousSetup() async -> WalletState? {
+        guard let snapshot = try? await client.getInfo() else { return nil }
         info = snapshot
         switch snapshot.walletState {
-        case .none: phase = .needsSetup
+        case .none:
+            isSessionLocked = false
+            phase = .needsSetup
         case .locked: phase = .needsUnlock
         case .ready, .syncing:
             if biometricUnlockEnabled && sessionPassword == nil {
@@ -624,6 +663,7 @@ final class WalletStore: ObservableObject {
             }
         case .unspecified: phase = .syncing
         }
+        return snapshot.walletState
     }
 
     private func beginMonitoring() {
@@ -790,6 +830,9 @@ final class WalletStore: ObservableObject {
     func lockForBackground() {
         authenticationEpoch += 1
         stopMonitoring()
+        // Words are volatile even after acknowledgment. A new setup resumes
+        // from the authoritative native state when the app becomes active.
+        pendingMnemonic = nil
         guard biometricUnlockEnabled else { return }
         sessionPassword = nil
         isSessionLocked = true

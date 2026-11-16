@@ -22,7 +22,7 @@ final class DiagnosticsUITests: XCTestCase {
             app.swipeUp()
             if saved.switches.firstMatch.exists { saved.switches.firstMatch.tap() }
             else { saved.tap() }
-            let done = app.buttons["Done"]
+            let done = app.buttons["backup.create"]
             if !done.isHittable { app.swipeUp() }
             XCTAssertTrue(done.isEnabled)
             done.tap()

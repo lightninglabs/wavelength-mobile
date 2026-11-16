@@ -32,7 +32,10 @@ struct ContentView: View {
                 #if DEBUG
                 if ProcessInfo.processInfo.environment["WAVELENGTH_AUTOCREATE"] == "1",
                    store.phase == .needsSetup {
-                    await store.createWallet(showBackup: false)
+                    // Disposable UI-test fixtures explicitly acknowledge the
+                    // prepared phrase; Release builds have no autocreate path.
+                    await store.prepareWalletBackup()
+                    await store.acknowledgeSeedBackup()
                 }
                 #endif
             }
