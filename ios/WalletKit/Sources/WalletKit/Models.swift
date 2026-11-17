@@ -414,3 +414,13 @@ public struct ExitStatusResult: Decodable, Sendable {
         case progress = "Progress", csv = "CSV", fees = "Fees"
     }
 }
+
+/// Validated invoice data. A missing amount asks the payer to choose one.
+public struct InvoiceDetails: Decodable, Sendable {
+    public let amountSat: Int64?
+    public let description: String
+    public let expiresAtUnix: Int64
+    enum CodingKeys: String, CodingKey {
+        case amountSat = "amount_sat", description, expiresAtUnix = "expires_at_unix"
+    }
+}

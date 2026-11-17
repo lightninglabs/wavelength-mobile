@@ -234,6 +234,12 @@ public actor WalletClient {
         return try decode(await bg { try Bindings.deposit(body) })
     }
 
+    /// Validate a full BOLT-11 locally before asking for an amount or quote.
+    public func decodeInvoice(_ invoice: String, network: WalletNetwork) async throws -> InvoiceDetails {
+        let body = try encoder.encode(InvoiceDecodeReq(invoice: invoice, network: network.rawValue))
+        return try decode(await bg { try Bindings.decodeInvoice(body) })
+    }
+
     /// Quote an outbound payment without moving funds. Set exactly one of
     /// `invoice` or `onchainAddress`. The result carries a single-use intent id
     /// to pass to `send(_:)`. `sweepAll` drains every VTXO to the address.
@@ -591,4 +597,10 @@ private struct ExitStatusReq: Encodable {
     enum CodingKeys: String, CodingKey {
         case outpoint = "Outpoint"
     }
+}
+
+struct InvoiceDecodeReq: Encodable {
+    let invoice: String
+    let network: String
+    enum CodingKeys: String, CodingKey { case invoice, network }
 }

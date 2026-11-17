@@ -7,6 +7,9 @@ struct SendView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var destination = ""
     @State private var amount = ""
+    @State private var invoice: InvoiceDetails?
+    @State private var invoiceError: String?
+    @FocusState private var amountFocused: Bool
     @State private var note = ""
     @State private var maxFee = ""
     @State private var sweepAll = false
@@ -21,6 +24,12 @@ struct SendView: View {
 
     private var normalizedDestination: String { PaymentRequestParser.normalizedDestination(from: destination) }
     private var isLightning: Bool { normalizedDestination.lowercased().hasPrefix("ln") }
+    private var requiresAmount: Bool { !isLightning || invoice?.amountSat == nil }
+    private var enteredAmount: Int64? { SendAmount.satoshis(amount) }
+    private var draft: SendDraft {
+        SendDraft(destination: normalizedDestination, amount: amount, note: note,
+                  maxFee: maxFee, sweepAll: sweepAll, network: store.network.rawValue)
+    }
     private var resultEntry: Entry? {
         guard let result = sentResult else { return nil }
         return store.activity.first { $0.id == result.entry.id } ?? result.entry
@@ -62,7 +71,7 @@ struct SendView: View {
                 } else if let quote {
                     review(quote)
                 } else {
-                    input
+                    input.disabled(isLoading)
                 }
             }
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: stage)
@@ -70,7 +79,7 @@ struct SendView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { presentationMode.wrappedValue.dismiss() }
+                    Button("Close") { presentationMode.wrappedValue.dismiss() }.disabled(isLoading)
                 }
             }
             .interactiveDismissDisabled(isLoading)
@@ -91,6 +100,8 @@ struct SendView: View {
             } message: {
                 Text("It may still complete. Check Activity and the recipient before starting a separate payment. The original reference stays in Recovery → Payment checks.")
             }
+            .task(id: normalizedDestination + ":" + store.network.rawValue) { await inspectInvoice() }
+            .onChange(of: draft) { _ in quote = nil }
             .onChange(of: resultEntry?.status) { status in
                 if status == "complete" { WalletFeedback.completed() }
             }
@@ -100,33 +111,56 @@ struct SendView: View {
 
     private var input: some View {
         Group {
-            WalletField(title: "Invoice or Bitcoin address") {
-                TextField("Scan or paste", text: $destination)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled(true)
-                    .accessibilityIdentifier("send.destination")
-            }
-            HStack {
-                Button { showsScanner = true } label: { Label("Scan", systemImage: "viewfinder") }
-                    .accessibilityIdentifier("send.scan")
-                Spacer()
-                if #available(iOS 16.0, *) {
-                    PasteButton(payloadType: String.self) { values in
-                        if let value = values.first { destination = value }
+            if let invoice {
+                WalletField(title: "Invoice") {
+                    HStack(spacing: 12) {
+                        Image(systemName: "bolt.fill")
+                        Text(invoice.description.isEmpty ? "Lightning payment" : invoice.description)
+                            .lineLimit(2)
+                        Spacer(minLength: 8)
+                        Button("Change") { destination = ""; amount = "" }
+                            .font(.subheadline).foregroundStyle(WalletTheme.secondary)
+                            .accessibilityIdentifier("send.changeInvoice")
                     }
-                    .accessibilityIdentifier("send.paste")
-                } else {
-                    Button("Paste") { destination = UIPasteboard.general.string ?? "" }
+                }
+            } else {
+                WalletField(title: "Invoice or Bitcoin address") {
+                    TextField("Scan or paste", text: $destination)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled(true)
+                        .accessibilityIdentifier("send.destination")
+                }
+                HStack {
+                    Button { showsScanner = true } label: { Label("Scan", systemImage: "viewfinder") }
+                        .accessibilityIdentifier("send.scan")
+                    Spacer()
+                    if #available(iOS 16.0, *) {
+                        PasteButton(payloadType: String.self) { values in
+                            if let value = values.first { destination = value }
+                        }
+                        .accessibilityIdentifier("send.paste")
+                    } else {
+                        Button("Paste") { destination = UIPasteboard.general.string ?? "" }
+                    }
+                }
+                if let invoiceError {
+                    Text(invoiceError).font(.footnote).foregroundStyle(WalletTheme.secondary)
+                        .accessibilityIdentifier("send.invoiceError")
                 }
             }
-            if !isLightning {
-                WalletField(title: "Amount") {
-                    HStack {
+            if let signedAmount = invoice?.amountSat {
+                WalletAmount(amount: signedAmount)
+            } else if !isLightning || invoice != nil {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Amount").font(.subheadline).foregroundStyle(WalletTheme.secondary)
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
                         TextField("0", text: $amount).keyboardType(.numberPad)
+                            .font(.system(size: 54, weight: .regular))
+                            .focused($amountFocused)
                             .accessibilityIdentifier("send.amount")
-                        Text("sats").foregroundStyle(WalletTheme.secondary)
+                        Text("sats").font(.title2).foregroundStyle(WalletTheme.secondary)
                     }
                 }
-                Toggle("Use available balance", isOn: $sweepAll)
+                if !isLightning { Toggle("Use available balance", isOn: $sweepAll) }
             }
             DisclosureGroup("Options", isExpanded: $showOptions) {
                 VStack(spacing: 18) {
@@ -146,8 +180,8 @@ struct SendView: View {
             }
             .buttonStyle(WalletButtonStyle())
             .disabled(isLoading || !store.isReady || !store.operatorAvailable ||
-                      (isLightning && !store.offchainAvailable) || normalizedDestination.isEmpty ||
-                      (!isLightning && !sweepAll && (Int64(amount) ?? 0) <= 0))
+                      (isLightning && (!store.offchainAvailable || invoice == nil)) || normalizedDestination.isEmpty ||
+                      (requiresAmount && !(sweepAll && !isLightning) && enteredAmount == nil))
             .accessibilityIdentifier("send.review")
         }
     }
@@ -198,14 +232,47 @@ struct SendView: View {
     }
 
     private func prepare() {
+        guard !isLoading else { return }
+        let request = draft
+        let paymentAmount = requiresAmount ? (enteredAmount ?? 0) : 0
+        guard !requiresAmount || (sweepAll && !isLightning) || paymentAmount > 0 else { return }
+        amountFocused = false
         isLoading = true
         Task {
             defer { isLoading = false }
             do {
-                quote = try await store.prepareSend(destination: normalizedDestination,
-                    amountSat: Int64(amount) ?? 0, note: note.trimmingCharacters(in: .whitespacesAndNewlines),
-                    maxFeeSat: Int64(maxFee) ?? 0, sweepAll: sweepAll)
-            } catch { errorMessage = error.walletMessage }
+                let prepared = try await store.prepareSend(destination: request.destination,
+                    amountSat: paymentAmount, note: request.note.trimmingCharacters(in: .whitespacesAndNewlines),
+                    maxFeeSat: Int64(request.maxFee) ?? 0, sweepAll: !isLightning && request.sweepAll)
+                // An edited draft must never display or dispatch the old quote.
+                guard request == draft else { return }
+                quote = prepared
+            } catch {
+                errorMessage = SendAmount.prepareError(error.walletMessage,
+                    amountlessInvoice: isLightning && invoice?.amountSat == nil)
+            }
+        }
+    }
+
+    private func inspectInvoice() async {
+        invoice = nil
+        invoiceError = nil
+        guard isLightning else { return }
+        let destination = normalizedDestination
+        let network = store.network
+        do {
+            try await Task.sleep(nanoseconds: 200_000_000)
+            let decoded = try await store.decodeInvoice(destination)
+            try Task.checkCancellation()
+            guard destination == normalizedDestination && network == store.network else { return }
+            invoice = decoded
+            amount = ""
+            sweepAll = false
+            amountFocused = decoded.amountSat == nil
+        } catch is CancellationError {
+        } catch {
+            guard !Task.isCancelled && destination == normalizedDestination && network == store.network else { return }
+            invoiceError = error.walletMessage
         }
     }
 

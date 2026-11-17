@@ -442,6 +442,10 @@ final class WalletStore: ObservableObject {
         }
     }
 
+    func decodeInvoice(_ invoice: String) async throws -> InvoiceDetails {
+        try await client.decodeInvoice(invoice, network: network)
+    }
+
     func prepareSend(
         destination: String,
         amountSat: Int64,
@@ -455,6 +459,7 @@ final class WalletStore: ObservableObject {
         if destination.lowercased().hasPrefix("ln") {
             return try await client.prepareSend(
                 invoice: destination,
+                amountSat: amountSat,
                 note: note,
                 maxFeeSat: maxFeeSat,
                 maxCreditSat: maxCreditSat,
@@ -489,7 +494,8 @@ final class WalletStore: ObservableObject {
             let result = try await client.send(quote.sendIntentID)
             upsert(result.entry)
             clearPendingDispatch()
-            await refresh()
+            // Show the authoritative result while independent snapshots catch up.
+            Task { await refresh() }
             return result
         } catch {
             if (error as? WalletError)?.isSendRejectedBeforeDispatch == true {
