@@ -13,6 +13,11 @@ struct SendView: View {
     @State private var note = ""
     @State private var maxFee = ""
     @State private var sweepAll = false
+    @State private var maximumQuote: PrepareSendResult?
+    @State private var maximumDraft: SendDraft?
+    @State private var maximumRequestID = UUID()
+    @State private var calculatingMaximum = false
+    @State private var maximumError: String?
     @State private var quote: PrepareSendResult?
     @State private var sentResult: SendResult?
     @State private var isLoading = false
@@ -25,9 +30,18 @@ struct SendView: View {
     private var normalizedDestination: String { PaymentRequestParser.normalizedDestination(from: destination) }
     private var isLightning: Bool { normalizedDestination.lowercased().hasPrefix("ln") }
     private var requiresAmount: Bool { !isLightning || invoice?.amountSat == nil }
+    private var canPrepare: Bool {
+        store.isReady && store.operatorAvailable && (!isLightning || (store.offchainAvailable && invoice != nil))
+    }
+    private var maximumRequest: SendDraft? {
+        guard canPrepare, sweepAll, requiresAmount, !normalizedDestination.isEmpty,
+              !isLoading, store.pendingDispatch == nil, sentResult == nil else { return nil }
+        return draft
+    }
     private var enteredAmount: Int64? { SendAmount.satoshis(amount) }
+    private var currentMaximum: PrepareSendResult? { maximumDraft == draft ? maximumQuote : nil }
     private var draft: SendDraft {
-        SendDraft(destination: normalizedDestination, amount: amount, note: note,
+        SendDraft(destination: normalizedDestination, amount: sweepAll ? "" : amount, note: note,
                   maxFee: maxFee, sweepAll: sweepAll, network: store.network.rawValue)
     }
     private var resultEntry: Entry? {
@@ -55,7 +69,10 @@ struct SendView: View {
                     Button("Done") { presentationMode.wrappedValue.dismiss() }
                         .buttonStyle(WalletButtonStyle())
                 } else if let pending = store.pendingDispatch {
-                    WalletAmount(amount: pending.amountSat)
+                    if pending.isBalanceSweep == true && pending.sweepRecipientAmountSat == nil {
+                        Text("Balance debit").font(.subheadline).foregroundStyle(WalletTheme.secondary)
+                    }
+                    WalletAmount(amount: pending.sweepRecipientAmountSat ?? pending.amountSat)
                     WalletStatus(text: "Checking payment", pending: true)
                     Text("Check Activity before sending again.").foregroundStyle(WalletTheme.secondary)
                     DisclosureGroup("Details", isExpanded: $showDetails) {
@@ -103,7 +120,12 @@ struct SendView: View {
                 Text("It may still complete. Check Activity and the recipient before starting a separate payment. The original reference stays in Recovery → Payment checks.")
             }
             .task(id: normalizedDestination + ":" + store.network.rawValue) { await inspectInvoice() }
+            .task(id: maximumRequest) { await calculateMaximum() }
             .onChange(of: draft) { _ in quote = nil }
+            .onChange(of: sweepAll) { enabled in
+                if enabled { amountFocused = false }
+                else { maximumQuote = nil; maximumError = nil }
+            }
             .onChange(of: resultEntry?.status) { status in
                 if status == "complete" { WalletFeedback.completed() }
             }
@@ -153,16 +175,47 @@ struct SendView: View {
                 WalletAmount(amount: signedAmount)
             } else if !isLightning || invoice != nil {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Amount").font(.subheadline).foregroundStyle(WalletTheme.secondary)
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        TextField("0", text: $amount).keyboardType(.numberPad)
-                            .font(.system(size: 54, weight: .regular))
-                            .focused($amountFocused)
-                            .accessibilityIdentifier("send.amount")
-                        Text("sats").font(.title2).foregroundStyle(WalletTheme.secondary)
+                    if sweepAll {
+                        if calculatingMaximum {
+                            HStack(spacing: 10) {
+                                ProgressView()
+                                Text("Calculating…").foregroundStyle(WalletTheme.secondary)
+                            }.frame(minHeight: 65)
+                                .accessibilityIdentifier("send.calculatingMaximum")
+                        } else if let currentMaximum {
+                            if showsSweepDebit(currentMaximum) {
+                                Text("Balance debit").font(.subheadline).foregroundStyle(WalletTheme.secondary)
+                            }
+                            WalletAmount(amount: displayAmount(currentMaximum))
+                                .accessibilityIdentifier("send.maximumAmount")
+                        } else if normalizedDestination.isEmpty {
+                            Text("Add a destination to calculate the amount.")
+                                .font(.subheadline).foregroundStyle(WalletTheme.secondary)
+                        }
+                        if let maximumError {
+                            Text(PaymentFailure.message(maximumError))
+                                .font(.footnote).foregroundStyle(WalletTheme.secondary)
+                            HStack(spacing: 20) {
+                                Button("Try again") { Task { await calculateMaximum() } }
+                                    .disabled(calculatingMaximum)
+                                Button("Details") { errorMessage = maximumError }
+                            }
+                        }
+                    } else {
+                        Text("Amount").font(.subheadline).foregroundStyle(WalletTheme.secondary)
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            TextField("0", text: $amount).keyboardType(.numberPad)
+                                .font(.system(size: 54, weight: .regular))
+                                .focused($amountFocused)
+                                .accessibilityIdentifier("send.amount")
+                            Text("sats").font(.title2).foregroundStyle(WalletTheme.secondary)
+                        }
                     }
+                    Toggle("Use available balance", isOn: $sweepAll)
+                        .accessibilityIdentifier("send.useAvailableBalance")
                 }
-                if !isLightning { Toggle("Use available balance", isOn: $sweepAll) }
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: sweepAll)
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: calculatingMaximum)
             }
             DisclosureGroup("Options", isExpanded: $showOptions) {
                 VStack(spacing: 18) {
@@ -181,15 +234,18 @@ struct SendView: View {
                 if isLoading { ProgressView() } else { Text("Review") }
             }
             .buttonStyle(WalletButtonStyle())
-            .disabled(isLoading || !store.isReady || !store.operatorAvailable ||
-                      (isLightning && (!store.offchainAvailable || invoice == nil)) || normalizedDestination.isEmpty ||
-                      (requiresAmount && !(sweepAll && !isLightning) && enteredAmount == nil))
+            .disabled(isLoading || !canPrepare || normalizedDestination.isEmpty ||
+                      (sweepAll && (calculatingMaximum || currentMaximum == nil)) ||
+                      (requiresAmount && !sweepAll && enteredAmount == nil))
             .accessibilityIdentifier("send.review")
         }
     }
 
     @ViewBuilder private func review(_ prepared: PrepareSendResult) -> some View {
-        WalletAmount(amount: prepared.amountSat)
+        if showsSweepDebit(prepared) {
+            Text("Balance debit").font(.subheadline).foregroundStyle(WalletTheme.secondary)
+        }
+        WalletAmount(amount: displayAmount(prepared))
         Text(prepared.invoiceDescription?.isEmpty == false ? prepared.invoiceDescription! : prepared.destinationSummary)
             .foregroundStyle(WalletTheme.secondary).lineLimit(2)
         VStack(spacing: 18) {
@@ -233,11 +289,29 @@ struct SendView: View {
         HStack { Text(label).foregroundStyle(WalletTheme.secondary); Spacer(); Text(value).monospacedDigit() }
     }
 
+    private func displayAmount(_ prepared: PrepareSendResult) -> Int64 {
+        // The sweep preview reports the selected total. Its fee comes out of
+        // the recipient's output, while Total still shows the full debit.
+        if sweepAll, prepared.rail == "onchain", prepared.feeKnown {
+            return prepared.amountSat - prepared.expectedFeeSat
+        }
+        return prepared.amountSat
+    }
+
+    private func showsSweepDebit(_ prepared: PrepareSendResult) -> Bool {
+        sweepAll && prepared.rail == "onchain" && !prepared.feeKnown
+    }
+
     private func prepare() {
         guard !isLoading else { return }
+        if sweepAll {
+            guard !calculatingMaximum, let currentMaximum else { return }
+            quote = currentMaximum
+            return
+        }
         let request = draft
         let paymentAmount = requiresAmount ? (enteredAmount ?? 0) : 0
-        guard !requiresAmount || (sweepAll && !isLightning) || paymentAmount > 0 else { return }
+        guard !requiresAmount || paymentAmount > 0 else { return }
         amountFocused = false
         isLoading = true
         Task {
@@ -245,7 +319,7 @@ struct SendView: View {
             do {
                 let prepared = try await store.prepareSend(destination: request.destination,
                     amountSat: paymentAmount, note: request.note.trimmingCharacters(in: .whitespacesAndNewlines),
-                    maxFeeSat: Int64(request.maxFee) ?? 0, sweepAll: !isLightning && request.sweepAll)
+                    maxFeeSat: Int64(request.maxFee) ?? 0)
                 // An edited draft must never display or dispatch the old quote.
                 guard request == draft else { return }
                 quote = prepared
@@ -253,6 +327,38 @@ struct SendView: View {
                 errorMessage = SendAmount.prepareError(error.walletMessage,
                     amountlessInvoice: isLightning && invoice?.amountSat == nil)
             }
+        }
+    }
+
+    private func calculateMaximum() async {
+        let requestID = UUID()
+        maximumRequestID = requestID
+        maximumQuote = nil
+        maximumDraft = nil
+        maximumError = nil
+        calculatingMaximum = false
+        guard let request = maximumRequest else { return }
+        let lightning = isLightning
+        calculatingMaximum = true
+        defer {
+            if maximumRequestID == requestID { calculatingMaximum = false }
+        }
+        do {
+            try await Task.sleep(nanoseconds: 300_000_000)
+            let prepared = try await store.prepareSend(
+                destination: request.destination, amountSat: 0,
+                note: request.note.trimmingCharacters(in: .whitespacesAndNewlines),
+                maxFeeSat: Int64(request.maxFee) ?? 0,
+                sweepAll: !lightning, maxAmount: lightning
+            )
+            try Task.checkCancellation()
+            guard maximumRequestID == requestID, request == maximumRequest else { return }
+            maximumQuote = prepared
+            maximumDraft = request
+        } catch is CancellationError {
+        } catch {
+            guard !Task.isCancelled, maximumRequestID == requestID, request == maximumRequest else { return }
+            maximumError = error.walletMessage
         }
     }
 
@@ -280,12 +386,21 @@ struct SendView: View {
 
     private func send(_ prepared: PrepareSendResult) {
         guard !isLoading else { return }
+        let isBalanceSweep = sweepAll && prepared.rail == "onchain"
         isLoading = true
         quote = nil
         Task {
             defer { isLoading = false }
-            do { sentResult = try await store.sendPrepared(prepared) }
-            catch { errorMessage = error.walletMessage }
+            do { sentResult = try await store.sendPrepared(prepared, isBalanceSweep: isBalanceSweep) }
+            catch {
+                errorMessage = error.walletMessage
+                // Send consumes its intent even on failure. A Max retry must
+                // calculate a new preview instead of reusing that token.
+                if sweepAll {
+                    maximumQuote = nil
+                    maximumDraft = nil
+                }
+            }
         }
     }
 }

@@ -16,7 +16,17 @@ struct WavelengthApp: App {
     var body: some Scene {
         WindowGroup {
             ZStack {
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--send-form-test") {
+                    // Exercise form transitions without starting or funding a
+                    // wallet. The idle store keeps payment dispatch disabled.
+                    SendView().environmentObject(store)
+                } else {
+                    ContentView(store: store)
+                }
+                #else
                 ContentView(store: store)
+                #endif
                 if scenePhase != .active {
                     PrivacyCover().accessibilityHidden(true)
                 }

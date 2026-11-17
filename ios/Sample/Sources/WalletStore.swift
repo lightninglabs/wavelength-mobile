@@ -451,7 +451,8 @@ final class WalletStore: ObservableObject {
         amountSat: Int64,
         note: String,
         maxFeeSat: Int64,
-        sweepAll: Bool = false
+        sweepAll: Bool = false,
+        maxAmount: Bool = false
     ) async throws -> PrepareSendResult {
         try requireForegroundInteraction()
         if let work = receiptWindowWork { _ = try? await work.value }
@@ -462,6 +463,7 @@ final class WalletStore: ObservableObject {
                 amountSat: amountSat,
                 note: note,
                 maxFeeSat: maxFeeSat,
+                maxAmount: maxAmount,
                 maxCreditSat: maxCreditSat,
                 maxCreditTopupSat: maxCreditTopupSat
             )
@@ -474,7 +476,7 @@ final class WalletStore: ObservableObject {
         )
     }
 
-    func sendPrepared(_ quote: PrepareSendResult) async throws -> SendResult {
+    func sendPrepared(_ quote: PrepareSendResult, isBalanceSweep: Bool = false) async throws -> SendResult {
         guard pendingDispatch == nil else { throw WalletActionError(message: "Check the existing payment in Activity.") }
         try await beginStateCreatingCall()
         defer { endStateCreatingCall() }
@@ -485,9 +487,11 @@ final class WalletStore: ObservableObject {
             throw WalletActionError(message: "Couldn’t load Activity. Check the connection and try again.")
         }
         try requireForegroundInteraction()
+        let recipientAmount = isBalanceSweep && quote.feeKnown ? quote.amountSat - quote.expectedFeeSat : nil
         let pending = PendingDispatch(intentID: quote.sendIntentID, amountSat: quote.amountSat,
                                       paymentHash: quote.paymentHash, selectedOutpoints: quote.selectedOutpoints,
-                                      existingEntryIDs: baseline.map(\.id), startedAt: Date(), destination: quote.destinationSummary)
+                                      existingEntryIDs: baseline.map(\.id), startedAt: Date(), destination: quote.destinationSummary,
+                                      sweepRecipientAmountSat: recipientAmount, isBalanceSweep: isBalanceSweep)
         defaults.set(try JSONEncoder().encode(pending), forKey: preferenceKey("pendingDispatch"))
         pendingDispatch = pending
         do {
