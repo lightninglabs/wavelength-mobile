@@ -58,9 +58,11 @@ struct SendView: View {
                     WalletAmount(amount: pending.amountSat)
                     WalletStatus(text: "Checking payment", pending: true)
                     Text("Check Activity before sending again.").foregroundStyle(WalletTheme.secondary)
-                    if let message = pending.error ?? errorMessage { Text(message).font(.footnote).foregroundStyle(WalletTheme.secondary) }
                     DisclosureGroup("Details", isExpanded: $showDetails) {
                         ValueRow(label: "Payment reference", value: pending.intentID, copyable: true)
+                        if let message = pending.error ?? errorMessage, !message.isEmpty {
+                            ValueRow(label: "Error", value: message, copyable: true)
+                        }
                     }
                     Button("Check status") { Task { await store.refresh() } }
                         .buttonStyle(WalletButtonStyle())
@@ -86,10 +88,10 @@ struct SendView: View {
             .sheet(isPresented: $showsScanner) {
                 PaymentQRCodeScannerView { destination = $0 }
             }
-            .alert("Payment", isPresented: Binding(get: { errorMessage != nil && store.pendingDispatch == nil },
+            .sheet(isPresented: Binding(get: { errorMessage != nil && store.pendingDispatch == nil },
                                                    set: { if !$0 { errorMessage = nil } })) {
-                Button("OK", role: .cancel) { errorMessage = nil }
-            } message: { Text(errorMessage ?? "") }
+                PaymentErrorSheet(title: "Payment", message: errorMessage ?? "")
+            }
             .confirmationDialog("Original payment is unconfirmed", isPresented: $confirmsSeparatePayment,
                                 titleVisibility: .visible) {
                 Button("Start separate payment", role: .destructive) {
@@ -143,7 +145,7 @@ struct SendView: View {
                     }
                 }
                 if let invoiceError {
-                    Text(invoiceError).font(.footnote).foregroundStyle(WalletTheme.secondary)
+                    Text(PaymentFailure.message(invoiceError)).font(.footnote).foregroundStyle(WalletTheme.secondary)
                         .accessibilityIdentifier("send.invoiceError")
                 }
             }

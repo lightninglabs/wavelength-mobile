@@ -21,7 +21,8 @@ struct ActivityDetailView: View {
                 HStack { Text("Fee"); Spacer(); Text(WalletFormatting.sats(currentEntry.feeSat)) }
             }
             if let reason = currentEntry.failureReason, !reason.isEmpty {
-                Text(reason).foregroundStyle(currentEntry.isExpiredInvoice ? WalletTheme.secondary : .red)
+                Text(PaymentFailure.message(reason))
+                    .foregroundStyle(currentEntry.isExpiredInvoice ? WalletTheme.secondary : .red)
             }
             if currentEntry.isAwaitingIncomingPayment, let request = currentEntry.request {
                 if !request.lightningInvoice.isEmpty {
@@ -32,6 +33,10 @@ struct ActivityDetailView: View {
             }
             DisclosureGroup("Details", isExpanded: $details) {
                 VStack(alignment: .leading, spacing: 20) {
+                    if let reason = currentEntry.failureReason,
+                       let detail = PaymentFailure.technicalDetails(reason) {
+                        ValueRow(label: "Error", value: detail, copyable: true)
+                    }
                     ForEach(WalletActivityPresentation.creditTopups(for: currentEntry, in: store.activity)) { topup in
                         NavigationLink(destination: ActivityDetailView(entry: topup)) {
                             HStack {
