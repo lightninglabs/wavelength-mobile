@@ -55,10 +55,10 @@ struct ReceiveView: View {
             }
             .interactiveDismissDisabled(isLoading)
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: paymentDetected)
-            .alert("Receive", isPresented: Binding(get: { errorMessage != nil },
+            .sheet(isPresented: Binding(get: { errorMessage != nil },
                                                   set: { if !$0 { errorMessage = nil } })) {
-                Button("OK", role: .cancel) { errorMessage = nil }
-            } message: { Text(errorMessage ?? "") }
+                PaymentErrorSheet(title: "Receive", message: errorMessage ?? "")
+            }
             .sheet(isPresented: $showingShare) { ShareSheet(items: [request]) }
             .onAppear { if request.isEmpty && !store.offchainAvailable { rail = .onchain } }
             .onChange(of: currentEntry?.status) { status in
@@ -112,7 +112,7 @@ struct ReceiveView: View {
                 Text(date).font(.subheadline).foregroundStyle(WalletTheme.secondary)
             }
             if let reason = entry.failureReason, !reason.isEmpty {
-                Text(reason).font(.footnote).foregroundStyle(WalletTheme.secondary)
+                Text(PaymentFailure.message(reason)).font(.footnote).foregroundStyle(WalletTheme.secondary)
             }
         } else {
             if rail == .lightning, (Int64(amount) ?? 0) > 0 {
@@ -125,6 +125,10 @@ struct ReceiveView: View {
         DisclosureGroup("Details", isExpanded: $details) {
             requestContent
             if paymentDetected, let entry = currentEntry {
+                if let reason = entry.failureReason,
+                   let detail = PaymentFailure.technicalDetails(reason) {
+                    ValueRow(label: "Error", value: detail, copyable: true)
+                }
                 NavigationLink(destination: ActivityDetailView(entry: entry)) { Text("Activity") }
             }
         }
