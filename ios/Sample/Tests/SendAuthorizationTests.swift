@@ -2,6 +2,23 @@ import XCTest
 @testable import WalletKit
 
 final class SendAuthorizationTests: XCTestCase {
+    func testMaximumIsExplicitAndPreservesIndependentCreditCaps() throws {
+        var request = PrepareSendReq(
+            invoice: "lntb1example", onchainAddress: nil, amountSat: 0,
+            note: "Coffee", maxFeeSat: 100, sweepAll: false
+        )
+        XCTAssertEqual(try object(request)["MaxAmount"] as? Bool, false)
+        request.maxAmount = true
+        request.maxCreditSat = 500
+        request.maxCreditTopupSat = 0
+        let maximum = try object(request)
+        XCTAssertEqual(maximum["MaxAmount"] as? Bool, true)
+        XCTAssertEqual(maximum["AmountSat"] as? Int, 0)
+        XCTAssertEqual(maximum["SweepAll"] as? Bool, false)
+        XCTAssertEqual(maximum["MaxCreditSat"] as? Int, 500)
+        XCTAssertEqual(maximum["MaxCreditTopupSat"] as? Int, 0)
+    }
+
     func testCreditDefaultsAndIndependentOptOutsReachTheWire() throws {
         var request = PrepareSendReq(
             invoice: "lntb1example", onchainAddress: nil, amountSat: 0,

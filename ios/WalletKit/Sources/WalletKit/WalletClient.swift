@@ -245,6 +245,8 @@ public actor WalletClient {
     /// to pass to `send(_:)`. `sweepAll` drains every VTXO to the address.
     /// Credit use and top-ups default to independent 10,000-sat caps. Pass zero
     /// to disable either permission. These limits apply to invoice sends only.
+    /// `maxAmount` calculates a quote-backed amount for an amountless invoice;
+    /// pass `amountSat: 0`. Fixed invoices keep their signed amount.
     public func prepareSend(
         invoice: String? = nil,
         onchainAddress: String? = nil,
@@ -252,13 +254,15 @@ public actor WalletClient {
         note: String = "",
         maxFeeSat: Int64 = 0,
         sweepAll: Bool = false,
+        maxAmount: Bool = false,
         maxCreditSat: UInt64 = SendCreditDefaults.maxCreditSat,
         maxCreditTopupSat: UInt64 = SendCreditDefaults.maxCreditTopupSat
     ) async throws -> PrepareSendResult {
         let req = PrepareSendReq(
             invoice: invoice, onchainAddress: onchainAddress, amountSat: amountSat,
             note: note, maxFeeSat: maxFeeSat, sweepAll: sweepAll,
-            maxCreditSat: maxCreditSat, maxCreditTopupSat: maxCreditTopupSat
+            maxCreditSat: maxCreditSat, maxCreditTopupSat: maxCreditTopupSat,
+            maxAmount: maxAmount
         )
         let body = try encoder.encode(req)
         return try decode(await bg { try Bindings.prepareSend(body) })
@@ -537,6 +541,7 @@ struct PrepareSendReq: Encodable {
     let sweepAll: Bool
     var maxCreditSat: UInt64 = SendCreditDefaults.maxCreditSat
     var maxCreditTopupSat: UInt64 = SendCreditDefaults.maxCreditTopupSat
+    var maxAmount: Bool = false
     enum CodingKeys: String, CodingKey {
         case invoice = "Invoice"
         case onchainAddress = "OnchainAddress"
@@ -546,6 +551,7 @@ struct PrepareSendReq: Encodable {
         case sweepAll = "SweepAll"
         case maxCreditSat = "MaxCreditSat"
         case maxCreditTopupSat = "MaxCreditTopupSat"
+        case maxAmount = "MaxAmount"
     }
 }
 

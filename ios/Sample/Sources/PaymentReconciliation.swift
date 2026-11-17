@@ -11,6 +11,8 @@ struct PendingDispatch: Codable, Identifiable {
     var error: String? = nil
     var checks: Int? = nil
     var destination: String? = nil
+    var sweepRecipientAmountSat: Int64? = nil
+    var isBalanceSweep: Bool? = nil
 
     var id: String { intentID }
     var canStartSeparatePayment: Bool { (checks ?? 0) >= 2 }

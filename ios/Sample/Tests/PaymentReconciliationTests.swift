@@ -15,7 +15,8 @@ final class PaymentReconciliationTests: XCTestCase {
         XCTAssertTrue(pending.matches(try entry(id: "new", created: 1002)))
         let exit = PendingDispatch(intentID: "intent", amountSat: 999, paymentHash: "",
             selectedOutpoints: ["input:0"], existingEntryIDs: ["old"],
-            startedAt: Date(timeIntervalSince1970: 1000.75), destination: "destination")
+            startedAt: Date(timeIntervalSince1970: 1000.75), destination: "destination",
+            sweepRecipientAmountSat: 980, isBalanceSweep: true)
         XCTAssertFalse(exit.matches(try entry(id: "old", created: 1002, kind: "exit")))
         XCTAssertFalse(exit.matches(try entry(id: "late-old", created: 999, kind: "exit")))
         XCTAssertFalse(exit.matches(try entry(id: "other", created: 1002, kind: "exit", destination: "another destination")))

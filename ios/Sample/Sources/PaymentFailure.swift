@@ -5,6 +5,9 @@ import SwiftUI
 enum PaymentFailure {
     static func message(_ raw: String) -> String {
         let reason = raw.lowercased()
+        if reason.contains("maximum payment quote changed") {
+            return "The quote changed. Calculate the available balance again."
+        }
         if reason.contains("change below minimum vtxo amount") ||
             reason.contains("selection change below minimum") {
             return "This amount would leave too little change. Request a different amount or add funds."
