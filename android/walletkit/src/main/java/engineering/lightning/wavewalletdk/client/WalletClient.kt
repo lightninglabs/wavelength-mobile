@@ -117,16 +117,21 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
     sweepAll: Boolean = false,
     maxCreditSat: Long = 10_000,
     maxCreditTopupSat: Long = 10_000,
+    maxAmount: Boolean = false,
   ): PrepareSendResult = decode(
     io {
       Mobile.prepareSend(
         encode(
           PrepareSendReq.serializer(),
-          PrepareSendReq(invoice, onchainAddress, amountSat, note, maxFeeSat, sweepAll, maxCreditSat, maxCreditTopupSat),
+          PrepareSendReq(invoice, onchainAddress, amountSat, note, maxFeeSat, sweepAll, maxCreditSat, maxCreditTopupSat, maxAmount),
         ),
       )
     },
   )
+
+  suspend fun decodeInvoice(invoice: String, network: String): InvoiceDetails = decode(io {
+    Mobile.decodeInvoice(encode(InvoiceDecodeReq.serializer(), InvoiceDecodeReq(invoice, network)))
+  })
 
   /** Dispatch a prepared send, consuming the single-use intent id. */
   suspend fun send(sendIntentId: String): SendResult =
@@ -340,6 +345,7 @@ internal data class PrepareSendReq(
   @SerialName("SweepAll") val sweepAll: Boolean = false,
   @SerialName("MaxCreditSat") val maxCreditSat: Long = 10_000,
   @SerialName("MaxCreditTopupSat") val maxCreditTopupSat: Long = 10_000,
+  @SerialName("MaxAmount") val maxAmount: Boolean = false,
 )
 
 @Serializable
@@ -377,4 +383,12 @@ private data class ExitReq(
 @Serializable
 private data class ExitStatusReq(
   @SerialName("Outpoint") val outpoint: String,
+)
+
+@Serializable private data class InvoiceDecodeReq(val invoice: String, val network: String)
+
+@Serializable data class InvoiceDetails(
+  @SerialName("amount_sat") val amountSat: Long? = null,
+  val description: String = "",
+  @SerialName("expires_at_unix") val expiresAtUnix: Long = 0,
 )

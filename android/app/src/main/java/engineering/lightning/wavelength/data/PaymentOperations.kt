@@ -23,14 +23,20 @@ data class PendingPayment(
   val paymentHash: String = "",
   val requestId: String = "",
   val receiptConsentEpoch: String? = null,
+  val destination: String = "",
+  val selectedOutpoints: List<String> = emptyList(),
+  val balanceSweep: Boolean = false,
+  val recipientSat: Long? = null,
 ) {
   fun matches(entry: Entry): Boolean {
     if (entry.id in existingIds || entry.creditTopup || kotlin.math.abs(entry.amountSat) != amountSat) return false
     val created = runCatching { Instant.parse(entry.createdAt).epochSecond }.getOrNull() ?: return false
     if (created < startedAt) return false
     return when (kind) {
-      "send" -> entry.kind == "send" && (entry.id == intentId ||
-        (paymentHash.isNotEmpty() && entry.paymentHash == paymentHash))
+      "send" -> entry.kind in setOf("send", "exit") && (entry.id == intentId ||
+        (paymentHash.isNotEmpty() && entry.paymentHash == paymentHash) ||
+        (entry.kind == "exit" && destination.isNotEmpty() && entry.request?.onchainAddress == destination &&
+          entry.progress?.vtxoOutpoint in selectedOutpoints))
       "receive" -> requestId.isEmpty() && entry.kind == "receive" && entry.note == note && !entry.request?.lightningInvoice.isNullOrBlank()
       else -> false
     }
@@ -60,7 +66,7 @@ class FilePaymentJournal(file: File) : PaymentJournal {
 /** Small native boundary, also used to test accepted-but-response-lost dispatch. */
 interface PaymentGateway {
   suspend fun entries(): List<Entry>
-  suspend fun prepare(invoice: String, note: String): PrepareSendResult
+  suspend fun prepare(terms: SendTerms): PrepareSendResult
   suspend fun send(intentId: String): SendResult
   suspend fun receive(amount: Long, note: String, requestId: String): ReceiveResult
   suspend fun lookupReceive(requestId: String): ReceiveResult?
@@ -69,8 +75,11 @@ interface PaymentGateway {
 
 class NativePaymentGateway(private val client: WalletClient, private val limits: () -> CreditLimits = { CreditLimits() }) : PaymentGateway {
   override suspend fun entries() = client.list(limit = 1000).activity?.entries ?: error("Activity unavailable")
-  override suspend fun prepare(invoice: String, note: String) = limits().let {
-    client.prepareSend(invoice = invoice, note = note, maxCreditSat = it.use, maxCreditTopupSat = it.topup)
+  override suspend fun prepare(terms: SendTerms) = limits().let {
+    val dest = terms.destination
+    client.prepareSend(invoice = dest.value.takeIf { dest.lightning }, onchainAddress = dest.value.takeUnless { dest.lightning },
+      amountSat = terms.amountSat, note = terms.note, maxFeeSat = terms.maxFeeSat, sweepAll = terms.maximum && !dest.lightning,
+      maxAmount = terms.maximum && dest.lightning, maxCreditSat = it.use, maxCreditTopupSat = it.topup)
   }
   override suspend fun send(intentId: String) = client.send(intentId)
   override suspend fun receive(amount: Long, note: String, requestId: String) =
@@ -84,6 +93,7 @@ data class PaymentUiState(
   val busy: Boolean = false,
   val blocked: Boolean = false,
   val quote: PrepareSendResult? = null,
+  val balanceSweep: Boolean = false,
   val result: Entry? = null,
   val request: String = "",
   val error: String? = null,
@@ -107,18 +117,25 @@ class PaymentOperations(
     if (!mutable.value.busy) mutable.update { it.copy(quote = null, result = null, request = "", error = if (it.blocked) it.error else null) }
   }
 
-  fun prepare(rawInvoice: String, note: String) = launch {
-    val invoice = rawInvoice.trim().let { if (it.startsWith("lightning:", ignoreCase = true)) it.substringAfter(':') else it }
-    require(network.acceptsInvoice(invoice)) { "Use a ${network.title} Lightning invoice." }
-    val quote = gateway.prepare(invoice, note.trim())
-    mutable.update { it.copy(quote = quote, result = null, error = null) }
+  fun prepare(rawInvoice: String, note: String, amountSat: Long = 0, maximum: Boolean = false, maxFeeSat: Long = 0) = launch {
+    val dest = SendDestination.parse(rawInvoice)
+    if (dest.lightning) require(network.acceptsInvoice(dest.value)) { "Use a ${network.title} Lightning invoice." }
+    require(!maximum || (amountSat == 0L && dest.requestedSat == null)) { "Use the requested amount." }
+    val requested = dest.requestedSat ?: amountSat
+    require(requested in 0..MAX_SAT && maxFeeSat in 0..MAX_SAT && (dest.lightning || maximum || requested > 0)) { "Enter an amount in sats." }
+    val quote = gateway.prepare(SendTerms(dest, requested, maximum, maxFeeSat, note.trim()))
+    mutable.update { it.copy(quote = quote, balanceSweep = maximum && !dest.lightning, result = null, error = null) }
   }
 
   fun send() = launch {
     val quote = mutable.value.quote ?: error("Review the payment first.")
     require(quote.expiresAtUnix == 0L || Instant.now().epochSecond < quote.expiresAtUnix) { "Quote expired. Review again." }
     val pending = PendingPayment("send", quote.amountSat, "", Instant.now().epochSecond,
-      gateway.entries().map { it.id }, quote.sendIntentId, quote.paymentHash)
+      gateway.entries().map { it.id }, quote.sendIntentId, quote.paymentHash,
+      destination = quote.destinationSummary, selectedOutpoints = quote.selectedOutpoints,
+      balanceSweep = mutable.value.balanceSweep,
+      recipientSat = if (mutable.value.balanceSweep && quote.feeKnown) quote.amountSat - quote.expectedFeeSat else null)
+    check(allowed()) { "Unlock this wallet before confirming." }
     persist(pending)
     try {
       val result = gateway.send(quote.sendIntentId)

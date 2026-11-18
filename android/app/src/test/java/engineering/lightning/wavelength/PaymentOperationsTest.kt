@@ -24,7 +24,7 @@ class PaymentOperationsTest {
     var receiveError = "receive outcome uncertain"
     var afterDispatch: (() -> Unit)? = null
     override suspend fun entries() = entries
-    override suspend fun prepare(invoice: String, note: String) = quote
+    override suspend fun prepare(terms: SendTerms) = quote
     override suspend fun send(intentId: String): SendResult {
       calls++; afterDispatch?.invoke()
       if (lostResponse) error("deadline exceeded")

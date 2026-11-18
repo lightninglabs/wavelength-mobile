@@ -31,6 +31,7 @@ import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 import engineering.lightning.wavelength.data.*
+import engineering.lightning.wavewalletdk.client.InvoiceDetails
 import engineering.lightning.wavewalletdk.client.Entry
 import kotlinx.coroutines.launch
 
@@ -71,10 +72,13 @@ import kotlinx.coroutines.launch
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
           when {
             payment.pending != null || payment.blocked -> {
-              payment.pending?.let { Amount(it.amountSat) }
+              payment.pending?.let {
+                if (it.balanceSweep && it.recipientSat == null) Text("Balance debit")
+                Amount(it.recipientSat ?: it.amountSat)
+              }
               StatusLine(if (payment.pending?.kind == "receive") "Checking request" else "Checking payment", true)
               Text("Check Activity before trying again.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-              payment.error?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+              payment.error?.let { PaymentError(it) }
               WalletButton("Check status", !payment.busy) { session.scope.launchRefresh(session) }
             }
             screen == "Send" -> SendScreen(session, payment, state)
@@ -101,7 +105,10 @@ private fun kotlinx.coroutines.CoroutineScope.launchRefresh(session: WalletSessi
     }
     payment.quote != null -> {
       val quote = payment.quote
-      Amount(quote.amountSat)
+      if (payment.balanceSweep && !quote.feeKnown) Text("Balance debit")
+      Amount(if (payment.balanceSweep && quote.feeKnown) quote.amountSat - quote.expectedFeeSat else quote.amountSat)
+      CopyRow("Destination", quote.destinationSummary)
+      ReceiptRow("Network", if (quote.rail == "onchain") "On-chain" else "Lightning")
       if (quote.invoiceDescription.isNotEmpty()) Text(quote.invoiceDescription, color = MaterialTheme.colorScheme.onSurfaceVariant)
       HorizontalDivider()
       ReceiptRow("Fee", if (quote.feeKnown) sats(quote.expectedFeeSat) else "Unavailable")
@@ -115,24 +122,67 @@ private fun kotlinx.coroutines.CoroutineScope.launchRefresh(session: WalletSessi
       WalletButton(if (payment.busy) "Sending…" else "Confirm", !payment.busy) { session.payments.send() }
       TextButton({ session.payments.clearPresentation() }, enabled = !payment.busy) { Text("Edit") }
     }
-    else -> SendDraft(invoice, note, wallet.network, payment.busy) {
-      session.payments.prepare(invoice.text.toString(), note.text.toString())
+    payment.busy -> StatusLine("Preparing payment", true)
+    else -> SendDraft(invoice, note, wallet.network, false, session.client::decodeInvoice) { amount, max, fee ->
+      session.payments.prepare(invoice.text.toString(), note.text.toString(), amount, max, fee)
     }
   }
-  payment.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+  payment.error?.let { PaymentError(it) }
+}
+
+@Composable private fun SendOptions(decode: suspend (String, String) -> InvoiceDetails, network: WalletNetwork, raw: String,
+  note: TextFieldState, busy: Boolean, onReview: (Long, Boolean, Long) -> Unit) {
+  val parsed = remember(raw) { runCatching { SendDestination.parse(raw) } }
+  val dest = parsed.getOrNull()
+  var details by remember { mutableStateOf<InvoiceDetails?>(null) }
+  var decodeError by remember { mutableStateOf<String?>(null) }
+  LaunchedEffect(dest, network) {
+    if (dest?.lightning == true) {
+      try { details = decode(dest.value, network.wire) }
+      catch (error: kotlinx.coroutines.CancellationException) { throw error }
+      catch (error: Exception) { decodeError = error.message }
+    }
+  }
+  if (raw.isNotBlank()) (parsed.exceptionOrNull()?.message ?: decodeError)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+  val amount = rememberTextFieldState()
+  val fee = rememberTextFieldState()
+  var maximum by remember { mutableStateOf(false) }
+  val fixed = details?.amountSat ?: dest?.requestedSat
+  val ready = dest != null && (!dest.lightning || details != null)
+  if (ready) {
+    details?.description?.takeIf { it.isNotBlank() }?.let { Text(it) }
+    if (fixed != null) Amount(fixed)
+    else {
+      if (!maximum) WalletField("Amount (sats)", amount, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Use available balance", Modifier.weight(1f))
+        Switch(maximum, { maximum = it }, enabled = !busy)
+      }
+    }
+  }
+  DetailSection("Options") {
+    WalletField("Note", note)
+    WalletField("Maximum fee (sats)", fee, placeholder = "Automatic", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+  }
+  val maxFee = if (fee.text.isEmpty() || fee.text.toString() == "0") 0L else wholeSats(fee.text.toString())
+  val entered = wholeSats(amount.text.toString())
+  WalletButton(if (busy) "Preparing…" else "Review", ready && !busy && maxFee != null && (fixed != null || maximum || entered != null)) {
+    onReview(if (fixed != null || maximum) 0 else entered!!, maximum, maxFee!!)
+  }
 }
 
 @Composable internal fun SendDraft(
-  invoice: TextFieldState, note: TextFieldState, network: WalletNetwork, busy: Boolean, onReview: () -> Unit,
+  invoice: TextFieldState, note: TextFieldState, network: WalletNetwork, busy: Boolean, decode: suspend (String, String) -> InvoiceDetails, onReview: (Long, Boolean, Long) -> Unit,
 ) {
   val clipboard = LocalClipboardManager.current
-  WalletField("Lightning invoice", invoice, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
+  WalletField("Invoice or Bitcoin address", invoice, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
   Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
     ScanInvoiceButton(network, enabled = !busy) { value -> invoice.edit { replace(0, length, value) } }
     TextButton({ invoice.edit { replace(0, length, clipboard.getText()?.text.orEmpty()) } }) { Text("Paste") }
   }
-  DetailSection("Options") { WalletField("Note", note) }
-  WalletButton(if (busy) "Preparing…" else "Review", !busy && invoice.text.isNotBlank(), onClick = onReview)
+  key(invoice.text.toString().trim(), network) {
+    SendOptions(decode, network, invoice.text.toString(), note, busy, onReview)
+  }
 }
 
 @Composable private fun ReceiveScreen(session: WalletSession, payment: PaymentUiState, wallet: WalletUiState) {
@@ -160,7 +210,13 @@ private fun kotlinx.coroutines.CoroutineScope.launchRefresh(session: WalletSessi
       if (onchain) session.payments.deposit() else session.payments.receive(amount.text.toString().toLong(), note.text.toString())
     }
   }
-  payment.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+  payment.error?.let { PaymentError(it) }
+}
+
+@Composable private fun PaymentError(raw: String) {
+  val message = paymentFailure(raw)
+  Text(message, color = MaterialTheme.colorScheme.error)
+  if (message != raw) DetailSection("Technical details") { CopyRow("Error", raw) }
 }
 
 @Composable fun RequestCard(value: String) {
