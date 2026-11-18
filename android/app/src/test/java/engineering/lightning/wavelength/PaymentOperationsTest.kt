@@ -120,4 +120,13 @@ class PaymentOperationsTest {
     payments.prepare("lntbs1example", ""); runCurrent()
     assertEquals(quote, payments.state.value.quote)
   }
+
+  @Test fun selectedNetworkRejectsAnotherNetworksInvoiceBeforePreparation() = runTest {
+    val gateway = Gateway()
+    val payments = PaymentOperations(backgroundScope, gateway, Journal(), { true }, {}, WalletNetwork.MAINNET)
+    payments.prepare("lntbs1example", ""); runCurrent()
+    assertNull(payments.state.value.quote)
+    payments.prepare("lightning:LNBC1EXAMPLE", ""); runCurrent()
+    assertEquals(quote, payments.state.value.quote)
+  }
 }

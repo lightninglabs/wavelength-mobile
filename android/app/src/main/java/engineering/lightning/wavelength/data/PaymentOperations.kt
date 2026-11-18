@@ -64,9 +64,11 @@ interface PaymentGateway {
   suspend fun deposit(): DepositResult
 }
 
-class NativePaymentGateway(private val client: WalletClient) : PaymentGateway {
+class NativePaymentGateway(private val client: WalletClient, private val limits: () -> CreditLimits = { CreditLimits() }) : PaymentGateway {
   override suspend fun entries() = client.list(limit = 1000).activity?.entries ?: error("Activity unavailable")
-  override suspend fun prepare(invoice: String, note: String) = client.prepareSend(invoice = invoice, note = note)
+  override suspend fun prepare(invoice: String, note: String) = limits().let {
+    client.prepareSend(invoice = invoice, note = note, maxCreditSat = it.use, maxCreditTopupSat = it.topup)
+  }
   override suspend fun send(intentId: String) = client.send(intentId)
   override suspend fun receive(amount: Long, note: String) = client.receiveLightning(amount, note)
   override suspend fun deposit() = client.newDepositAddress()
@@ -88,6 +90,7 @@ class PaymentOperations(
   private val journal: PaymentJournal,
   private val allowed: () -> Boolean,
   private val onEntry: (Entry) -> Unit,
+  private val network: WalletNetwork = WalletNetwork.SIGNET,
 ) {
   private val mutable = MutableStateFlow(try { PaymentUiState(pending = journal.read()) }
     catch (_: Exception) { PaymentUiState(blocked = true, error = "Payment tracking is unreadable. Do not send again until it is recovered.") })
@@ -98,8 +101,8 @@ class PaymentOperations(
   }
 
   fun prepare(rawInvoice: String, note: String) = launch {
-    val invoice = rawInvoice.trim().removePrefix("lightning:").removePrefix("LIGHTNING:")
-    require(invoice.startsWith("lntbs", ignoreCase = true)) { "Use a Signet Lightning invoice." }
+    val invoice = rawInvoice.trim().let { if (it.startsWith("lightning:", ignoreCase = true)) it.substringAfter(':') else it }
+    require(network.acceptsInvoice(invoice)) { "Use a ${network.title} Lightning invoice." }
     val quote = gateway.prepare(invoice, note.trim())
     mutable.update { it.copy(quote = quote, result = null, error = null) }
   }
