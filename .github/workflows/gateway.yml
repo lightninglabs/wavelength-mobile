@@ -32,7 +32,7 @@ jobs:
           && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
             || github.event.comment.user.login == github.event.pull_request.user.login))
       }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, vm-8cpu]
     timeout-minutes: 30
     env:
       # Match the single-call review mode used by Wavelength.

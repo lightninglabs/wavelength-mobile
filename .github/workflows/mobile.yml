@@ -22,7 +22,7 @@ env:
 
 jobs:
   inventory:
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, vm-8cpu]
     outputs:
       android: ${{ steps.platforms.outputs.android }}
     steps:
@@ -92,7 +92,7 @@ jobs:
     name: Android build, unit tests and lint
     needs: inventory
     if: needs.inventory.outputs.android == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, vm-8cpu]
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -159,7 +159,7 @@ jobs:
     name: Mobile build and tests
     if: always()
     needs: [inventory, ios, android]
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, vm-8cpu]
     env:
       INVENTORY_RESULT: ${{ needs.inventory.result }}
       IOS_RESULT: ${{ needs.ios.result }}
