@@ -14,6 +14,8 @@ struct DiagnosticRun: Codable, Identifiable {
     let started: Int64
     let trigger: String
     var wake: DiagnosticWakeContext? = nil
+    var waitedBehind: String? = nil
+    var expiredWhileWaiting: Bool? = nil
     var startup: String? = nil
     var hostBudgetSeconds: Int? = nil
     var nativeBudgetSeconds: Int? = nil
@@ -101,6 +103,28 @@ final class DiagnosticJournal: ObservableObject {
             runs[index].events = Array(runs[index].events.suffix(64))
         }
         record(id: id, network: network, label: label)
+    }
+
+    func wait(id: String, network: String, behind ownerID: String) {
+        guard let index = runs.firstIndex(where: { $0.id == id }) else { return }
+        runs[index].waitedBehind = ownerID
+        event(id: id, network: network, label: "Waiting for native owner")
+    }
+
+    func endWait(id: String, network: String, expired: Bool) {
+        guard let index = runs.firstIndex(where: { $0.id == id }),
+              runs[index].waitedBehind != nil else { return }
+        runs[index].expiredWhileWaiting = expired
+        if expired {
+            save()
+        } else {
+            event(id: id, network: network, label: "Acquired native owner")
+        }
+    }
+
+    func observeExpiry(id: String, reason: String) {
+        guard let run = runs.first(where: { $0.id == id }) else { return }
+        finish(id: id, network: run.network, status: reason)
     }
 
     private func elapsed(_ id: String) -> Double? {

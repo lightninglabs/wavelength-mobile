@@ -355,14 +355,25 @@ struct RefreshWalletView: View {
     var body: some View {
         WalletPage {
             if let operation = store.refreshOperation {
+                Text("Your refresh").font(.headline)
                 if operation.amountSat > 0 { WalletAmount(amount: operation.amountSat) }
                 WalletStatus(text: operation.status, pending: operation.status == "In progress" || operation.status == "Checking status",
                              complete: operation.status == "Complete", failed: operation.status == "Action needed")
                 if let refreshed = operation.confirmedAmountSat, refreshed > 0, operation.status != "Complete" {
                     ValueRow(label: "Refreshed", value: WalletFormatting.sats(refreshed))
-                    if let remaining = operation.remainingAmountSat, operation.canRetry == true {
-                        ValueRow(label: "Available to refresh", value: WalletFormatting.sats(remaining))
-                    }
+                }
+                if let remaining = operation.remainingAmountSat, remaining > 0 {
+                    ValueRow(label: operation.canRetry == true ? "Available to refresh" : "Live amount",
+                             value: WalletFormatting.sats(remaining))
+                }
+                if let count = operation.confirmedCount {
+                    ValueRow(label: "Confirmed inputs", value: "\(count) of \(operation.outpoints.count)")
+                }
+                if let remaining = operation.remainingOutpoints {
+                    ValueRow(label: operation.canRetry == true ? "Available inputs" : "Live inputs", value: "\(remaining.count)")
+                }
+                if let unresolved = operation.unresolvedInputCount {
+                    ValueRow(label: "Unclassified inputs", value: "\(unresolved)")
                 }
                 if let error { Text(error).font(.footnote).foregroundStyle(.red) }
                 if let message = store.refreshCheckError {

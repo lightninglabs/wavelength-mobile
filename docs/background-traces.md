@@ -5,10 +5,9 @@ wake context, measured startup, native work summary, connected timeline, raw
 trace export and related logs. The trace is diagnostic evidence, not a wake
 scheduler or proof that refresh or a round completed.
 
-On iOS, a saved refresh appears above the run history with its **current**
-reconciled state: confirmed input count and amount, available inputs and amount,
-and unresolved input count. These are wallet reads made while viewing the app,
-not a reconstruction of what happened during an earlier background run.
+On iOS, open the refresh from Wallet Activity to see its current confirmed,
+available and unresolved inputs. Open Diagnostics → Rounds to inspect the
+wallet's active and recorded rounds. These read current native wallet state.
 
 A refresh can settle across several rounds. The app keeps the original selection
 and reports partial settlement instead of leaving it permanently in progress.
@@ -28,6 +27,7 @@ does not queue a refresh or replay a join.
 | Observation | Source |
 | --- | --- |
 | Scheduled refresh, known relay wake, payment hint or unrecognized push | The host callback and validated local route classification. |
+| Scheduled round, round signing or mailbox update | Optional diagnostic metadata on a known relay route. Legacy relay wakes have an unavailable reason. |
 | iOS entry point and task identifier | `BGAppRefreshTask` or the APNs background callback. |
 | Android entry point, request ID and retry attempt | The executing WorkManager request. Attempts are displayed starting at one. |
 | Cold or retained startup | The existing runtime branch, without another native query. |
@@ -62,7 +62,15 @@ are retained without replacing the original expiry. On Android, the host records
 owner release only after the existing cancellation join. A late observation can
 therefore appear after the headline terminal duration.
 
-The fallback deadline covers the whole opportunity (28 seconds).
+On iOS, a callback with an observed owner wait and no native start appears under
+that owner's run if it expires there. Opening it shows its own trace and stop
+reason. A waiter that acquires the owner keeps its own history row. An unavailable
+wake route has an explicit outcome. Pushes received in the foreground record a
+skip in the app log outside Background's run history.
+
+The iOS fallback covers the whole opportunity (28 seconds). Android starts its
+fallback after acquiring the host owner. A relay may also report the registration
+cutoff or signing wake deadline, separately from these host limits.
 The SDK safety ceiling applies to the native call after preparation (30 seconds).
 OS expiry is the primary stop signal; either OS expiry or the host fallback
 cancels that exact native window before its separate safety ceiling.

@@ -68,8 +68,10 @@ final class BackgroundWorkAdmissionTests: XCTestCase {
         }
         await fulfillment(of: [started], timeout: 2)
         let expired = Task {
-            waiting.fulfill()
-            return await admission.run(id: "expired", lease: waiterLease) {
+            await admission.run(id: "expired", lease: waiterLease, onWait: { blocker in
+                XCTAssertEqual(blocker, "owner")
+                waiting.fulfill()
+            }) {
                 expiredWork = true
                 return true
             }
