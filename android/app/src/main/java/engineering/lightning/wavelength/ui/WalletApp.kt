@@ -16,6 +16,7 @@ import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.ArrowOutward
 import androidx.compose.material.icons.outlined.SouthWest
 import androidx.compose.material.icons.outlined.ContentCopy
@@ -144,7 +145,7 @@ import kotlin.math.abs
       WalletScreen.CONNECTION -> { ConnectionScreen(session, state, page); return@Scaffold }
       WalletScreen.ACTIVITY -> {
         val entry = state.activity.firstOrNull { it.id == selected } ?: state.notificationEntry?.takeIf { it.id == selected }
-        entry?.let { ActivityDetails(it, page, state.activity) }
+        entry?.let { ActivityDetails(it, page, state.activity, state.network, state.settings.endpoints.esplora) }
         return@Scaffold
       }
       else -> Unit
@@ -188,11 +189,18 @@ import kotlin.math.abs
           TextButton({ scope.launch { session.refresh() } }) { Text("Refresh") }
         }
       }
+      state.refreshAmountSat?.let { amount ->
+        item(key = "wallet.refresh-operation") {
+          SettingsNavigation("Refresh", Icons.Outlined.Refresh, if (amount > 0) sats(amount) else "") { navigate(WalletScreen.REFRESH) }
+          Text(state.refreshStatus, Modifier.padding(start = 36.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+          HorizontalDivider()
+        }
+      }
       items(entries, key = { "activity:${it.id}" }) { item ->
         ActivityRow(item) { selected = item.id; navigate(WalletScreen.ACTIVITY) }
         HorizontalDivider()
       }
-      item(key = "wallet.activity-footer") { ActivityFooter(history, entries.isEmpty(), session::loadOlderActivity) }
+      item(key = "wallet.activity-footer") { ActivityFooter(history, entries.isEmpty() && state.refreshAmountSat == null, session::loadOlderActivity) }
     }
   }
 }
@@ -239,7 +247,9 @@ import kotlin.math.abs
   }
 }
 
-@Composable fun ActivityDetails(entry: Entry, modifier: Modifier = Modifier, entries: List<Entry> = emptyList()) {
+@Composable fun ActivityDetails(entry: Entry, modifier: Modifier = Modifier, entries: List<Entry> = emptyList(),
+  network: WalletNetwork = WalletNetwork.SIGNET, explorer: String = "") {
+  val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
   Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
     Amount(abs(entry.amountSat)); Text(entry.statusLabel)
     if (entry.note.isNotEmpty()) Text(entry.note)
@@ -261,7 +271,16 @@ import kotlin.math.abs
       entry.progress?.let { detail ->
         val phase = detail.phaseLabel.ifEmpty { detail.phase }
         if (phase.isNotEmpty()) SettingsValue("Phase", diagnosticLabel(phase))
-        if (detail.txid.isNotEmpty()) CopyRow("Transaction", detail.txid)
+        if (detail.txid.isNotEmpty()) {
+          CopyRow("Transaction", detail.txid)
+          val base = explorer.trimEnd('/').removeSuffix("/api").ifBlank { when (network) {
+            WalletNetwork.MAINNET -> "https://mempool.space"
+            WalletNetwork.SIGNET -> "https://mempool.space/signet"
+            WalletNetwork.TESTNET -> "https://mempool.space/testnet"
+            WalletNetwork.REGTEST -> ""
+          } }
+          if (base.isNotEmpty()) TextButton({ uriHandler.openUri("$base/tx/${android.net.Uri.encode(detail.txid)}") }) { Text("View transaction") }
+        }
         if (detail.vtxoOutpoint.isNotEmpty()) CopyRow("Outpoint", detail.vtxoOutpoint)
         if (detail.preimage.isNotEmpty()) CopyRow("Payment proof", detail.preimage)
       }

@@ -67,7 +67,7 @@ internal suspend fun checkedSweepPreview(
     }
   }
   val active = receipts.lastOrNull { !it.separate }
-  DiagnosticPage(modifier) {
+  FundPage(modifier) {
     if (active != null) {
       Amount(active.net)
       Text(when { active.confirmed -> "Confirmed"; active.txid.isNotEmpty() -> "In progress"; else -> "Checking transfer" })

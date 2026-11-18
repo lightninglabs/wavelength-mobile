@@ -1,6 +1,6 @@
 package engineering.lightning.wavelength
 
-import engineering.lightning.wavelength.ui.*
+import engineering.lightning.wavelength.data.*
 import engineering.lightning.wavewalletdk.client.RefreshObservation
 import org.junit.Assert.*
 import org.junit.Test
