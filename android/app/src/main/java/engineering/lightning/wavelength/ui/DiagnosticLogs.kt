@@ -28,7 +28,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.serialization.json.*
 
-@Composable internal fun DiagnosticLogs(session: WalletSession, initialQuery: String, modifier: Modifier, navigate: (DiagnosticRoute) -> Unit) {
+@Composable internal fun DiagnosticLogs(session: WalletSession, initialQuery: String, modifier: Modifier, navigate: (DiagnosticRoute) -> Unit, since: Long? = null, until: Long? = null) {
   val state by session.state.collectAsStateWithLifecycle()
   val query = rememberTextFieldState(initialQuery)
   var level by remember { mutableStateOf("All levels") }
@@ -43,13 +43,17 @@ import kotlinx.serialization.json.*
   val currentLive by rememberUpdatedState(live)
   val currentPaused by rememberUpdatedState(paused)
   LaunchedEffect(session) {
+    var nativeRecords = emptyList<DiagnosticLog>()
     while (isActive) {
       if (!currentPaused) {
         try {
           val snapshot = session.inspect { it.diagnosticLogs() }
-          live = snapshot.entries.orEmpty(); historyUnavailable = snapshot.historyUnavailable; error = null
+          nativeRecords = snapshot.entries.orEmpty()
+          historyUnavailable = snapshot.historyUnavailable; error = null
         } catch (e: CancellationException) { throw e }
         catch (e: Exception) { error = e.message ?: "Logs unavailable" }
+        live = (nativeRecords + session.backgroundHistory.hostLogs(session.state.value.network.wire))
+          .sortedWith(compareBy<DiagnosticLog> { it.time }.thenBy { it.id })
       }
       delay(1000)
     }
@@ -60,7 +64,8 @@ import kotlinx.serialization.json.*
     }
   }
   fun matches(record: DiagnosticLog) = record.matches(query.text.toString()) &&
-    (level == "All levels" || level == record.level) && (source == "All sources" || source == record.source)
+    (level == "All levels" || level == record.level) && (source == "All sources" || source == record.source) &&
+    record.inTimeWindow(since,until)
   val shown = (if (following) live else window.records(live)).filter(::matches)
   val count = live.count(::matches)
   LaunchedEffect(shown.lastOrNull()?.id, following) { if (following && shown.isNotEmpty()) scroll.scrollToItem(shown.lastIndex) }
@@ -70,6 +75,7 @@ import kotlinx.serialization.json.*
       LogFilter(state.captureLevel.title, CaptureLevel.entries.map { it.title }) { title -> session.setCaptureLevel(CaptureLevel.entries.first { it.title == title }) }
     }
     Text("Applies on the next wallet startup.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    if (since != null) Text("${diagnosticTime(since,true)} → ${until?.let { diagnosticTime(it,true) } ?: "Now"}",style = MaterialTheme.typography.labelSmall,color = MaterialTheme.colorScheme.onSurfaceVariant)
     WalletField("Filter logs", query)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
       LogFilter(level, listOf("All levels", "TRACE", "DEBUG", "INFO", "WARN", "ERROR")) { level = it }
