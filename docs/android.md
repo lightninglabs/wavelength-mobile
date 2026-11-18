@@ -28,20 +28,23 @@ unset.
 ## Build the bindings
 
 The sample links `Wavewalletdk.aar`, which is not checked in here.
-`scripts/fetch-aar.sh` downloads it from the `wavelength` GitHub release and
-stages it under `android/walletkit/libs`:
+`scripts/fetch-aar.sh` builds the exact commit in `.wavelength-version` plus
+`scripts/wavelength-ios-recovery.patch`. Despite its historical name, that
+patch extends the platform-neutral mobile Go facade. Android uses the same
+reviewed source and bridge as iOS. The build needs Go, gomobile, JDK 17+, the
+Android SDK and NDK.
 
 ```bash
-# Downloads the release pinned in .wavelength-version (needs the gh CLI
-# authenticated to an account with read access to wavelength).
-./scripts/fetch-aar.sh
+./scripts/fetch-aar.sh --if-needed
 
-# Override the repository pin:
-WAVELENGTH_VERSION=v0.1.2 ./scripts/fetch-aar.sh
-
-# Or build from a local checkout against an unreleased daemon:
-WAVELENGTH_DIR=/path/to/wavelength ./scripts/fetch-aar.sh
+# A prepared checkout must match the exact pin and bridge contents.
+WAVELENGTH_DIR=/path/to/prepared/wavelength ./scripts/fetch-aar.sh
 ```
+
+The script writes `Wavewalletdk.aar.origin` beside the AAR. It records the
+repository, full commit and bridge digest. Both files are ignored by Git.
+Changing either source pin or bridge invalidates reuse. Release-tag overrides
+still download the packaged AAR with `WAVELENGTH_VERSION=<tag>`.
 
 The source build (`make mobile-android`) cross-compiles the embedded daemon for
 all four Android ABIs (`arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`), so the

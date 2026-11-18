@@ -25,19 +25,22 @@ data class WalletConfig(
   @SerialName("swap_server_insecure") val swapServerInsecure: Boolean? = null,
 
   @SerialName("debug_level") val debugLevel: String? = null,
+  @SerialName("host_driven_ingress") val hostDrivenIngress: Boolean = false,
+  @SerialName("durable_round_runtime") val durableRoundRuntime: Boolean = true,
+  @SerialName("diagnostic_logs") val diagnosticLogs: Boolean = true,
   @SerialName("allow_mainnet") val allowMainnet: Boolean? = null,
 ) {
   companion object {
     /**
      * Build a signet config for the lightweight (Esplora-backed) wallet. The
      * operator and swap endpoints default to Lightning Labs' public signet
-     * deployment; pass empty strings to run sync-only without an operator.
+     * deployment; empty endpoint overrides retain the SDK defaults.
      */
     fun signet(
       dataDir: String,
-      esploraUrl: String = "https://mempool.space/signet/api",
-      operatorAddress: String = "arkd-signet.testnet.lightningcluster.com:443",
-      swapServerAddress: String = "swapd-signet.testnet.lightningcluster.com:443",
+      esploraUrl: String = "https://mempool-signet.testnet.lightningcluster.com/api",
+      operatorAddress: String = "signet.wavelength.lightning.finance:443",
+      swapServerAddress: String = "swap.signet.wavelength.lightning.finance:443",
     ): WalletConfig = WalletConfig(
       dataDir = dataDir,
       network = "signet",
