@@ -26,8 +26,11 @@ import java.util.concurrent.TimeUnit
 @Serializable internal data class RemoteGrant(val target: PushTarget, val subscription: String, val expires: Long)
 @Serializable internal data class RegistrationState(val desired: PushTarget? = null,
   val grant: RemoteGrant? = null, val bound: RelayRoute? = null, val counter: Long = 0,
-  val destination: String = "", val confirmed: Boolean = false) {
+  val destination: String = "", val confirmed: Boolean = false,
+  val retired: List<RemoteGrant> = emptyList()) {
   fun select(target: PushTarget?) = copy(desired = target, bound = null)
+
+  fun retire(grant: RemoteGrant) = copy(grant = null, bound = null, retired = retired + grant)
 
   fun publish(target: PushTarget, expiry: Long): RegistrationState {
     if (desired != target || grant?.target != target) return this
@@ -97,11 +100,22 @@ internal class RelayRegistration(private val context: Context) {
     if (old != null && old.target != desired) {
       if (old.expires > now()) {
         manage(JSONObject().put("action","revoke_subscription").put("subscription_id",old.subscription))
-        for (role in listOf("operator","swap_server")) {
-          wallet.signRelayGrant(old.target, NotificationFeedGrant(role, old.subscription, remove = true))
+      }
+      update { it.retire(old) }
+    }
+    // The relay already revoked these routes. Each wallet removes its producer
+    // grants when it next opens, or the producers expire them automatically.
+    for (retired in read().retired) {
+      if (retired.expires > now()) {
+        try {
+          for (role in listOf("operator", "swap_server")) {
+            wallet.signRelayGrant(retired.target, NotificationFeedGrant(role, retired.subscription, remove = true))
+          }
+        } catch (_: RelayWalletUnavailable) {
+          continue
         }
       }
-      update { it.copy(grant = null, bound = null) }
+      update { it.copy(retired = it.retired - retired) }
     }
     if (desired == null) return@withContext
     val fcm = FirebaseMessaging.getInstance()
