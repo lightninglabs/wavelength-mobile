@@ -27,6 +27,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -42,8 +43,30 @@ import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 import engineering.lightning.wavelength.data.*
 import engineering.lightning.wavewalletdk.client.InvoiceDetails
 import engineering.lightning.wavewalletdk.client.Entry
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+private const val PaymentBodyFraction = .95f
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable private fun PaymentDragHandle() {
+  val safeTop = WindowInsets.safeDrawing
+  BottomSheetDefaults.DragHandle(modifier = Modifier.layout { measurable, constraints ->
+    val handle = measurable.measure(constraints)
+    val padding = paymentHandleTopPadding(constraints.maxHeight - handle.height, safeTop.getTop(this))
+    layout(handle.width, handle.height + padding) { handle.placeRelative(0, padding) }
+  })
+}
+
+// At rest, the gap above the sheet and the handle padding together cover the
+// top inset. The gap is the 5% of the remaining body space the sheet leaves
+// unused. Compute the padding from the viewport so dragging cannot resize it.
+internal fun paymentHandleTopPadding(bodySpace: Int, safeTop: Int): Int {
+  val inset = safeTop.coerceAtMost(bodySpace)
+  val gapAtInset = ((bodySpace - inset) * (1f - PaymentBodyFraction) / PaymentBodyFraction).roundToInt()
+  return (inset - gapAtInset).coerceAtLeast(0)
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable internal fun PaymentActions(session: WalletSession, state: WalletUiState) {
@@ -77,17 +100,14 @@ import kotlinx.coroutines.launch
     dismissButton = { TextButton({ separate = false }) { Text("Cancel") } })
   if (screen != null) {
     val dismiss = { if (!payment.busy) screen = null }
-    // By default the sheet pads its content by whatever part of the top inset
-    // its current offset leaves exposed. With the keyboard open that makes the
-    // sheet's height depend on its own position, and a fling leaves it
-    // oscillating. Reserve the status bar once, outside the sheet, instead.
-    ModalBottomSheet(onDismissRequest = dismiss, modifier = Modifier.statusBarsPadding(),
+    ModalBottomSheet(onDismissRequest = dismiss,
       sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+      dragHandle = { PaymentDragHandle() },
       contentWindowInsets = { BottomSheetDefaults.windowInsets.only(WindowInsetsSides.Bottom) },
       containerColor = MaterialTheme.colorScheme.background, sheetGesturesEnabled = !payment.busy,
       properties = ModalBottomSheetProperties(shouldDismissOnBackPress = !payment.busy)) {
       BackHandler(payment.busy) {}
-      Column(Modifier.fillMaxWidth().fillMaxHeight(.95f).imePadding()) {
+      Column(Modifier.fillMaxWidth().fillMaxHeight(PaymentBodyFraction).imePadding()) {
         Box(Modifier.fillMaxWidth().height(64.dp)) {
           Text(screen!!, Modifier.align(Alignment.Center), style = MaterialTheme.typography.titleMedium)
         }
