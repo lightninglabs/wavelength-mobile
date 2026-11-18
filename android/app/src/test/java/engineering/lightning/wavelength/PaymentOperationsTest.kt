@@ -30,7 +30,15 @@ class PaymentOperationsTest {
       if (lostResponse) error("deadline exceeded")
       return SendResult(entry = accepted())
     }
-    override suspend fun receive(amount: Long, note: String): ReceiveResult { calls++; error(receiveError) }
+    var found: ReceiveResult? = null
+    var lookupFails = true
+    var lookedUpId = ""
+    override suspend fun lookupReceive(requestId: String): ReceiveResult? {
+      lookedUpId = requestId
+      check(!lookupFails)
+      return found
+    }
+    override suspend fun receive(amount: Long, note: String, requestId: String): ReceiveResult { calls++; error(receiveError) }
     override suspend fun deposit() = DepositResult(address = "tb1...")
   }
 
@@ -87,7 +95,15 @@ class PaymentOperationsTest {
     payments.reconcile(listOf(entry.copy(note = "different")))
     assertNotNull(journal.value)
     payments.reconcile(listOf(entry))
-    assertEquals("lntbs1original", payments.state.value.request)
+    val requestId = journal.value!!.requestId
+    assertEquals(requestId, gateway.lookedUpId)
+    gateway.found = ReceiveResult(invoice = "lntbs1original", entry = entry)
+    gateway.lookupFails = false
+    val restarted = PaymentOperations(backgroundScope, gateway, journal, { true }, {})
+    restarted.checkPending()
+    assertEquals(requestId, gateway.lookedUpId)
+    assertEquals(1, gateway.calls)
+    assertEquals("lntbs1original", restarted.state.value.request)
     assertNull(journal.value)
   }
 
@@ -112,7 +128,7 @@ class PaymentOperationsTest {
   }
 
   @Test fun ordinaryReceiveRejectionDoesNotPermanentlyBlockTheWallet() = runTest {
-    val gateway = Gateway().apply { receiveError = "receive amount exceeds maximum" }
+    val gateway = Gateway().apply { receiveError = "receive amount exceeds maximum"; lookupFails = false }
     val journal = Journal()
     val payments = PaymentOperations(backgroundScope, gateway, journal, { true }, {})
     payments.receive(10000000, ""); runCurrent()

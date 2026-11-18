@@ -85,8 +85,16 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
    * returned invoice with the payer; the matching entry shows up on the
    * activity stream as it is paid.
    */
-  suspend fun receiveLightning(amountSat: Long, memo: String = ""): ReceiveResult =
-    decode(io { Mobile.receive(encode(ReceiveReq.serializer(), ReceiveReq(amountSat, memo, 20))) })
+  suspend fun receiveLightning(amountSat: Long, memo: String = "", requestId: String = java.util.UUID.randomUUID().toString()): ReceiveResult =
+    decode(io { Mobile.receive(encode(ReceiveReq.serializer(), ReceiveReq(amountSat, memo, requestId))) })
+
+  /** A successful absent lookup excludes a receive still being created under this ID. */
+  suspend fun lookupReceive(requestId: String): ReceiveResult? {
+    val result = decode<ReceiveLookupResult>(io {
+      Mobile.lookupReceive(encode(ReceiveLookupReq.serializer(), ReceiveLookupReq(requestId)))
+    })
+    return if (result.found) requireNotNull(result.receive) { "Missing receive result" } else null
+  }
 
   /**
    * Allocate a fresh on-chain boarding address to deposit into. The optional
@@ -304,7 +312,17 @@ private data class SubscribeReq(
 private data class ReceiveReq(
   @SerialName("AmountSat") val amountSat: Long,
   @SerialName("Memo") val memo: String = "",
+  @SerialName("RequestID") val requestId: String,
   @SerialName("TimeoutSeconds") val timeoutSeconds: Long = 20,
+)
+
+@Serializable
+private data class ReceiveLookupReq(@SerialName("RequestID") val requestId: String)
+
+@Serializable
+private data class ReceiveLookupResult(
+  @SerialName("Found") val found: Boolean,
+  @SerialName("Receive") val receive: ReceiveResult? = null,
 )
 
 @Serializable
