@@ -77,7 +77,13 @@ import kotlinx.coroutines.launch
     dismissButton = { TextButton({ separate = false }) { Text("Cancel") } })
   if (screen != null) {
     val dismiss = { if (!payment.busy) screen = null }
-    ModalBottomSheet(onDismissRequest = dismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    // By default the sheet pads its content by whatever part of the top inset
+    // its current offset leaves exposed. With the keyboard open that makes the
+    // sheet's height depend on its own position, and a fling leaves it
+    // oscillating. Reserve the status bar once, outside the sheet, instead.
+    ModalBottomSheet(onDismissRequest = dismiss, modifier = Modifier.statusBarsPadding(),
+      sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+      contentWindowInsets = { BottomSheetDefaults.windowInsets.only(WindowInsetsSides.Bottom) },
       containerColor = MaterialTheme.colorScheme.background, sheetGesturesEnabled = !payment.busy,
       properties = ModalBottomSheetProperties(shouldDismissOnBackPress = !payment.busy)) {
       BackHandler(payment.busy) {}
