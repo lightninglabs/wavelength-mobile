@@ -5,7 +5,9 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.text.input.rememberTextFieldState
@@ -22,6 +24,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -36,6 +41,7 @@ import kotlin.math.abs
 @Composable fun WalletApp(session: WalletSession, authenticate: (() -> Unit) -> Unit) {
   val state by session.state.collectAsStateWithLifecycle()
   key(state.network) {
+    val activityScroll = key(state.history.sessionId) { rememberLazyListState() }
     var connection by remember { mutableStateOf(false) }
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
       Crossfade(state.phase, label = "wallet phase") { phase ->
@@ -60,7 +66,7 @@ import kotlin.math.abs
             WalletButton("Try again") { session.retry() }
             NetworkControl(session, state); TextButton({ connection = true }) { Text("Connection") }
           }
-          WalletPhase.OPEN -> WalletHome(session, state, authenticate)
+          WalletPhase.OPEN -> WalletHome(session, state, activityScroll, authenticate)
         }
       }
       if (state.error != null && state.phase == WalletPhase.OPEN) AlertDialog(onDismissRequest = session::dismissError,
@@ -93,16 +99,21 @@ import kotlin.math.abs
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable private fun WalletHome(session: WalletSession, state: WalletUiState, authenticate: (() -> Unit) -> Unit) {
+@Composable private fun WalletHome(
+  session: WalletSession,
+  state: WalletUiState,
+  list: LazyListState,
+  authenticate: (() -> Unit) -> Unit,
+) {
   var stack by remember { mutableStateOf(listOf(WalletScreen.HOME)) }
   val screen = stack.last()
   val navigate: (WalletScreen) -> Unit = { stack = stack + it }
   val back: () -> Unit = { if (stack.size > 1) stack = stack.dropLast(1) }
   var selected by remember { mutableStateOf<String?>(null) }
   val scope = rememberCoroutineScope()
-  LaunchedEffect(state.phase, state.notificationTarget, state.activity) {
+  LaunchedEffect(state.phase, state.notificationTarget) {
     val target = state.notificationTarget
-    if (state.phase == WalletPhase.OPEN && target != null && state.activity.any { it.id == target }) {
+    if (state.phase == WalletPhase.OPEN && target != null) {
       selected = target; stack = listOf(WalletScreen.HOME,WalletScreen.ACTIVITY)
       session.consumeNotification()
     }
@@ -126,14 +137,20 @@ import kotlin.math.abs
       WalletScreen.CREDIT -> { CreditScreen(session, state, page, back); return@Scaffold }
       WalletScreen.CONNECTION -> { ConnectionScreen(session, state, page); return@Scaffold }
       WalletScreen.ACTIVITY -> {
-        state.activity.firstOrNull { it.id == selected }?.let { ActivityDetails(it, page, state.activity) }
+        val entry = state.activity.firstOrNull { it.id == selected } ?: state.notificationEntry?.takeIf { it.id == selected }
+        entry?.let { ActivityDetails(it, page, state.activity) }
         return@Scaffold
       }
       else -> Unit
     }
-    LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(24.dp),
+    val history = state.history
+    val entries = remember(history.entries) { visibleActivity(history.entries) }
+    LazyColumn(
+      Modifier.fillMaxSize().padding(padding).testTag("activity.list")
+        .activityBottomPull(list, history.nextCursor != null && !history.loading, session::loadOlderActivity),
+      state = list, contentPadding = PaddingValues(24.dp),
       verticalArrangement = Arrangement.spacedBy(16.dp)) {
-      item {
+      item(key = "wallet.balance") {
         Text("Balance", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(10.dp))
         val balance = state.balance
@@ -145,9 +162,9 @@ import kotlin.math.abs
         }
         Spacer(Modifier.height(24.dp))
       }
-      item { PaymentActions(session, state) }
+      item(key = "wallet.actions") { PaymentActions(session, state) }
       state.balance?.takeIf { it.creditAvailableSat > 0 }?.let { balance ->
-        item {
+        item(key = "wallet.credit") {
           HorizontalDivider(); Spacer(Modifier.height(16.dp))
           Row(Modifier.fillMaxWidth().clickable { navigate(WalletScreen.CREDIT) }.heightIn(min = 44.dp), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("Credit"); Text(sats(balance.creditAvailableSat))
@@ -156,19 +173,41 @@ import kotlin.math.abs
           Spacer(Modifier.height(16.dp)); HorizontalDivider()
         }
       }
-      item {
+      item(key = "wallet.activity") {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-          Text("Activity", fontSize = 24.sp, fontWeight = FontWeight.Medium)
+          Text("Activity", Modifier.semantics { heading() }, fontSize = 24.sp, fontWeight = FontWeight.Medium)
           TextButton({ scope.launch { session.refresh() } }) { Text("Refresh") }
         }
       }
-      val entries = visibleActivity(state.activity)
-      if (!state.activityLoaded && entries.isEmpty()) item { CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp) }
-      else if (entries.isEmpty()) item { Text("No activity", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-      items(entries, key = { it.id }) { item ->
+      items(entries, key = { "activity:${it.id}" }) { item ->
         ActivityRow(item) { selected = item.id; navigate(WalletScreen.ACTIVITY) }
         HorizontalDivider()
       }
+      item(key = "wallet.activity-footer") { ActivityFooter(history, entries.isEmpty(), session::loadOlderActivity) }
+    }
+  }
+}
+
+@Composable private fun ActivityFooter(history: ActivityHistoryState, empty: Boolean, load: () -> Unit) {
+  Column(
+    Modifier.fillMaxWidth().heightIn(min = 48.dp),
+    horizontalAlignment = Alignment.CenterHorizontally,
+    verticalArrangement = Arrangement.Center,
+  ) {
+    when {
+      history.loading || (!history.loaded && !history.failed) -> {
+        CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+        Text(if (history.loaded) "Loading older activity" else "Loading activity", style = MaterialTheme.typography.bodySmall)
+      }
+      history.failed || history.nextCursor != null -> {
+        if (history.failed) {
+          Text(if (history.loaded) "Couldn’t load older activity" else "Couldn’t load activity")
+        }
+        TextButton(onClick = load, modifier = Modifier.testTag("activity.loadOlder")) {
+          Text(if (history.failed) "Retry" else "Load older activity")
+        }
+      }
+      else -> Text(if (empty) "No activity" else "End of activity", color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
   }
 }

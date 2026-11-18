@@ -38,7 +38,6 @@ val Entry.title: String get() = when {
 fun visibleActivity(entries: List<Entry>): List<Entry> {
   val hashes = entries.filter { it.kind == "send" && !it.creditTopup }.map { it.paymentHash }.filter { it.isNotEmpty() }.toSet()
   return entries.filterNot { it.creditTopup && it.status != "failed" && it.paymentHash.isNotEmpty() && it.paymentHash in hashes }
-    .sortedWith(compareByDescending<Entry> { it.createdAt }.thenBy { it.id })
 }
 fun activityTime(value: String): String = runCatching {
   val zone = ZoneId.systemDefault()
@@ -46,11 +45,3 @@ fun activityTime(value: String): String = runCatching {
   val pattern = if (instant.atZone(zone).toLocalDate() == LocalDate.now(zone)) "HH:mm" else "MMM d, HH:mm"
   DateTimeFormatter.ofPattern(pattern).withZone(zone).format(instant)
 }.getOrDefault("")
-
-/** Snapshot entries have no event cursor. Only updates during this read win. */
-fun mergeActivitySnapshot(before: Map<String, Entry>, snapshot: List<Entry>, current: List<Entry>): List<Entry> {
-  val latest = current.associateBy { it.id }
-  val ids = snapshot.map { it.id }.toSet()
-  return snapshot.map { entry -> latest[entry.id]?.takeIf { it != before[entry.id] } ?: entry } +
-    current.filterNot { it.id in ids }
-}

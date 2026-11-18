@@ -171,8 +171,8 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
   /**
    * List a unified wallet view: the merged activity history, the live VTXO
    * inventory, or the on-chain transaction history. Read the [ListResult] field
-   * named by its `view`. `kinds`, `pendingOnly`, `limit`, and `offset` apply to
-   * the activity view.
+   * named by its `view`. Canonical activity uses [ActivityList.nextCursor]
+   * and ignores offsets.
    */
   suspend fun list(
     view: ListView = ListView.ACTIVITY,
@@ -180,13 +180,21 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
     pendingOnly: Boolean = false,
     limit: Long = 0,
     offset: Long = 0,
+    cursor: String = "",
   ): ListResult = decode(
     io {
       Mobile.list(
-        encode(ListReq.serializer(), ListReq(view.wire, pendingOnly, kinds, limit, offset)),
+        encode(ListReq.serializer(), ListReq(view.wire, pendingOnly, kinds, limit, offset, cursor)),
       )
     },
   )
+
+  /** Capture the end of the local transition log before reading a snapshot. */
+  suspend fun activityCursor(): Long = decode<ActivityCursorResult>(io { Mobile.activityCursor() }).cursor
+
+  /** Read current rows after [after]. Keep the returned high water until the range is drained. */
+  suspend fun readActivityBatch(after: Long, through: Long = 0, limit: Int = 64): ActivityBatch =
+    decode(io { Mobile.readActivityBatch(encode(ActivityBatchReq.serializer(), ActivityBatchReq(after, through, limit))) })
 
   /**
    * Exit a VTXO back to the chain. The daemon queues a cooperative leave by
@@ -328,6 +336,17 @@ private data class ListReq(
   @SerialName("Kinds") val kinds: List<String> = emptyList(),
   @SerialName("Limit") val limit: Long = 0,
   @SerialName("Offset") val offset: Long = 0,
+  @SerialName("Cursor") val cursor: String = "",
+)
+
+@Serializable
+private data class ActivityCursorResult(val cursor: Long)
+
+@Serializable
+private data class ActivityBatchReq(
+  @SerialName("after_cursor") val after: Long,
+  @SerialName("through_cursor") val through: Long,
+  val limit: Int,
 )
 
 @Serializable
