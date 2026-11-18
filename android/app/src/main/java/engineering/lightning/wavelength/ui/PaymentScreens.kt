@@ -101,7 +101,7 @@ private fun kotlinx.coroutines.CoroutineScope.launchRefresh(session: WalletSessi
     payment.result != null -> {
       val entry = wallet.activity.firstOrNull { it.id == payment.result.id } ?: payment.result
       Amount(kotlin.math.abs(entry.amountSat))
-      StatusLine(entry.statusLabel, entry.status == "pending")
+      StatusLine(entry.statusLabel, entry.showsProgress)
     }
     payment.quote != null -> {
       val quote = payment.quote
@@ -191,7 +191,7 @@ private fun kotlinx.coroutines.CoroutineScope.launchRefresh(session: WalletSessi
   var onchain by remember { mutableStateOf(false) }
   val currentEntry = wallet.activity.firstOrNull { it.id == payment.result?.id } ?: payment.result
   if (payment.request.isNotEmpty()) {
-    currentEntry?.let { StatusLine(it.statusLabel, it.status == "pending" && !it.awaitingPayment) }
+    currentEntry?.let { StatusLine(it.statusLabel, it.showsProgress) }
     RequestCard(payment.request)
     DetailSection { CopyRow(if (onchain) "On-chain" else "Invoice", payment.request) }
   } else {

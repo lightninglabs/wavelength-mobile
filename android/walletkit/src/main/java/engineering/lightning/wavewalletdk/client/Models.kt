@@ -104,6 +104,7 @@ data class Entry(
 data class EntryProgress(
   @SerialName("Phase") val phase: String = "",
   @SerialName("PhaseLabel") val phaseLabel: String = "",
+  @SerialName("Preimage") val preimage: String = "",
   @SerialName("PaymentHash") val paymentHash: String = "",
   @SerialName("Txid") val txid: String = "",
   @SerialName("VTXOOutpoint") val vtxoOutpoint: String = "",

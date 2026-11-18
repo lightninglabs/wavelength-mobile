@@ -236,6 +236,7 @@ import kotlin.math.abs
     if (entry.note.isNotEmpty()) Text(entry.note)
     Text(activityTime(entry.createdAt), color = MaterialTheme.colorScheme.onSurfaceVariant)
     if (entry.feeSat > 0) CopyRow("Fee", sats(entry.feeSat))
+    if (entry.failureReason.isNotBlank()) Text(paymentFailure(entry.failureReason))
     PendingRequest(entry)
     DetailSection {
       entries.filter { it.creditTopup && entry.kind == "send" && !entry.creditTopup &&
@@ -245,6 +246,15 @@ import kotlin.math.abs
           CopyRow("Reference", topup.id)
           topup.progress?.vtxoOutpoint?.takeIf { it.isNotEmpty() }?.let { CopyRow("Outpoint", it) }
         }
+      }
+      SettingsValue("Network", entry.rail)
+      if (entry.counterparty.isNotBlank()) CopyRow("Destination", entry.counterparty)
+      entry.progress?.let { detail ->
+        val phase = detail.phaseLabel.ifEmpty { detail.phase }
+        if (phase.isNotEmpty()) SettingsValue("Phase", diagnosticLabel(phase))
+        if (detail.txid.isNotEmpty()) CopyRow("Transaction", detail.txid)
+        if (detail.vtxoOutpoint.isNotEmpty()) CopyRow("Outpoint", detail.vtxoOutpoint)
+        if (detail.preimage.isNotEmpty()) CopyRow("Payment proof", detail.preimage)
       }
       CopyRow("Reference", entry.id)
       entry.progress?.paymentHash?.takeIf { it.isNotEmpty() }?.let { CopyRow("Payment hash", it) }
