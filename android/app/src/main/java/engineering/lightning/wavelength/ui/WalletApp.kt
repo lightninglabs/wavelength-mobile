@@ -133,6 +133,7 @@ import kotlin.math.abs
     when (screen) {
       WalletScreen.SETTINGS -> { SettingsScreen(session, state, page, navigate, diagnostics = true); return@Scaffold }
       WalletScreen.NOTIFICATIONS -> { NotificationsScreen(session, state, page); return@Scaffold }
+      WalletScreen.REFRESH -> { RefreshScreen(session, state.network, page); return@Scaffold }
       WalletScreen.EXIT -> { CooperativeExitScreen(session, state.network, page); return@Scaffold }
       WalletScreen.SECURITY -> { SecurityScreen(session, state, page, authenticate); return@Scaffold }
       WalletScreen.CREDIT -> { CreditScreen(session, state, page, back); return@Scaffold }

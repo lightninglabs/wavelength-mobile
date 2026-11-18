@@ -241,6 +241,12 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
     return reply.admission
   }
 
+  suspend fun refreshFunds(outpoints: List<String>, dryRun: Boolean): RefreshResult =
+    decode(io { Mobile.refresh(encode(RefreshReq.serializer(), RefreshReq(outpoints, dryRun))) })
+
+  suspend fun observeRefresh(outpoints: List<String>): RefreshObservation =
+    decode(io { Mobile.observeRefresh(encode(OutpointsReq.serializer(), OutpointsReq(outpoints))) })
+
   /** Query the phase of an exit job for a VTXO outpoint. */
   suspend fun exitStatus(outpoint: String): ExitStatusResult =
     decode(io { Mobile.exitStatus(encode(ExitStatusReq.serializer(), ExitStatusReq(outpoint))) })
@@ -420,3 +426,7 @@ private data class ExitStatusReq(
   @SerialName("Closed") val closed: Boolean,
   @SerialName("Admission") val admission: ExitBatchResult? = null,
 )
+
+
+@Serializable private data class OutpointsReq(@SerialName("Outpoints") val outpoints: List<String>)
+@Serializable private data class RefreshReq(@SerialName("Outpoints") val outpoints: List<String>, @SerialName("DryRun") val dryRun: Boolean)

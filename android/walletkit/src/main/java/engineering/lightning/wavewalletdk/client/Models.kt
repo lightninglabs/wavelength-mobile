@@ -303,3 +303,21 @@ data class CreditPreview(
   @SerialName("Outcome") val outcome: String,
   @SerialName("Error") val error: String = "",
 )
+
+
+@Serializable data class RefreshResult(
+  @SerialName("QueuedOutpoints") val outpoints: List<String> = emptyList(),
+  @SerialName("FeeEstimate") val feeEstimate: RefreshEstimate? = null,
+)
+@Serializable data class RefreshEstimate(
+  @SerialName("TotalFeeSat") val totalFeeSat: Long? = null,
+  @SerialName("EstimateError") val error: String = "",
+)
+@Serializable data class RefreshObservation(
+  @SerialName("Complete") val complete: Boolean,
+  @SerialName("RetryAllowed") val retryAllowed: Boolean = false,
+  @SerialName("ConfirmedCount") val confirmed: Int = 0,
+  @SerialName("ConfirmedAmountSat") val confirmedSat: Long = 0,
+  @SerialName("RemainingOutpoints") val remaining: List<String> = emptyList(),
+  @SerialName("RemainingAmountSat") val remainingSat: Long = 0,
+)
