@@ -39,6 +39,7 @@ import kotlinx.coroutines.launch
 @Composable internal fun PaymentActions(session: WalletSession, state: WalletUiState) {
   var screen by remember { mutableStateOf<String?>(null) }
   val payment by session.payments.state.collectAsStateWithLifecycle()
+  var separate by remember { mutableStateOf(false) }
   val ready = state.info?.serverConnected == true
   Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
     Column(Modifier.weight(1f)) {
@@ -59,6 +60,11 @@ import kotlinx.coroutines.launch
   if (payment.pending != null || payment.blocked) TextButton({ screen = if (payment.pending?.kind == "receive") "Receive" else "Send" }) {
     Text(if (payment.pending?.kind == "receive") "Checking request" else "Checking payment")
   }
+  if (separate) AlertDialog(onDismissRequest = { separate = false },
+    title = { Text("Original payment is unconfirmed") },
+    text = { Text("It may still complete. Keep it in Payment checks and review a separate payment?") },
+    confirmButton = { TextButton({ separate = false; session.payments.startSeparatePayment(); screen = "Send" }) { Text("Review separate payment") } },
+    dismissButton = { TextButton({ separate = false }) { Text("Cancel") } })
   if (screen != null) {
     val dismiss = { if (!payment.busy) screen = null }
     ModalBottomSheet(onDismissRequest = dismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -79,6 +85,9 @@ import kotlinx.coroutines.launch
               StatusLine(if (payment.pending?.kind == "receive") "Checking request" else "Checking payment", true)
               Text("Check Activity before trying again.", color = MaterialTheme.colorScheme.onSurfaceVariant)
               payment.error?.let { PaymentError(it) }
+              if (payment.pending?.let { it.kind == "send" && it.checks >= 2 } == true) {
+                TextButton({ separate = true }) { Text("Review a separate payment") }
+              }
               WalletButton("Check status", !payment.busy) { session.scope.launchRefresh(session) }
             }
             screen == "Send" -> SendScreen(session, payment, state)

@@ -12,10 +12,12 @@ class PaymentOperationsTest {
   private val quote = PrepareSendResult(sendIntentId = "intent", amountSat = 999, paymentHash = "hash")
   private fun accepted() = Entry(id = "payment", kind = "send", status = "complete", amountSat = 999,
     createdAt = "2099-01-01T00:00:00Z", request = EntryRequest(paymentHash = "hash"))
-  private class Journal(var value: PendingPayment? = null) : PaymentJournal {
+  private class Journal : PaymentJournal {
     var failWrite = false
-    override fun read() = value
-    override fun write(value: PendingPayment?) { check(!failWrite) { "disk full" }; this.value = value }
+    var ledger = PaymentLedger(1)
+    val value get() = ledger.pending
+    override fun read() = ledger
+    override fun write(value: PaymentLedger) { check(!failWrite) { "disk full" }; ledger = value }
   }
   private inner class Gateway : PaymentGateway {
     var calls = 0
@@ -136,11 +138,37 @@ class PaymentOperationsTest {
     assertEquals(1, gateway.calls)
   }
 
+  @Test fun separatePaymentRetainsEvidenceAcrossRestartUntilMatched() = runTest {
+    val gateway = Gateway().apply { lostResponse = true }
+    val journal = Journal()
+    val operations = PaymentOperations(backgroundScope, gateway, journal, { true }, {})
+    operations.prepare("lntbs1example", ""); runCurrent()
+    operations.send(); runCurrent()
+    operations.startSeparatePayment()
+    assertNotNull(journal.value)
+    operations.checkPending()
+    operations.startSeparatePayment()
+    assertNull(journal.value)
+    assertEquals("intent", journal.ledger.unresolved.single().intentId)
+    val restarted = PaymentOperations(backgroundScope, gateway, journal, { true }, {})
+    gateway.entries = listOf(accepted())
+    restarted.checkPending()
+    assertTrue(journal.ledger.unresolved.isEmpty())
+    assertEquals(1, gateway.calls)
+  }
+
+  @Test fun existingPaymentJournalSurvivesUpgrade() {
+    assertNull(decodePaymentLedger("null").pending)
+    val old = """{"kind":"send","amountSat":125,"note":"","startedAt":10,"existingIds":[],"intentId":"old"}"""
+    assertEquals("old", decodePaymentLedger(old).pending?.intentId)
+    assertTrue(runCatching { decodePaymentLedger("""{"version":2}""") }.isFailure)
+  }
+
   @Test fun unreadableJournalBlocksEveryNewPayment() = runTest {
     val gateway = Gateway()
     val broken = object : PaymentJournal {
-      override fun read(): PendingPayment? = error("corrupt")
-      override fun write(value: PendingPayment?) = error("must never overwrite")
+      override fun read(): PaymentLedger = error("corrupt")
+      override fun write(value: PaymentLedger) = error("must never overwrite")
     }
     val payments = PaymentOperations(backgroundScope, gateway, broken, { true }, {})
     payments.prepare("lntbs1example", ""); payments.receive(999, ""); runCurrent()

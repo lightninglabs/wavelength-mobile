@@ -7,8 +7,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.builtins.nullable
-import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.*
 import java.io.File
 import java.time.Instant
 
@@ -27,6 +26,7 @@ data class PendingPayment(
   val selectedOutpoints: List<String> = emptyList(),
   val balanceSweep: Boolean = false,
   val recipientSat: Long? = null,
+  val checks: Int = 0,
 ) {
   fun matches(entry: Entry): Boolean {
     if (entry.id in existingIds || entry.creditTopup || kotlin.math.abs(entry.amountSat) != amountSat) return false
@@ -43,22 +43,34 @@ data class PendingPayment(
   }
 }
 
+@Serializable data class PaymentLedger(val version: Int, val pending: PendingPayment? = null,
+  val unresolved: List<PendingPayment> = emptyList())
+
 interface PaymentJournal {
-  fun read(): PendingPayment?
-  fun write(value: PendingPayment?)
+  fun read(): PaymentLedger
+  fun write(value: PaymentLedger)
 }
 
-/** Atomic writes precede native dispatch. Corrupt evidence is never overwritten. */
+/** The previous format stored one nullable PendingPayment directly. */
+internal fun decodePaymentLedger(bytes: String): PaymentLedger {
+  val json = Json { ignoreUnknownKeys = true }
+  val record = json.parseToJsonElement(bytes)
+  if (record == JsonNull) return PaymentLedger(1)
+  return if ("version" in record.jsonObject) json.decodeFromJsonElement<PaymentLedger>(record).also {
+    require(it.version == 1) { "Unsupported payment journal version." }
+  } else PaymentLedger(1, json.decodeFromJsonElement<PendingPayment>(record))
+}
+
 class FilePaymentJournal(file: File) : PaymentJournal {
   private val file = AtomicFile(file)
-  private val json = Json { ignoreUnknownKeys = true }
-  override fun read(): PendingPayment? {
-    if (!file.baseFile.exists() && !File(file.baseFile.path + ".bak").exists()) return null
-    return json.decodeFromString<PendingPayment?>(file.readFully().toString(Charsets.UTF_8))
+  override fun read(): PaymentLedger {
+    if (!file.baseFile.exists() && !File(file.baseFile.path + ".bak").exists()) return PaymentLedger(1)
+    return decodePaymentLedger(file.readFully().toString(Charsets.UTF_8))
   }
-  override fun write(value: PendingPayment?) {
+  override fun write(value: PaymentLedger) {
+    val bytes = Json.encodeToString(PaymentLedger.serializer(), value).toByteArray()
     val out = file.startWrite()
-    try { out.write(json.encodeToString(PendingPayment.serializer().nullable, value).toByteArray()); file.finishWrite(out) }
+    try { out.write(bytes); out.fd.sync(); file.finishWrite(out) }
     catch (error: Throwable) { file.failWrite(out); throw error }
   }
 }
@@ -90,6 +102,7 @@ class NativePaymentGateway(private val client: WalletClient, private val limits:
 
 data class PaymentUiState(
   val pending: PendingPayment? = null,
+  val unresolved: List<PendingPayment> = emptyList(),
   val busy: Boolean = false,
   val blocked: Boolean = false,
   val quote: PrepareSendResult? = null,
@@ -109,7 +122,7 @@ class PaymentOperations(
   private val receiptConsentEpoch: () -> String? = { null },
   private val enroll: (PendingPayment, ReceiveResult) -> Unit = { _, _ -> },
 ) {
-  private val mutable = MutableStateFlow(try { PaymentUiState(pending = journal.read()) }
+  private val mutable = MutableStateFlow(try { journal.read().let { PaymentUiState(pending = it.pending, unresolved = it.unresolved) } }
     catch (_: Exception) { PaymentUiState(blocked = true, error = "Payment tracking is unreadable. Do not send again until it is recovered.") })
   val state = mutable.asStateFlow()
 
@@ -173,10 +186,11 @@ class PaymentOperations(
   }
 
   suspend fun checkPending() {
-    val pending = state.value.pending ?: return
-    if (state.value.busy || !allowed()) return
-    if (pending.requestId.isEmpty()) {
-      reconcile(gateway.entries())
+    val pending = state.value.pending
+    if (state.value.busy || !allowed() || state.value.blocked || (pending == null && state.value.unresolved.isEmpty())) return
+    if (pending == null || pending.requestId.isEmpty()) {
+      val entries = gateway.entries()
+      if (allowed() && !state.value.busy && state.value.pending == pending) reconcile(entries)
       return
     }
     val result = gateway.lookupReceive(pending.requestId)
@@ -196,19 +210,42 @@ class PaymentOperations(
   /** Read-only recovery. Never redispatch an ambiguous operation. */
   fun reconcile(entries: List<Entry>) {
     if (mutable.value.busy || mutable.value.blocked) return
-    val pending = mutable.value.pending ?: return
-    val match = entries.filter { pending.matches(it) }.singleOrNull() ?: return
+    val current = state.value
+    val pending = current.pending
+    val attempts = current.unresolved + listOfNotNull(pending)
+    fun evidence(attempt: PendingPayment): Entry? = entries.singleOrNull { attempt.matches(it) }
+      ?.takeIf { entry -> attempts.count { it.matches(entry) } == 1 }
+    val unresolved = current.unresolved.filter { evidence(it) == null }
+    val match = pending?.let(::evidence)
+    val next = when {
+      match != null -> null
+      pending?.kind == "send" && pending.checks < 2 -> pending.copy(checks = pending.checks + 1)
+      else -> pending
+    }
+    if (next == pending && unresolved == current.unresolved) return
     try {
-      persist(null)
-      onEntry(match)
-      mutable.update { it.copy(result = match, quote = null,
-        request = if (pending.kind == "receive") match.request?.lightningInvoice.orEmpty() else "", error = null) }
+      persist(next, unresolved)
+      if (match != null) {
+        onEntry(match)
+        mutable.update { it.copy(result = match, quote = null,
+          request = if (pending?.kind == "receive") match.request?.lightningInvoice.orEmpty() else "", error = null) }
+      }
     } catch (error: Exception) { mutable.update { it.copy(error = error.message) } }
   }
 
-  private fun persist(value: PendingPayment?) {
-    journal.write(value)
-    mutable.update { it.copy(pending = value) }
+  fun startSeparatePayment() {
+    val current = state.value
+    val pending = current.pending ?: return
+    if (!allowed() || current.busy || current.blocked || pending.kind != "send" || pending.checks < 2) return
+    try {
+      persist(null, current.unresolved + pending)
+      clearPresentation()
+    } catch (error: Exception) { mutable.update { it.copy(error = error.message) } }
+  }
+
+  private fun persist(value: PendingPayment?, unresolved: List<PendingPayment> = state.value.unresolved) {
+    journal.write(PaymentLedger(1, value, unresolved))
+    mutable.update { it.copy(pending = value, unresolved = unresolved) }
   }
 
   private fun launch(action: suspend () -> Unit) {
