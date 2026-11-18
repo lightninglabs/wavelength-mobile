@@ -48,6 +48,10 @@ data class NetworkSettings(val endpoints: EndpointOverrides = EndpointOverrides(
     return WalletConfig(dataDir = directory, network = network.wire,
       walletType = "lwwallet", serverTransport = "grpc", hostDrivenIngress = true,
       serverAddress = endpoints.operator.ifBlank { null }, swapServerAddress = endpoints.swap.ifBlank { null },
+      swapNotificationIssuer = engineering.lightning.wavelength.BuildConfig.FIREBASE_RELAY_SWAP_ISSUER.takeIf {
+        network.wire == engineering.lightning.wavelength.BuildConfig.FIREBASE_RELAY_NETWORK &&
+          endpoints == EndpointOverrides() && it.matches(Regex("0[23][a-f0-9]{64}"))
+      },
       walletEsploraUrl = endpoints.esplora.ifBlank { null },
       serverInsecure = network == WalletNetwork.REGTEST, swapServerInsecure = network == WalletNetwork.REGTEST,
       allowMainnet = network == WalletNetwork.MAINNET, diagnosticLogs = true,
