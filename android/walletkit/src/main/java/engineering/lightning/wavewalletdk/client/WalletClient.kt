@@ -42,6 +42,10 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
   /** Daemon readiness snapshot. */
   suspend fun getInfo(): Info = decode(io { Mobile.getInfo() })
 
+  /** Sign a feed delegation at a configured producer using the open wallet. */
+  suspend fun setNotificationFeedGrant(request: NotificationFeedGrant): NotificationFeedResult =
+    decode(io { Mobile.setNotificationFeedGrant(encode(NotificationFeedGrant.serializer(), request)) })
+
   /** Wallet readiness, balance, and pending-activity count. */
   suspend fun status(): Status = decode(io { Mobile.status() })
 

@@ -19,6 +19,7 @@ class WalletSession(private val context: Context) {
   val client = WalletClient()
   val diagnostics = DiagnosticRuns()
   val backgroundHistory = BackgroundJournal(File(context.noBackupFilesDir,"background-history.json"))
+  internal val relay = RelayRegistration(context)
   val notices = WalletNotices(context)
   private val root = context.noBackupFilesDir
   private val vault = WalletVault(context)
@@ -232,6 +233,7 @@ class WalletSession(private val context: Context) {
 
   private fun startObservations() {
     if (!foreground || observations?.isActive == true) return
+    relay.schedule(afterCurrent = true)
     val pager = history
     observations = scope.launch {
       launch {
@@ -427,8 +429,27 @@ class WalletSession(private val context: Context) {
   }
 
   fun configureNotifications(enabled: Boolean, amounts: Boolean = false) = preferenceChange {
+    if (!enabled && relay.configured && state.value.network.wire == engineering.lightning.wavelength.BuildConfig.FIREBASE_RELAY_NETWORK) {
+      relay.select(state.value.network.wire,state.value.info?.identityPubKey.orEmpty(),connectionFingerprint(),false)
+    }
     notices.configure(state.value.network,state.value.info?.identityPubKey.orEmpty(),connectionFingerprint(),enabled,amounts)
   }
+
+  internal suspend fun signRelayGrant(target: PushTarget, request: NotificationFeedGrant): NotificationFeedResult =
+    withContext(Dispatchers.Main.immediate) {
+      lifecycle.withLock {
+        val current = state.value
+        val consent = notices.consent(current.network)
+        if (!(foreground && current.phase == WalletPhase.OPEN && current.network.wire == target.network &&
+          current.settings.endpoints == EndpointOverrides() && connectionFingerprint() == target.connection &&
+          current.info?.identityPubKey == target.identity)) throw RelayWalletUnavailable()
+        if (!request.remove && (consent?.identity != target.identity || consent.connection != target.connection ||
+          !relay.stillDesired(target))) throw RelayWalletUnavailable()
+        val native = client.getInfo()
+        check(native.identityPubKey == target.identity)
+        client.setNotificationFeedGrant(request)
+      }
+    }
 
   /** One native owner across cold start, expiry, foreground takeover and cleanup. */
   suspend fun runBackground(trigger: String, expectedNetwork: String? = null, expectedIdentity: String? = null, wake: BackgroundWakeContext? = null): BackgroundOutcome = withContext(Dispatchers.Main.immediate) {
