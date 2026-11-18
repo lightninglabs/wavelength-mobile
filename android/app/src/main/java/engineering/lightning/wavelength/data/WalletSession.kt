@@ -512,7 +512,31 @@ class WalletSession(private val context: Context) {
           backgroundHistory.stage(lease.id,"Preparation; UI locked",backgroundHistory.duration(preparationStart))
           backgroundHistory.stage(lease.id,"Native maintenance window")
           backgroundHistory.context(lease.id,nativeBudget = BackgroundLease.NATIVE_CEILING_SECONDS.toInt())
-          val result = backgroundHistory.measure(lease.id,"Maintenance window") { client.runMaintenanceWindow(lease.id,BackgroundLease.NATIVE_CEILING_SECONDS) }
+          val enrolled = notices.pending(network, info.identityPubKey, connectionFingerprint())
+          val result = coroutineScope {
+            // The native pump may run until host expiry. Check already-admitted
+            // receipts while it advances the wallet and still owns its lease.
+            val window = async {
+              backgroundHistory.measure(lease.id, "Maintenance window") {
+                if (enrolled.isEmpty()) client.runMaintenanceWindow(lease.id, BackgroundLease.NATIVE_CEILING_SECONDS)
+                else client.runWorkWindow(lease.id, enrolled.map { it.reference }, BackgroundLease.NATIVE_CEILING_SECONDS)
+              }
+            }
+            val remaining = enrolled.toMutableList()
+            while (remaining.isNotEmpty() && permitted()) {
+              val proofs = client.readLightningReceipts(remaining.map { it.reference }, enrolled.first().consent.since)
+              if (!permitted()) break
+              remaining.removeAll { entry ->
+                val proof = proofs.firstOrNull { it.reference == entry.reference } ?: return@removeAll false
+                notices.present(network, entry, proof, visible = foreground)
+                proof.state == "complete"
+              }
+              backgroundHistory.receipts(lease.id, proofs.size, proofs.count { it.state == "complete" })
+              if (window.isCompleted || remaining.isEmpty()) break
+              withTimeoutOrNull(3000L) { window.await() }
+            }
+            window.await()
+          }
           backgroundHistory.nativeResult(lease.id,result)
           if (!permitted()) return@withLock
           outcome = BackgroundOutcome(when {
@@ -521,16 +545,7 @@ class WalletSession(private val context: Context) {
             result.needsForeground -> "Needs foreground"
             else -> "Window completed"
           },result.batches > 0 || result.maintenanceChecked > 0)
-          val enrolled = notices.pending(network,info.identityPubKey,connectionFingerprint())
-          if (enrolled.isNotEmpty()) {
-            val proofs = backgroundHistory.measure(lease.id,"Receipt source reads") {
-              client.readLightningReceipts(enrolled.map { it.reference },enrolled.first().consent.since)
-            }
-            backgroundHistory.receipts(lease.id,proofs.size,proofs.count { it.state == "complete" })
-            if (!permitted()) return@withLock
-            enrolled.forEach { entry -> proofs.firstOrNull { it.reference == entry.reference }?.let { proof -> notices.present(network,entry,proof,visible = foreground) } }
-            backgroundHistory.stage(lease.id,"Local receipts checked")
-          }
+
         }
         if (lease.expired || foreground) outcome = BackgroundOutcome(lease.cancellationReason?.label ?: "Foreground takeover")
         outcome

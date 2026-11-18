@@ -294,6 +294,10 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
   suspend fun runMaintenanceWindow(id: String, timeoutSeconds: Long = 30): MaintenanceResult =
     decode(io { Mobile.runMaintenanceWindow(id, timeoutSeconds) })
 
+  /** Re-arm only the receipt references admitted by this installation. */
+  suspend fun runWorkWindow(id: String, refs: List<ReceiptReference>, seconds: Long): MaintenanceResult =
+    decode(io { Mobile.runWorkWindow(encode(BackgroundWorkRequest.serializer(), BackgroundWorkRequest(id, refs)), seconds) })
+
   /** Signal the exact window, retaining its caller until native cleanup returns. */
   suspend fun cancelMaintenanceWindow(id: String) = io { Mobile.cancelReceiptWindow(id) }
 
