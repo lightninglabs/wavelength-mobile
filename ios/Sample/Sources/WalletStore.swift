@@ -176,6 +176,8 @@ final class WalletStore: ObservableObject {
     var canUnlockWallet: Bool {
         phase == .needsUnlock || (phase.isWalletAvailable && isSessionLocked)
     }
+    var unlockWaitingForWalletWork: Bool { canUnlockWallet && !isWorking && stateCreatingCallCount > 0 }
+    var canSubmitUnlock: Bool { canUnlockWallet && !isWorking && !unlockWaitingForWalletWork }
     var confirmedBalanceSat: Int64 { balance?.confirmedSat ?? 0 }
     var pendingInSat: Int64 { balance?.pendingInSat ?? 0 }
     var pendingOutSat: Int64 { balance?.pendingOutSat ?? 0 }
@@ -383,7 +385,7 @@ final class WalletStore: ObservableObject {
     }
 
     func unlockWallet(password: String) async {
-        guard canUnlockWallet, !password.isEmpty, stateCreatingCallCount == 0 else { return }
+        guard canSubmitUnlock, !password.isEmpty else { return }
         isWorking = true
         defer { isWorking = false }
         do {
@@ -962,7 +964,7 @@ final class WalletStore: ObservableObject {
     }
 
     func unlockWithBiometrics() async {
-        guard canUnlockWallet, biometricUnlockEnabled, !isWorking, stateCreatingCallCount == 0 else { return }
+        guard canSubmitUnlock, biometricUnlockEnabled else { return }
         isWorking = true
         unlockStage = .authenticating
         defer { isWorking = false; unlockStage = nil }
