@@ -119,6 +119,14 @@ Activation requires a separate reviewed server/application integration:
 5. Validate real provider delivery, route revocation and physical-device behavior.
    An emulator worker or local fixture is not evidence of push delivery.
 
+For diagnostic context, wake data can optionally carry `wake_reason` and the
+UTC second `wake_deadline_unix` as strings. Only a locally validated wake route
+can display these fields. An older wake shows **Reason unavailable**. The
+periodic worker reports **Scheduled refresh** and shows the condition that
+caused a worker to skip. If WorkManager keeps a pending request, that run shows
+the context of the kept request. Unresolved routes and routes for a different
+network stay out of the wallet's Background history.
+
 The app/relay contract and typed receipt checks are intentionally stricter than
 trusting a remote amount or rendering an arbitrary remote notification. No new
 upstream native SDK version is required for this app layer.

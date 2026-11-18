@@ -18,7 +18,10 @@ class WalletMessagingService : FirebaseMessagingService() {
     // Both service admission and worker entry re-read local authority. No route
     // exists until a publisher's authenticated Android enrollment installs it.
     if (!RelayPushRegistry(this).contains(hint.routeId)) return
-    WalletWork.opportunity(this,if (hint.kind == "wake") "Push wake" else "Payment hint",hint.routeId)
+    val producer = if (hint.kind == "wake") {
+      BackgroundProducerWake.parse(message.data["wake_reason"],message.data["wake_deadline_unix"])
+    } else null
+    WalletWork.opportunity(this,if (hint.kind == "wake") "Push wake" else "Payment hint",hint.routeId,producer = producer)
   }
 
 }
