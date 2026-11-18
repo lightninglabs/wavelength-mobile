@@ -5,6 +5,9 @@
 
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Opt-in "Keep running in background" service. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <application
         android:name="engineering.lightning.wavelength.WalletApplication"
@@ -27,6 +30,11 @@
         <meta-data android:name="firebase_analytics_collection_enabled" android:value="false" />
         <service android:name=".background.WalletMessagingService" android:exported="false">
             <intent-filter><action android:name="com.google.firebase.MESSAGING_EVENT" /></intent-filter>
+        </service>
+        <service android:name=".background.WalletKeepAliveService" android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Self-custodial Bitcoin wallet. At the user's request, keeps the embedded wallet connected to its Ark operator and swap service so incoming payments settle and expiring funds are refreshed while the app is in the background." />
         </service>
         <activity
             android:name="engineering.lightning.wavelength.MainActivity"

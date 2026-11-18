@@ -6,8 +6,9 @@ WorkManager schedules one unique connected-network maintenance job every fifteen
 minutes. This is an earliest opportunity, not a timer or round-deadline promise.
 WorkManager restores its jobs across ordinary process death and reboot. Android
 can defer them in Doze, restrict the app or suppress work after force-stop until
-the user opens the app again. No exact-alarm permission, perpetual service or
-battery-optimization exemption is requested.
+the user opens the app again. No exact-alarm permission or battery-optimization
+exemption is requested, and no service runs unless the user turns on
+[Keep running in background](#keep-running-in-background).
 
 The native runtime and wallet directories are shared with the foreground app.
 There is no second process or second daemon. A single lifecycle owner covers
@@ -37,6 +38,55 @@ OS callback was cancelled. Cancellation callbacks also join before another
 owner can start. An uncooperative native call can extend cleanup beyond the
 nominal deadline. The native window and targeted reads have their own deadlines.
 Existing state-creating payment calls return before mailbox intake is paused.
+
+## Keep running in background
+
+Settings → Notifications → **Keep running in background** is an opt-in switch,
+off by default. While it is on, `WalletKeepAliveService` runs as a foreground
+service with an ongoing "Wavelength is running" notification. The notification
+shows no balance, amount or network, opens the app when tapped and has a
+**Stop** action.
+
+The service owns no wallet state. It keeps the process alive and tells the
+session it is attached; the session decides what runs:
+
+```mermaid
+flowchart LR
+    A[App leaves foreground] --> B{Service attached?}
+    B -->|no| C[Pause ingress; scheduled windows]
+    B -->|yes| D[Keep live ingress; UI locked]
+    D --> E[Check enrolled receipts on activity]
+    D --> F[Scheduled windows skip]
+    G[App returns] --> H[Cancel and join; foreground owns ingress]
+```
+
+- Leaving the app locks the UI as before, but the daemon keeps its live mailbox
+  intake instead of being paused. Nothing in the background can create a
+  wallet, prompt for credentials or dispatch a payment; send and receive still
+  require the visible, authenticated app.
+- Enrolled receipts are checked when the activity stream reports a completed
+  receive, using the same local proof and consent rules as a scheduled window.
+- A scheduled or push-triggered window that finds the service connected records
+  that and returns. It would otherwise finish by pausing the ingress the service
+  keeps live.
+- Returning to the app cancels the background owner and joins it before the
+  foreground starts its own observations. **Stop**, or turning the switch off,
+  pauses ingress again and falls back to scheduled windows.
+
+Android only admits a foreground service start while the app is visible, so the
+service is started when the switch is turned on and re-armed each time the app
+is opened. It is not started at boot. If Android restarts the process and
+refuses the service, the wallet stays on scheduled windows until the app is
+next opened. A restarted service prepares the wallet the same way a scheduled
+window does: it reads the existing device credential first and stops itself if
+there is no wallet.
+
+The service declares the `specialUse` foreground service type, which has no
+time limit; Google Play asks for a justification of that type at review, and
+the manifest's `PROPERTY_SPECIAL_USE_FGS_SUBTYPE` states it. No wake lock or
+battery-optimization exemption is requested, so Doze can still suspend network
+access while the device is idle. Each background stay is recorded as one
+"Background service" run in Diagnostics → Background.
 
 ## Local payment alerts
 

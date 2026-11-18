@@ -32,9 +32,14 @@ class WalletSession(private val context: Context) {
   }
   private val mutable = MutableStateFlow(WalletUiState(network = preferences.selectedNetwork,
     settings = preferences.network(preferences.selectedNetwork), appearance = preferences.appearance,
-    authentication = preferences.authentication, captureLevel = preferences.captureLevel))
+    authentication = preferences.authentication, captureLevel = preferences.captureLevel,
+    keepRunning = preferences.keepRunning))
   val state = mutable.asStateFlow()
   private var observations: Job? = null
+  // Set while the keep-running service is in the foreground. The job only
+  // exists while the app is backgrounded; a visible app owns its own ingress.
+  private var endKeepAlive: (() -> Unit)? = null
+  private var keepAlive: Job? = null
   private var foreground = false
   private var history = ActivityHistory()
   private var activityCursor = 0L
@@ -73,8 +78,10 @@ class WalletSession(private val context: Context) {
   fun resume() {
     foreground = true
     maintenance.interrupt()
+    keepAlive?.cancel()
     diagnostics.begin(state.value.network)
     scope.launch { lifecycle.withLock {
+      keepAlive?.join(); keepAlive = null
       if (!foreground) return@withLock
       try {
         if (!client.isRunning) startCurrent()
@@ -109,9 +116,115 @@ class WalletSession(private val context: Context) {
       lifecycle.withLock {
         if (foreground) return@withLock
         observations?.join(); observations = null
-        if (client.isRunning) reads.withLock { runCatching { client.setHostForeground(false) } }
+        if (endKeepAlive != null) startKeepAlive()
+        else if (client.isRunning) reads.withLock { runCatching { client.setHostForeground(false) } }
       }
     }
+  }
+
+  /**
+   * The keep-running service entered the foreground. From the next pause the
+   * daemon keeps its live ingress instead of waiting for scheduled windows.
+   * [end] asks the service to stop when there is no wallet to keep connected.
+   */
+  fun attachKeepAlive(end: () -> Unit) {
+    endKeepAlive = end
+    scope.launch { lifecycle.withLock { startKeepAlive() } }
+  }
+
+  /** The service stopped. A backgrounded wallet returns to scheduled windows. */
+  fun detachKeepAlive() {
+    endKeepAlive = null
+    keepAlive?.cancel()
+    scope.launch { lifecycle.withLock {
+      keepAlive?.join(); keepAlive = null
+      if (!foreground && client.isRunning) reads.withLock { runCatching { client.setHostForeground(false) } }
+    } }
+  }
+
+  fun setKeepRunning(value: Boolean) = preferenceChange {
+    preferences.keepRunning(value); mutable.update { it.copy(keepRunning = value) }
+  }
+
+  /** Caller holds [lifecycle]. One owner per background stay; resume cancels and joins it. */
+  private fun startKeepAlive() {
+    if (foreground || endKeepAlive == null || keepAlive?.isActive == true) return
+    val id = java.util.UUID.randomUUID().toString()
+    keepAlive = scope.launch {
+      backgroundHistory.begin(id,state.value.network,"Background service",BackgroundWakeContext("Foreground service"))
+      var outcome = "Service stopped"
+      var interrupted = false
+      try {
+        while (isActive) {
+          try {
+            if (!lifecycle.withLock { reads.withLock { prepareKeepAlive(id) } }) { outcome = "Wallet unavailable"; break }
+            interrupted = false
+            presentBackgroundReceipts()
+            // The stream both proves the daemon is alive and says when to look
+            // for a locally verified receipt. Its end is retried below.
+            client.activity().collect { entry ->
+              if (entry.kind == "receive" && entry.status == "complete") presentBackgroundReceipts()
+            }
+          } catch (error: CancellationException) { throw error }
+          catch (_: Exception) {
+            // Record one stage per outage; the journal is bounded evidence, not a retry log.
+            if (!interrupted) backgroundHistory.stage(id,"Connection interrupted; retrying")
+            interrupted = true
+          }
+          delay(KEEP_ALIVE_RETRY_MILLIS)
+        }
+      } catch (error: CancellationException) {
+        outcome = if (foreground) "Foreground takeover" else "Service stopped"
+        throw error
+      } finally {
+        backgroundHistory.finish(id,outcome)
+        if (outcome == "Wallet unavailable") endKeepAlive?.invoke()
+      }
+    }
+  }
+
+  /**
+   * Caller holds [lifecycle] and [reads]. Like a scheduled window, this never
+   * prompts, creates a wallet or grants a UI session. Returns false when there
+   * is no wallet or device credential to keep connected.
+   */
+  private suspend fun prepareKeepAlive(id: String): Boolean {
+    check(!foreground) { "Foreground owns the wallet" }
+    check(state.value.recoveryWords == null && context.getSystemService(UserManager::class.java).isUserUnlocked) { "Wallet is not ready" }
+    val network = state.value.network
+    val cold = !client.isRunning
+    if (cold || client.getInfo().walletState == WalletState.LOCKED) {
+      // Read before opening a database, as scheduled maintenance does.
+      val password = try { withContext(Dispatchers.IO) { vault.password(false,network) } }
+        catch (error: CancellationException) { throw error }
+        catch (_: Exception) { return false }
+      try {
+        if (cold) { backgroundHistory.context(id,startup = "Cold"); backgroundHistory.measure(id,"Daemon startup") { startCurrent() } }
+        if (client.getInfo().walletState == WalletState.LOCKED) backgroundHistory.measure(id,"Wallet unlock") { client.unlockWallet(password) }
+      } finally { password.fill(0) }
+    } else backgroundHistory.context(id,startup = "Retained")
+    val info = client.getInfo()
+    mutable.update { it.copy(info = info, phase = when {
+      info.walletState == WalletState.NONE -> WalletPhase.SETUP
+      it.phase == WalletPhase.OPENING -> WalletPhase.LOCKED
+      else -> it.phase
+    }) }
+    if (info.walletState == WalletState.NONE || info.identityPubKey.isBlank()) return false
+    client.setHostForeground(true)
+    backgroundHistory.stage(id,"Live ingress; UI locked")
+    return true
+  }
+
+  /** Presents only enrolled, locally verified receipts, exactly as a scheduled window does. */
+  private suspend fun presentBackgroundReceipts() = reads.withLock {
+    val network = state.value.network
+    val identity = state.value.info?.identityPubKey.orEmpty()
+    if (foreground || identity.isBlank()) return@withLock
+    val enrolled = notices.pending(network,identity,connectionFingerprint())
+    if (enrolled.isEmpty()) return@withLock
+    val proofs = client.readLightningReceipts(enrolled.map { it.reference },enrolled.first().consent.since)
+    if (foreground || state.value.network != network) return@withLock
+    enrolled.forEach { entry -> proofs.firstOrNull { it.reference == entry.reference }?.let { proof -> notices.present(network,entry,proof,visible = false) } }
   }
 
   /** A credential fallback may return before onStart; consume its success there. */
@@ -192,7 +305,8 @@ class WalletSession(private val context: Context) {
       generation++
       payments = paymentOperations(network, generation)
       mutable.value = WalletUiState(network = network, settings = preferences.network(network),
-        appearance = preferences.appearance, authentication = preferences.authentication, captureLevel = preferences.captureLevel)
+        appearance = preferences.appearance, authentication = preferences.authentication, captureLevel = preferences.captureLevel,
+        keepRunning = preferences.keepRunning)
       startCurrent()
       val info = client.getInfo()
       mutable.update { it.copy(info = info, phase = if (info.walletState == WalletState.NONE) WalletPhase.SETUP else WalletPhase.LOCKED) }
@@ -470,10 +584,12 @@ class WalletSession(private val context: Context) {
       var outcome = BackgroundOutcome("Not admitted")
       var cold = false
       try {
-        if (foreground || payments.state.value.busy || state.value.recoveryWords != null ||
+        if (foreground || keepAlive?.isActive == true || payments.state.value.busy || state.value.recoveryWords != null ||
           !context.getSystemService(UserManager::class.java).isUserUnlocked) {
           outcome = BackgroundOutcome(when {
             foreground -> "Skipped · App in foreground"
+            // A bounded window ends by pausing ingress, which the service keeps live.
+            keepAlive?.isActive == true -> "Skipped · Background service connected"
             payments.state.value.busy -> "Skipped · Payment in progress"
             state.value.recoveryWords != null -> "Skipped · Recovery backup open"
             else -> "Skipped · Device has not been unlocked after boot"
@@ -616,6 +732,8 @@ class WalletSession(private val context: Context) {
   }
 }
 
+private const val KEEP_ALIVE_RETRY_MILLIS = 5_000L
+
 enum class WalletPhase { OPENING, SETUP, BACKUP, LOCKED, OPEN, ERROR }
 data class WalletUiState(
   val phase: WalletPhase = WalletPhase.OPENING,
@@ -624,6 +742,7 @@ data class WalletUiState(
   val appearance: WalletAppearance = WalletAppearance.SYSTEM,
   val authentication: Boolean = true,
   val captureLevel: CaptureLevel = CaptureLevel.INFO,
+  val keepRunning: Boolean = false,
   val recoveryWords: List<String>? = null,
   val info: Info? = null,
   val balance: Balance? = null,
