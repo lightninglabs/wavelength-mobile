@@ -348,6 +348,19 @@ public struct ActivityList: Decodable, Sendable {
     }
 }
 
+/// A bounded transition range containing the current projection of each row.
+/// The same canonical ID can appear more than once.
+public struct ActivityBatch: Decodable, Sendable {
+    public let highWater: Int64
+    public let nextCursor: Int64
+    public let hasMore: Bool
+    public let entries: [Entry]
+
+    enum CodingKeys: String, CodingKey {
+        case highWater = "high_water", nextCursor = "next_cursor", hasMore = "has_more", entries
+    }
+}
+
 public struct VTXOInventory: Decodable, Sendable {
     public let vtxos: [WalletVTXO]
     public let total: Int64
