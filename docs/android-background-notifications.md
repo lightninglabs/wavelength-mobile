@@ -51,7 +51,9 @@ reference. Admission captures the current wallet identity, network, connection a
 consent epoch before the create call. The successful response adds the typed
 source reference, canonical identity and original principal.
 A timeout-recovered invoice or historical activity does not enroll retrospectively.
-A bounded background check reads those specific source references. Only a complete
+A bounded background check reads those specific source references while the
+native work window advances them. A busy window can consume its full budget.
+Reading concurrently lets a verified receipt appear before the host deadline. Only a complete
 matching source/canonical proof can present a receipt. Push payloads cannot supply
 its amount, receipt reference, invoice, signer or endpoint. Amounts remain hidden
 unless the current matching consent explicitly permits them.
