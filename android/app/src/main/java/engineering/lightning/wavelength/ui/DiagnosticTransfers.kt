@@ -105,9 +105,21 @@ import kotlinx.serialization.json.*
 @Composable private fun TransferRow(record: JsonElement, summary: TransferSummary, navigate: (DiagnosticRoute) -> Unit) {
   Column(Modifier.fillMaxWidth().clickable { navigate(DiagnosticRoute("record", summary.title, record)) }
     .padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-    Text(summary.title, style = MaterialTheme.typography.titleMedium)
-    summary.amount?.let { Text(it) }
-    Text(summary.status, style = MaterialTheme.typography.bodySmall)
+    val icon = when (summary.title) {
+      "Incoming", "Credit redemption" -> Icons.Outlined.SouthWest
+      "Outgoing", "Credit payment" -> Icons.Outlined.ArrowOutward
+      "Lightning receive claim" -> Icons.Outlined.Bolt
+      "Ark recovery package", "Credit attached to receive" -> Icons.Outlined.Link
+      "Credit funding" -> Icons.Outlined.AddCircleOutline
+      else -> Icons.Outlined.SwapHoriz
+    }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      Icon(icon, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+      Text(summary.title, Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
+      summary.amount?.let { Text(it, Modifier.weight(1f, fill = false), style = MaterialTheme.typography.labelLarge,
+        textAlign = androidx.compose.ui.text.style.TextAlign.End) }
+    }
+    Text(summary.status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     if (summary.failure.isNotEmpty()) Text(summary.failure, color = MaterialTheme.colorScheme.error)
     val id = sequenceOf("session_id", "payment_hash", "operation_id").map { record[it].text }.firstOrNull { it.isNotEmpty() }
     id?.let { Text(shortId(it), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.labelSmall) }

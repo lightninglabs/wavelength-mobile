@@ -10,6 +10,7 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class PaymentOperationsTest {
   private val quote = PrepareSendResult(sendIntentId = "intent", amountSat = 999, paymentHash = "hash")
+  private val maximum = SendTerms(SendDestination.parse("lntbs1example"), 0, true, 0, "")
   private fun accepted() = Entry(id = "payment", kind = "send", status = "complete", amountSat = 999,
     createdAt = "2099-01-01T00:00:00Z", request = EntryRequest(paymentHash = "hash"))
   private class Journal : PaymentJournal {
@@ -208,6 +209,8 @@ class PaymentOperationsTest {
     val payments = PaymentOperations(backgroundScope, gateway, broken, { true }, {})
     payments.prepare("lntbs1example", ""); payments.receive(999, ""); runCurrent()
     assertTrue(payments.state.value.blocked)
+    assertTrue(runCatching { payments.maximumQuote(maximum) }.exceptionOrNull() is IllegalStateException)
+    payments.reviewMaximum(quote)
     assertEquals(0, gateway.calls)
     assertNull(payments.state.value.quote)
   }
@@ -234,6 +237,7 @@ class PaymentOperationsTest {
     val payments = PaymentOperations(backgroundScope, gateway, Journal(), { true }, {}, WalletNetwork.MAINNET)
     payments.prepare("lntbs1example", ""); runCurrent()
     assertNull(payments.state.value.quote)
+    assertTrue(runCatching { payments.maximumQuote(maximum) }.exceptionOrNull() is IllegalArgumentException)
     payments.prepare("lightning:LNBC1EXAMPLE", ""); runCurrent()
     assertEquals(quote, payments.state.value.quote)
   }
