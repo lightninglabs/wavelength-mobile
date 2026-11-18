@@ -12,7 +12,7 @@ struct ActivityDetailView: View {
             WalletAmount(amount: abs(currentEntry.amountSat))
             if !currentEntry.note.isEmpty { Text(currentEntry.note).foregroundStyle(WalletTheme.secondary) }
             WalletStatus(text: currentEntry.displayStatus,
-                         pending: currentEntry.status == "pending" && !currentEntry.isAwaitingIncomingPayment,
+                         pending: currentEntry.showsActivityProgress,
                          complete: currentEntry.status == "complete", failed: currentEntry.status == "failed")
             if let date = WalletFormatting.date(currentEntry.createdAt) {
                 Text(date).font(.subheadline).foregroundStyle(WalletTheme.secondary)

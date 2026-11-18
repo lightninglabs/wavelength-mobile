@@ -1,5 +1,12 @@
 import Foundation
 
+private enum PendingLightningReceive: String {
+    case waitingForPayment = "Waiting for payment"
+    case awaitingFunding = "Awaiting funding"
+    case receiving = "Receiving"
+    case checkingStatus = "Checking status"
+}
+
 /// Plain wallet labels derived only from durable activity and observed phases.
 public extension Entry {
     var isExpiredInvoice: Bool {
@@ -31,6 +38,7 @@ public extension Entry {
     }
 
     var isAwaitingIncomingPayment: Bool {
+        if let receive = pendingLightningReceive { return receive == .waitingForPayment }
         guard isCredit, status == "pending" else { return false }
         let phase = progress?.phase ?? ""
         let label = progress?.phaseLabel ?? ""
@@ -41,6 +49,13 @@ public extension Entry {
         return lifecycle.isEmpty || requestOnlyPhases.contains(lifecycle)
     }
 
+    /// A Lightning receive animates only after the wallet has observed funding.
+    var showsActivityProgress: Bool {
+        guard status == "pending" else { return false }
+        if let receive = pendingLightningReceive { return receive == .receiving }
+        return !isAwaitingIncomingPayment
+    }
+
     var displayStatus: String {
         if failureCode == "needs_intervention" { return "Action needed" }
         if progress?.phase == "refunding" { return "Refunding" }
@@ -48,6 +63,7 @@ public extension Entry {
         if isExpiredInvoice { return "Expired" }
         if status == "failed" { return "Failed" }
         if status == "pending" {
+            if let receive = pendingLightningReceive { return receive.rawValue }
             if isAwaitingIncomingPayment { return "Waiting for payment" }
             if isCredit { return "Receiving" }
             return kind == "send" ? "Sending" : "In progress"
@@ -57,6 +73,24 @@ public extension Entry {
             return kind == "send" ? "Sent" : "Complete"
         }
         return "Checking status"
+    }
+
+    private var pendingLightningReceive: PendingLightningReceive? {
+        guard kind == "receive", status == "pending", isLightningActivity,
+              request != nil || activityPaymentHash != nil else { return nil }
+        let phase = progress?.phase ?? ""
+        let lifecycle = phase.isEmpty || phase == "unspecified" ? progress?.phaseLabel ?? "" : phase
+        switch lifecycle {
+        case "request_created", "waiting_for_payment":
+            return .waitingForPayment
+        case "awaiting_funding":
+            return .awaitingFunding
+        case "settling" where !(progress?.vtxoOutpoint ?? "").isEmpty:
+            return .receiving
+        default:
+            // Older SDKs also used settling for accepted but unfunded swaps.
+            return .checkingStatus
+        }
     }
 
     var isCreditTopup: Bool { kind == "send" && progress?.phaseLabel == "credit_topup" }

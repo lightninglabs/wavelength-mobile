@@ -176,7 +176,7 @@ struct ActivityRow: View {
                 }
                 HStack(alignment: .firstTextBaseline) {
                     WalletStatus(text: entry.displayStatus,
-                                 pending: entry.status == "pending" && !entry.isAwaitingIncomingPayment,
+                                 pending: entry.showsActivityProgress,
                                  textStyle: .caption)
                     Spacer(minLength: 12)
                     if let time = WalletFormatting.activityTime(entry.createdAt) {
