@@ -36,9 +36,8 @@ struct ReceiveView: View {
             return !request.isEmpty && entry.request?.onchainAddress == request
         } ?? initialEntry
     }
-    private var paymentDetected: Bool {
-        guard let currentEntry else { return false }
-        return !currentEntry.isAwaitingIncomingPayment
+    private var showsRequest: Bool {
+        currentEntry?.isAwaitingIncomingPayment ?? true
     }
 
     var body: some View {
@@ -54,7 +53,7 @@ struct ReceiveView: View {
                 }
             }
             .interactiveDismissDisabled(isLoading)
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: paymentDetected)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: showsRequest)
             .sheet(isPresented: Binding(get: { errorMessage != nil },
                                                   set: { if !$0 { errorMessage = nil } })) {
                 PaymentErrorSheet(title: "Receive", message: errorMessage ?? "")
@@ -103,10 +102,10 @@ struct ReceiveView: View {
     }
 
     @ViewBuilder private var paymentRequest: some View {
-        if paymentDetected, let entry = currentEntry {
+        if !showsRequest, let entry = currentEntry {
             WalletAmount(amount: entry.amountSat)
             if !entry.note.isEmpty { Text(entry.note).foregroundStyle(WalletTheme.secondary) }
-            WalletStatus(text: entry.displayStatus, pending: entry.status == "pending",
+            WalletStatus(text: entry.displayStatus, pending: entry.showsActivityProgress,
                          complete: entry.status == "complete", failed: entry.status == "failed")
             if let date = WalletFormatting.date(entry.createdAt) {
                 Text(date).font(.subheadline).foregroundStyle(WalletTheme.secondary)
@@ -124,7 +123,7 @@ struct ReceiveView: View {
         }
         DisclosureGroup("Details", isExpanded: $details) {
             requestContent
-            if paymentDetected, let entry = currentEntry {
+            if !showsRequest, let entry = currentEntry {
                 if let reason = entry.failureReason,
                    let detail = PaymentFailure.technicalDetails(reason) {
                     ValueRow(label: "Error", value: detail, copyable: true)
@@ -132,7 +131,7 @@ struct ReceiveView: View {
                 NavigationLink(destination: ActivityDetailView(entry: entry)) { Text("Activity") }
             }
         }
-        if paymentDetected {
+        if !showsRequest {
             Button("Done") { presentationMode.wrappedValue.dismiss() }
                 .buttonStyle(WalletButtonStyle())
         }
