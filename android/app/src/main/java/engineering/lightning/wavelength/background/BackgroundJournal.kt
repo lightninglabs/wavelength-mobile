@@ -11,7 +11,29 @@ import kotlinx.serialization.json.Json
 import java.io.File
 
 @Serializable data class BackgroundWakeContext(val entryPoint: String, val taskId: String? = null,
-  val attempt: Int? = null)
+  val attempt: Int? = null, val producer: BackgroundProducerWake? = null)
+
+/** Optional relay data. It describes why the relay sent a known-route wake. */
+@ConsistentCopyVisibility
+@Serializable data class BackgroundProducerWake private constructor(val reasonCode: String, val deadline: Long?) {
+  enum class Reason(val code: String, val title: String, val deadlineLabel: String? = null) {
+    SCHEDULED_ROUND("scheduled_round", "Scheduled round", "Registration closes"),
+    ROUND_SIGNING("round_signing", "Round signing", "Round wake deadline"),
+    MAILBOX_UPDATE("mailbox_update", "Mailbox update")
+  }
+
+  val reason: Reason? get() = Reason.entries.firstOrNull { it.code == reasonCode }
+
+  companion object {
+    fun parse(code: String?, deadline: String?): BackgroundProducerWake? {
+      val reason = Reason.entries.firstOrNull { it.code == code } ?: return null
+      val seconds = deadline?.toLongOrNull()?.takeIf {
+        reason.deadlineLabel != null && it in 1..253_402_300_799L
+      }
+      return BackgroundProducerWake(reason.code, seconds)
+    }
+  }
+}
 @Serializable data class BackgroundNativeWork(val batches: Int, val checked: Int,
   val deferred: Boolean, val more: Boolean, val needsForeground: Boolean,
   val interrupted: Boolean, val budgetExhausted: Boolean,
@@ -25,6 +47,12 @@ import java.io.File
   val hostBudgetSeconds: Int? = null, val nativeBudgetSeconds: Int? = null,
   val native: BackgroundNativeWork? = null) {
   val logUntil: Long? get() = if (outcome == null) null else maxOf(finished ?: stages.last().time,stages.last().time)
+  val wakeTitle: String get() = wake?.producer?.reason?.title ?: when (trigger) {
+    "Scheduled" -> "Scheduled refresh"
+    "Push wake" -> "Relay wake"
+    else -> trigger
+  }
+  val wakeReasonUnavailable: Boolean get() = trigger == "Push wake" && wake?.producer?.reason == null
 }
 
 /** Bounded host evidence across process death; no tokens, invoices or secrets. */

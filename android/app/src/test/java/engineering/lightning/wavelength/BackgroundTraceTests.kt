@@ -2,12 +2,38 @@ package engineering.lightning.wavelength
 
 import engineering.lightning.wavelength.background.*
 import engineering.lightning.wavelength.data.inTimeWindow
+import engineering.lightning.wavelength.ui.diagnosticTime
 import engineering.lightning.wavewalletdk.client.DiagnosticLog
 import kotlinx.serialization.json.Json
 import org.junit.Assert.*
 import org.junit.Test
+import java.text.DateFormat
+import java.util.Date
 
 class BackgroundTraceTests {
+  @Test fun optionalProducerMetadataDescribesOnlyKnownWakeReasons() {
+    val legacy = BackgroundRun("id", "signet", "Push wake", listOf(BackgroundStage("Started", 1000)))
+    assertEquals("Relay wake", legacy.wakeTitle)
+    assertTrue(legacy.wakeReasonUnavailable)
+    assertNull(BackgroundProducerWake.parse(null, "1800000000"))
+    assertNull(BackgroundProducerWake.parse("future", "1800000000"))
+    for (invalid in listOf("0", "-1", "1.25", "9999999999999999")) {
+      val signing = BackgroundProducerWake.parse("round_signing", invalid)!!
+      assertEquals(BackgroundProducerWake.Reason.ROUND_SIGNING, signing.reason)
+      assertNull(signing.deadline)
+    }
+    val scheduled = BackgroundProducerWake.parse("scheduled_round", "1800000000")!!
+    val run = legacy.copy(wake = BackgroundWakeContext("WorkManager one-time", producer = scheduled))
+    val restored = Json.decodeFromString<BackgroundRun>(Json.encodeToString(BackgroundRun.serializer(), run))
+    assertEquals("Scheduled round", restored.wakeTitle)
+    assertEquals(1_800_000_000L, restored.wake?.producer?.deadline)
+    val rendered = diagnosticTime(restored.wake!!.producer!!.deadline!!,milliseconds = false)
+    assertEquals(DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM)
+      .format(Date(1_800_000_000_000L)), rendered)
+    assertFalse(restored.wakeReasonUnavailable)
+    assertNull(BackgroundProducerWake.parse("mailbox_update", "1800000000")!!.deadline)
+  }
+
   @Test fun legacyRunRemainsReadableWithoutInventingMeasurements() {
     val run = Json.decodeFromString<BackgroundRun>("""{"id":"old","network":"signet","trigger":"Scheduled","stages":[{"label":"Start","time":1000},{"label":"Native returned","time":2000}],"outcome":"Interrupted"}""")
     assertNull(run.wake);assertNull(run.startup);assertNull(run.native)

@@ -424,20 +424,21 @@ class WalletSession(private val context: Context) {
   suspend fun runBackground(trigger: String, expectedNetwork: String? = null, expectedIdentity: String? = null, wake: BackgroundWakeContext? = null): BackgroundOutcome = withContext(Dispatchers.Main.immediate) {
     maintenance.run { lease ->
       val network = state.value.network
+      if (expectedNetwork != null && expectedNetwork != network.wire) {
+        return@run BackgroundOutcome("Rejected · Another network is selected")
+      }
       backgroundHistory.begin(lease.id,network,trigger,wake)
       val preparationStart = backgroundHistory.mark()
       var outcome = BackgroundOutcome("Not admitted")
       var cold = false
       try {
         if (foreground || payments.state.value.busy || state.value.recoveryWords != null ||
-          (expectedNetwork != null && expectedNetwork != network.wire) ||
           !context.getSystemService(UserManager::class.java).isUserUnlocked) {
-          backgroundHistory.stage(lease.id,when {
-            foreground -> "App is in foreground"
-            payments.state.value.busy -> "Payment call is still running"
-            state.value.recoveryWords != null -> "Recovery backup is open"
-            expectedNetwork != null && expectedNetwork != network.wire -> "Another network is selected"
-            else -> "Device has not been unlocked after boot"
+          outcome = BackgroundOutcome(when {
+            foreground -> "Skipped · App in foreground"
+            payments.state.value.busy -> "Skipped · Payment in progress"
+            state.value.recoveryWords != null -> "Skipped · Recovery backup open"
+            else -> "Skipped · Device has not been unlocked after boot"
           })
           return@run outcome
         }

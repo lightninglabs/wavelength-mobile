@@ -26,7 +26,7 @@ import kotlinx.serialization.json.Json
   val context = LocalContext.current
   var queued by remember { mutableStateOf(false) }
   DiagnosticPage(modifier) {
-    Text("Host wake reasons and measured work. Android does not expose why it chose a delivery time.",style = MaterialTheme.typography.bodySmall,color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(state.network.title,style = MaterialTheme.typography.bodySmall,color = MaterialTheme.colorScheme.onSurfaceVariant)
     if (BuildConfig.DEBUG) {
       WalletButton("Schedule a check",secondary = true) { WalletWork.opportunity(context,"Developer check",delaySeconds = 5);queued = true }
       if (queued) Text("Starts after 5 seconds. Leave the app in the background.",style = MaterialTheme.typography.bodySmall,color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -36,8 +36,9 @@ import kotlinx.serialization.json.Json
     selected.forEach { run ->
       Row(Modifier.fillMaxWidth().clickable { navigate(DiagnosticRoute("backgroundRun","Background run",target = run.id)) }.padding(vertical = 12.dp),verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f),verticalArrangement = Arrangement.spacedBy(8.dp)) {
-          Text(run.trigger,style = MaterialTheme.typography.titleMedium)
+          Text(run.wakeTitle,style = MaterialTheme.typography.titleMedium)
           Text("${diagnosticTime(run.stages.first().time,true)} · ${run.outcome ?: "Running"}",style = MaterialTheme.typography.bodySmall,color = MaterialTheme.colorScheme.onSurfaceVariant)
+          if (run.wakeReasonUnavailable) Text("Reason unavailable",style = MaterialTheme.typography.bodySmall,color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         run.durationMilliseconds?.let { Text("${it/1000.0}s",style = MaterialTheme.typography.labelMedium) }
         Icon(Icons.Outlined.ChevronRight,null,Modifier.padding(start = 8.dp).size(18.dp))
@@ -53,12 +54,20 @@ import kotlinx.serialization.json.Json
   val run = runs.firstOrNull { it.id == id && it.network == state.network.wire }
   DiagnosticPage(modifier) {
     if (run == null) { Text("This run is no longer retained."); return@DiagnosticPage }
-    run.durationMilliseconds?.let { Text("${it/1000.0}s",style = MaterialTheme.typography.headlineLarge) }
-    Text(run.outcome ?: "Running",color = MaterialTheme.colorScheme.onSurfaceVariant)
-    SettingsValue("Wake reason",run.trigger)
+    Text(run.wakeTitle,style = MaterialTheme.typography.headlineLarge)
+    val duration = run.durationMilliseconds?.let { " · ${it/1000.0} s" }.orEmpty()
+    Text((run.outcome ?: "Running") + duration,color = MaterialTheme.colorScheme.onSurfaceVariant)
+    if (run.wakeReasonUnavailable) SettingsValue("Producer reason","Unavailable")
+    SettingsValue("Received",diagnosticTime(run.stages.first().time,true))
     SettingsValue("Entry point",run.wake?.entryPoint ?: "Not recorded")
     SettingsValue("Startup",run.startup ?: "Not recorded")
     run.wake?.attempt?.let { SettingsValue("Work attempt",(it+1).toString()) }
+    run.wake?.producer?.let { producer ->
+      val label = producer.reason?.deadlineLabel
+      if (label != null && producer.deadline != null) {
+        SettingsValue(label,diagnosticTime(producer.deadline,milliseconds = false))
+      }
+    }
     var timingExpanded by remember(id) { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().semantics { stateDescription = if (timingExpanded) "Expanded" else "Collapsed" }.clickable(role = Role.Button) { timingExpanded = !timingExpanded }.padding(vertical = 12.dp),verticalAlignment = Alignment.CenterVertically) {
       Text("Timing details",Modifier.weight(1f),style = MaterialTheme.typography.bodyLarge)
@@ -72,10 +81,14 @@ import kotlinx.serialization.json.Json
       }
       Text("Android can stop work earlier. The host fallback bounds this work slice, including startup; it is not an Android execution limit.",style = MaterialTheme.typography.bodySmall,color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
-    run.native?.let { native ->
-      HorizontalDivider()
-      Text("Work observed",style = MaterialTheme.typography.titleMedium)
-      SettingsValue("Mailbox batches",native.batches.toString())
+    HorizontalDivider()
+    Text("Work observed",style = MaterialTheme.typography.titleMedium)
+    val native = run.native
+    if (native == null) {
+      Text(if (run.nativeBudgetSeconds == null) "No native work recorded" else "Work result unavailable",
+        style = MaterialTheme.typography.bodySmall,color = MaterialTheme.colorScheme.onSurfaceVariant)
+    } else {
+      SettingsValue("Mailbox batches attempted",native.batches.toString())
       SettingsValue("VTXO owners checked",native.checked.toString())
       native.receiptProofs?.let { SettingsValue("Receipt proofs",it.toString()) }
       native.completeProofs?.let { SettingsValue("Complete proofs",it.toString()) }
@@ -84,7 +97,6 @@ import kotlinx.serialization.json.Json
       if (native.needsForeground) SettingsValue("Foreground","Required")
       if (native.interrupted) SettingsValue("Native result","Interrupted")
       if (native.budgetExhausted) SettingsValue("Native result","SDK ceiling reached")
-      Text("Mailbox batches count nonempty dispatch attempts. These counters do not prove a round completed.",style = MaterialTheme.typography.bodySmall,color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     HorizontalDivider()
     Text("Timeline",style = MaterialTheme.typography.titleMedium)
