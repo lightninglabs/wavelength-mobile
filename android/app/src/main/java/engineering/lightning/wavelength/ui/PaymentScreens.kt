@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -92,7 +93,6 @@ private fun kotlinx.coroutines.CoroutineScope.launchRefresh(session: WalletSessi
 @Composable private fun SendScreen(session: WalletSession, payment: PaymentUiState, wallet: WalletUiState) {
   val invoice = rememberTextFieldState()
   val note = rememberTextFieldState()
-  val clipboard = LocalClipboardManager.current
   when {
     payment.result != null -> {
       val entry = wallet.activity.firstOrNull { it.id == payment.result.id } ?: payment.result
@@ -115,16 +115,24 @@ private fun kotlinx.coroutines.CoroutineScope.launchRefresh(session: WalletSessi
       WalletButton(if (payment.busy) "Sending…" else "Confirm", !payment.busy) { session.payments.send() }
       TextButton({ session.payments.clearPresentation() }, enabled = !payment.busy) { Text("Edit") }
     }
-    else -> {
-      WalletField("Lightning invoice", invoice, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
-      TextButton({ invoice.edit { replace(0, length, clipboard.getText()?.text.orEmpty()) } }) { Text("Paste") }
-      DetailSection("Options") { WalletField("Note", note) }
-      WalletButton(if (payment.busy) "Preparing…" else "Review", !payment.busy && invoice.text.isNotBlank()) {
-        session.payments.prepare(invoice.text.toString(), note.text.toString())
-      }
+    else -> SendDraft(invoice, note, wallet.network, payment.busy) {
+      session.payments.prepare(invoice.text.toString(), note.text.toString())
     }
   }
   payment.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+}
+
+@Composable internal fun SendDraft(
+  invoice: TextFieldState, note: TextFieldState, network: WalletNetwork, busy: Boolean, onReview: () -> Unit,
+) {
+  val clipboard = LocalClipboardManager.current
+  WalletField("Lightning invoice", invoice, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
+  Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+    ScanInvoiceButton(network, enabled = !busy) { value -> invoice.edit { replace(0, length, value) } }
+    TextButton({ invoice.edit { replace(0, length, clipboard.getText()?.text.orEmpty()) } }) { Text("Paste") }
+  }
+  DetailSection("Options") { WalletField("Note", note) }
+  WalletButton(if (busy) "Preparing…" else "Review", !busy && invoice.text.isNotBlank(), onClick = onReview)
 }
 
 @Composable private fun ReceiveScreen(session: WalletSession, payment: PaymentUiState, wallet: WalletUiState) {
