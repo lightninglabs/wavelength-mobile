@@ -14,12 +14,12 @@ private enum WalletSheet: String, Identifiable {
 
 private struct WalletDashboardView: View {
     @EnvironmentObject private var store: WalletStore
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var sheet: WalletSheet?
     @State private var showsRefresh = false
 
     var body: some View {
-        WalletPage {
+        WalletPage(onBottomPull: store.pullForOlderActivity,
+                   activityPosition: Binding(get: { store.homeActivityAnchor }, set: { store.homeActivityAnchor = $0 })) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Balance").foregroundStyle(WalletTheme.secondary)
                 if let balance = store.balance {
@@ -85,6 +85,7 @@ private struct WalletDashboardView: View {
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text("Activity").font(.title2.weight(.medium)).padding(.bottom, 8)
+                    .accessibilityAddTraits(.isHeader)
                 if let refresh = store.refreshOperation {
                     Button { showsRefresh = true } label: {
                         HStack(alignment: .top, spacing: 14) {
@@ -103,25 +104,7 @@ private struct WalletDashboardView: View {
                     WalletDivider()
                 }
 
-                if store.visibleActivity.isEmpty && !store.activityLoaded {
-                    WalletLoadingIndicator(label: "Loading activity")
-                        .frame(maxWidth: .infinity).padding(.vertical, 24)
-                } else if store.visibleActivity.isEmpty && store.refreshOperation == nil {
-                    Text("No activity").foregroundStyle(WalletTheme.secondary).padding(.vertical, 16)
-                } else {
-                    LazyVStack(spacing: 0) {
-                        ForEach(store.visibleActivity) { entry in
-                            NavigationLink(destination: ActivityDetailView(entry: entry)) {
-                                ActivityRow(entry: entry)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityIdentifier("activity.entry")
-                            .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
-                            WalletDivider()
-                        }
-                    }
-                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: store.visibleActivity.map(\.id))
-                }
+                ActivityHistoryRows(showsEmpty: store.refreshOperation == nil)
             }
         }
         .background {

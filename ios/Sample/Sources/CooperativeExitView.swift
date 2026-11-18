@@ -209,7 +209,7 @@ struct BatchExitStatusView: View {
                     .buttonStyle(WalletButtonStyle(secondary: true))
                 DisclosureGroup("Details") {
                     if let activityID = operation.activityID,
-                       let entry = store.activity.first(where: { $0.id == activityID }) {
+                       let entry = store.activityEntry(id: activityID) {
                         NavigationLink("View activity", destination: ActivityDetailView(entry: entry))
                     }
                     if !operation.destination.isEmpty {

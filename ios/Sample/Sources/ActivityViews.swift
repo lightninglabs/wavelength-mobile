@@ -5,7 +5,7 @@ struct ActivityDetailView: View {
     @EnvironmentObject private var store: WalletStore
     let entry: Entry
     @State private var details = false
-    private var currentEntry: Entry { store.activity.first { $0.id == entry.id } ?? entry }
+    private var currentEntry: Entry { store.activityEntry(id: entry.id) ?? entry }
 
     var body: some View {
         WalletPage {
@@ -37,7 +37,7 @@ struct ActivityDetailView: View {
                        let detail = PaymentFailure.technicalDetails(reason) {
                         ValueRow(label: "Error", value: detail, copyable: true)
                     }
-                    ForEach(WalletActivityPresentation.creditTopups(for: currentEntry, in: store.activity)) { topup in
+                    ForEach(WalletActivityPresentation.creditTopups(for: currentEntry, in: store.history.entries)) { topup in
                         NavigationLink(destination: ActivityDetailView(entry: topup)) {
                             HStack {
                                 Text("Credit top-up")
@@ -72,5 +72,59 @@ struct ActivityDetailView: View {
         .navigationTitle(currentEntry.kind == "exit" ? "Exit" : "Payment")
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("activity.detail")
+    }
+}
+
+struct ActivityHistoryRows: View {
+    @EnvironmentObject private var store: WalletStore
+    var showsEmpty = true
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if #available(iOS 17, *) {
+                rows.scrollTargetLayout()
+            } else {
+                rows
+            }
+            footer
+        }
+    }
+
+    private var rows: some View {
+        LazyVStack(spacing: 0) {
+            ForEach(store.visibleActivity) { entry in
+                VStack(spacing: 0) {
+                    NavigationLink(destination: ActivityDetailView(entry: entry)) {
+                        ActivityRow(entry: entry)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("activity.entry")
+                    WalletDivider()
+                }.id(entry.id)
+            }
+        }
+    }
+
+    @ViewBuilder private var footer: some View {
+        let history = store.history
+        if history.isLoading || (history.next == .first && !history.failed) {
+            WalletLoadingIndicator(label: history.next == .first ? "Loading activity" : "Loading older activity")
+                .frame(maxWidth: .infinity, minHeight: 52)
+                .accessibilityIdentifier("activity.loading")
+        } else if history.next != .end {
+            if history.failed {
+                Text(history.next == .first ? "Couldn’t load activity" : "Couldn’t load older activity")
+                    .font(.subheadline).foregroundStyle(WalletTheme.secondary)
+            }
+            Button(history.failed ? "Retry" : "Load older activity") {
+                Task { await store.loadOlderActivity() }
+            }
+            .frame(minHeight: 44)
+            .accessibilityIdentifier("activity.loadOlder")
+        } else if !store.visibleActivity.isEmpty || showsEmpty {
+            Text(store.visibleActivity.isEmpty ? "No activity" : "End of activity")
+                .font(.subheadline).foregroundStyle(WalletTheme.secondary)
+                .padding(.vertical, 16)
+        }
     }
 }

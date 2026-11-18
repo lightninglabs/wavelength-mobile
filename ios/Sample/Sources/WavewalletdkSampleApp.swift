@@ -21,6 +21,8 @@ struct WavelengthApp: App {
                     // Exercise form transitions without starting or funding a
                     // wallet. The idle store keeps payment dispatch disabled.
                     SendView().environmentObject(store)
+                } else if ProcessInfo.processInfo.arguments.contains("--activity-pull-test") {
+                    ActivityPullTestView()
                 } else {
                     ContentView(store: store)
                 }
@@ -36,6 +38,32 @@ struct WavelengthApp: App {
         }
     }
 }
+
+#if DEBUG
+private struct ActivityPullTestView: View {
+    @State private var count = 30
+
+    var body: some View {
+        ScrollViewReader { reader in
+            VStack {
+                Text("\(count) entries").accessibilityIdentifier("test.activity.count")
+                Button("Show oldest loaded entry") { reader.scrollTo(count - 1, anchor: .bottom) }
+                WalletPage(onBottomPull: {
+                    if count == 30 { count += 30 }
+                }) {
+                    LazyVStack {
+                        ForEach(0..<count, id: \.self) { index in
+                            Text("Entry \(index)").frame(height: 52).id(index)
+                        }
+                    }
+                }
+                .accessibilityIdentifier("test.activity.scroll")
+                .refreshable {}
+            }
+        }
+    }
+}
+#endif
 
 private struct PrivacyCover: View {
     var body: some View {

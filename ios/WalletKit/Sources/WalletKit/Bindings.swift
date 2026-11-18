@@ -147,6 +147,16 @@ enum Bindings {
         return try unwrap(MobileList(req, &err), err)
     }
 
+    static func activityCursor() throws -> Data {
+        var err: NSError?
+        return try unwrap(MobileActivityCursor(&err), err)
+    }
+
+    static func readActivityBatch(_ req: Data) throws -> Data {
+        var err: NSError?
+        return try unwrap(MobileReadActivityBatch(req, &err), err)
+    }
+
     static func exit(_ req: Data) throws -> Data {
         var err: NSError?
         return try unwrap(MobileExit(req, &err), err)
@@ -261,6 +271,8 @@ enum Bindings {
     static func prepareSend(_ req: Data) throws -> Data { throw missing() }
     static func sendPrepared(_ req: Data) throws -> Data { throw missing() }
     static func list(_ req: Data) throws -> Data { throw missing() }
+    static func activityCursor() throws -> Data { throw missing() }
+    static func readActivityBatch(_ req: Data) throws -> Data { throw missing() }
     static func exit(_ req: Data) throws -> Data { throw missing() }
     static func exitBatch(_ req: Data) throws -> Data { throw missing() }
     static func estimateExitFee(_ req: Data) throws -> Data { throw missing() }

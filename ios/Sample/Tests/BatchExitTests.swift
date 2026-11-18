@@ -112,6 +112,46 @@ final class BatchExitTests: XCTestCase {
         }
     }
 
+    func testLinkedExitCanCompleteWhileAnotherDispatchIsReturning() async throws {
+        try await withFixture { defaults, root in
+            let selected = try funds()
+            let completed = try entry(id: "older-exit", outpoint: "a:0", created: 1000, status: "complete")
+            let unknown = try entry(id: "batch-exit-unlinked", outpoint: "b:1",
+                                    created: Date().timeIntervalSince1970 + 1, status: "complete")
+            var wallet: WalletStore!
+            defer { wallet = nil }
+            wallet = store(defaults, root) { inputs, _ in
+                if inputs == ["a:0"] {
+                    return try self.result([("a:0", "accepted")], activityID: "older-exit")
+                }
+                wallet.reconcileExitBatches(updating: [completed, completed, unknown])
+                XCTAssertEqual(wallet.exitBatches[0].inputs[0].state, .complete)
+                XCTAssertEqual(wallet.exitBatches[1].inputs[0].state, .checking)
+                XCTAssertNil(wallet.exitBatches[1].activityID)
+                return try self.result([("b:1", "accepted")], activityID: "new-exit")
+            }
+            _ = try await wallet.exitBatch(funds: [selected[0]], destination: "destination")
+            _ = try await wallet.exitBatch(funds: [selected[1]], destination: "destination")
+            XCTAssertEqual(wallet.pendingExitOutpoints, ["b:1"])
+        }
+    }
+
+    func testMissingActivityEvidencePreventsBatchDispatch() async throws {
+        try await withFixture { defaults, root in
+            let wallet = store(defaults, root, evidence: { throw WalletActionError(message: "Activity unavailable") }) { _, _ in
+                XCTFail("A failed baseline read must stop before native admission")
+                return try self.result([])
+            }
+            do {
+                _ = try await wallet.exitBatch(funds: funds(), destination: "destination")
+                XCTFail("The evidence error must reach the caller")
+            } catch {
+                XCTAssertEqual(error.walletMessage, "Activity unavailable")
+            }
+            XCTAssertTrue(wallet.exitBatches.isEmpty)
+        }
+    }
+
     func testDefinitiveFailureDoesNotBlockExplicitNewSelection() async throws {
         try await withFixture { defaults, root in
             var calls = 0
@@ -212,8 +252,10 @@ final class BatchExitTests: XCTestCase {
     }
 
     private func store(_ defaults: UserDefaults, _ root: URL,
+                       evidence: @escaping () async throws -> [Entry] = { [] },
                        submit: @escaping ([String], String) async throws -> ExitBatchResult) -> WalletStore {
-        WalletStore(defaults: defaults, dataRoot: root, applicationIsActive: { true }, submitExitBatch: submit)
+        WalletStore(defaults: defaults, dataRoot: root, applicationIsActive: { true },
+                    submitExitBatch: submit, activityEvidence: evidence)
     }
 
     private func withFixture(_ body: (UserDefaults, URL) async throws -> Void) async throws {

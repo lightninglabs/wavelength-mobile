@@ -50,8 +50,19 @@ struct WalletButtonStyle: ButtonStyle {
 }
 
 struct WalletPage<Content: View>: View {
+    var onBottomPull: (() -> Void)? = nil
+    var activityPosition: Binding<String?>? = nil
     @ViewBuilder let content: () -> Content
+
     var body: some View {
+        if #available(iOS 17, *), let activityPosition {
+            scrollView.scrollPosition(id: activityPosition)
+        } else {
+            scrollView
+        }
+    }
+
+    private var scrollView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28, content: content)
                 .padding(.horizontal, 24)
@@ -59,6 +70,9 @@ struct WalletPage<Content: View>: View {
                 .padding(.bottom, 32)
                 .frame(maxWidth: 620, alignment: .leading)
                 .frame(maxWidth: .infinity)
+                .background {
+                    if let onBottomPull { BottomPullObserver(onPull: onBottomPull).allowsHitTesting(false) }
+                }
         }
         .background(WalletTheme.background.ignoresSafeArea())
         .foregroundStyle(WalletTheme.foreground)

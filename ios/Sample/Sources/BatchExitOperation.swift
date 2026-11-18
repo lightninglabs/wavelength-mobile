@@ -65,12 +65,12 @@ struct BatchExitOperation: Codable, Identifiable, Equatable {
         }
     }
 
-    mutating func reconcile(_ activity: [Entry]) {
+    mutating func reconcile(_ activity: [Entry], knownIDsOnly: Bool = false) {
         // If the response was lost, a fresh native batch row covering the
         // whole principal can recover the handle. The host reserves every
         // selected input before dispatch, so no second app batch can own it.
         // A smaller aggregate cannot identify an unknown accepted subset.
-        if activityID == nil, inputs.allSatisfy({ $0.state == .checking }) {
+        if !knownIDsOnly, activityID == nil, inputs.allSatisfy({ $0.state == .checking }) {
             let matches = activity.filter { entry in
                 entry.kind == "exit" && entry.id.hasPrefix("batch-exit-") &&
                     !existingEntryIDs.contains(entry.id) &&
@@ -101,7 +101,7 @@ struct BatchExitOperation: Codable, Identifiable, Equatable {
                 guard entry.kind == "exit", entry.counterparty != "unilateral",
                       entry.progress?.vtxoOutpoint == input.outpoint else { return false }
                 if let entryID = input.entryID { return entry.id == entryID }
-                guard !existingEntryIDs.contains(entry.id),
+                guard !knownIDsOnly, !existingEntryIDs.contains(entry.id),
                       abs(entry.amountSat) == input.amountSat,
                       let created = WalletFormatting.parsedDate(entry.createdAt),
                       created >= Date(timeIntervalSince1970: startedAt.timeIntervalSince1970.rounded(.down)) else { return false }

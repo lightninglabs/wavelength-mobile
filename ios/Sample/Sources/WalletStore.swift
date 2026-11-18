@@ -33,10 +33,11 @@ final class WalletStore: ObservableObject {
     @Published private(set) var phase: WalletPhase = .idle
     @Published private(set) var info: Info?
     @Published private(set) var balance: Balance?
-    @Published private(set) var activity: [Entry] = []
+    @Published private(set) var history = ActivityHistory()
+    var homeActivityAnchor: String?
+    private var operationActivity: [Entry] = []
     @Published private(set) var isWorking = false
     @Published private(set) var unlockStage: WalletUnlockStage?
-    @Published private(set) var activityLoaded = false
     @Published private(set) var pendingMnemonic: [String]?
     @Published var alertMessage: String?
     @Published private(set) var isSessionLocked = false
@@ -87,11 +88,16 @@ final class WalletStore: ObservableObject {
     private let startClient: (WalletConfig) async throws -> Void
     private let stopClient: () async throws -> Void
     private let submitExitBatch: ([String], String) async throws -> ExitBatchResult
+    private let activityEvidence: () async throws -> [Entry]
     private let observeRefresh: ([String]) async throws -> RefreshObservation
     private let dataRoot: URL?
     private let defaults: UserDefaults
     private var refreshTask: Task<Void, Never>?
     private var activityTask: Task<Void, Never>?
+    private var historyRead: Task<Void, Never>?
+    private var historyEpoch = 0
+    private var eventCursor: Int64 = 0
+    private var exitHistoryLookup: (ids: Set<String>, cursor: String?) = ([], nil)
     private var generation = 0
     private var exitBatchJournalLoaded = false
     @Published private var stateCreatingCallCount = 0
@@ -107,12 +113,19 @@ final class WalletStore: ObservableObject {
          startClient: ((WalletConfig) async throws -> Void)? = nil,
          stopClient: (() async throws -> Void)? = nil,
          submitExitBatch: (([String], String) async throws -> ExitBatchResult)? = nil,
+         activityEvidence: (() async throws -> [Entry])? = nil,
          observeRefresh: (([String]) async throws -> RefreshObservation)? = nil) {
         self.defaults = defaults
         self.client = client
         self.startClient = startClient ?? { try await client.start($0) }
         self.stopClient = stopClient ?? { try await client.stop() }
         self.submitExitBatch = submitExitBatch ?? { try await client.exitBatch(outpoints: $0, destination: $1) }
+        self.activityEvidence = activityEvidence ?? {
+            guard let entries = try await client.list(limit: 100).activity?.entries else {
+                throw WalletActionError(message: "Activity unavailable")
+            }
+            return entries
+        }
         self.observeRefresh = observeRefresh ?? { try await client.observeRefresh(outpoints: $0) }
         self.dataRoot = dataRoot
         self.authenticate = authenticate
@@ -145,9 +158,16 @@ final class WalletStore: ObservableObject {
     deinit {
         refreshTask?.cancel()
         activityTask?.cancel()
+        historyRead?.cancel()
     }
 
-    var visibleActivity: [Entry] { WalletActivityPresentation.entries(activity) }
+    var activityLoaded: Bool { history.next != .first }
+    var activity: [Entry] { history.entries }
+    var visibleActivity: [Entry] { history.visibleEntries }
+
+    func activityEntry(id: String) -> Entry? {
+        activity.first { $0.id == id } ?? operationActivity.first { $0.id == id }
+    }
 
     var canChangeNetwork: Bool { stateCreatingCallCount == 0 && !isWorking && backgroundPreparation == nil && phase != .starting && pendingMnemonic == nil }
 
@@ -209,8 +229,11 @@ final class WalletStore: ObservableObject {
         managedKeyUnavailable = false
         info = nil
         balance = nil
-        activity = []
-        activityLoaded = false
+        operationActivity = []
+        history = ActivityHistory()
+        homeActivityAnchor = nil
+        eventCursor = 0
+        exitHistoryLookup = ([], nil)
 
         do {
             // A non-running singleton may still own shutdown or cancelled
@@ -425,15 +448,16 @@ final class WalletStore: ObservableObject {
                 try? await client.setHostForeground(true)
             }
 
-            if nextInfo.walletState == .ready {
-                // Publish each independent snapshot as soon as it arrives. A
-                // slow optional credit lookup must not hide newer Activity,
-                // and a history error must not suppress a valid balance.
-                async let balanceRefresh: Void = refreshBalanceSnapshot()
-                async let activityRefresh: Void = refreshActivitySnapshot()
-                async let operationCheck: Void = checkRefreshStatus()
-                _ = await (balanceRefresh, activityRefresh, operationCheck)
-                await refreshMaintenanceState()
+            if nextInfo.walletState == .ready || nextInfo.walletState == .syncing {
+                // Local Activity can catch up while the wallet is syncing.
+                async let activityRefresh: Void = refreshForegroundActivity()
+                if nextInfo.walletState == .ready {
+                    async let balanceRefresh: Void = refreshBalanceSnapshot()
+                    async let operationCheck: Void = checkRefreshStatus()
+                    _ = await (balanceRefresh, operationCheck)
+                    await refreshMaintenanceState()
+                }
+                await activityRefresh
             }
         } catch {
             // A transient refresh failure does not mean the daemon stopped or
@@ -496,7 +520,6 @@ final class WalletStore: ObservableObject {
         pendingDispatch = pending
         do {
             let result = try await client.send(quote.sendIntentID)
-            upsert(result.entry)
             clearPendingDispatch()
             // Show the authoritative result while independent snapshots catch up.
             Task { await refresh() }
@@ -516,7 +539,9 @@ final class WalletStore: ObservableObject {
     func receiveLightning(amountSat: Int64, memo: String) async throws -> ReceiveResult {
         try await beginStateCreatingCall()
         defer { endStateCreatingCall() }
-        let existingEntryIDs = Set(activity.map(\.id))
+        let baseline = try await activityEvidence()
+        try requireForegroundInteraction()
+        let existingEntryIDs = Set(baseline.map(\.id))
         let receiptContext = WalletNotifications.shared.receiptCreationContext()
 
         do {
@@ -525,7 +550,6 @@ final class WalletStore: ObservableObject {
                 memo: memo,
                 timeoutSeconds: 20
             )
-            upsert(result.entry)
             if let identity = notificationRuntimeIdentity {
                 WalletNotifications.shared.enrollReceiveWork(result, network: network.rawValue, identity: identity)
             }
@@ -542,7 +566,7 @@ final class WalletStore: ObservableObject {
             // creation. Reconcile Activity and recover that exact invoice.
             // Never issue a second state-creating call automatically after an
             // uncertain result.
-            await refreshActivitySnapshot()
+            await refreshOperationEvidence(force: true)
             if let recovered = recoveredReceive(
                 amountSat: amountSat,
                 memo: memo,
@@ -645,7 +669,7 @@ final class WalletStore: ObservableObject {
         // Local balance and activity do not depend on mailbox intake or the
         // recovery scan. Publish them while foreground connectivity resumes.
         async let balanceRefresh: Void = refreshBalanceSnapshot()
-        async let activityRefresh: Void = refreshActivitySnapshot()
+        async let activityRefresh: Void = refreshForegroundActivity()
         try? await client.setHostForeground(true)
         _ = await (balanceRefresh, activityRefresh)
         if let current = try? await client.getInfo() {
@@ -688,16 +712,19 @@ final class WalletStore: ObservableObject {
             }
         }
 
-        let stream = client.activity(includeExisting: true)
+        let client = client
         activityTask = Task { [weak self] in
-            do {
-                for try await entry in stream {
-                    guard let self, currentGeneration == self.generation else { return }
-                    self.upsert(entry)
+            while !Task.isCancelled {
+                await self?.readHistory(.changes)
+                do {
+                    for try await _ in client.activity() {
+                        guard let self, !Task.isCancelled, currentGeneration == self.generation else { return }
+                        await self.readHistory(.changes)
+                    }
+                } catch {
+                    // The periodic read catches up even when a live signal is lost.
                 }
-            } catch {
-                // A later refresh reconciles the list. Stream termination is
-                // expected when changing networks or stopping the daemon.
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
             }
         }
     }
@@ -707,15 +734,10 @@ final class WalletStore: ObservableObject {
         activityTask?.cancel()
         refreshTask = nil
         activityTask = nil
-    }
-
-    private func upsert(_ entry: Entry) {
-        if let index = activity.firstIndex(where: { $0.id == entry.id }) {
-            activity[index] = entry
-        } else {
-            activity.insert(entry, at: 0)
-        }
-        reconcileExitBatches()
+        historyEpoch += 1
+        historyRead?.cancel()
+        historyRead = nil
+        history.isLoading = false
     }
 
     private func recoveredReceive(
@@ -723,7 +745,7 @@ final class WalletStore: ObservableObject {
         memo: String,
         excluding existingEntryIDs: Set<String>
     ) -> ReceiveResult? {
-        guard let entry = activity.first(where: {
+        guard let entry = operationActivity.first(where: {
             !existingEntryIDs.contains($0.id) &&
                 $0.kind == "receive" &&
                 $0.amountSat == amountSat &&
@@ -742,20 +764,118 @@ final class WalletStore: ObservableObject {
         balance = snapshot
     }
 
-    private func refreshActivitySnapshot() async {
-        let checkedIntent = stateCreatingCallCount == 0 ? pendingDispatch?.intentID : nil
-        guard let result = try? await client.list(
-            view: .activity,
-            limit: 100
-        ), let entries = result.activity?.entries else {
-            return
+    private enum HistoryRead {
+        case refresh, changes, page
+    }
+
+    func loadOlderActivity() async {
+        await readHistory(.page)
+    }
+
+    func pullForOlderActivity() {
+        guard case .older = history.next, !history.isLoading else { return }
+        Task { await loadOlderActivity() }
+    }
+
+    private func refreshForegroundActivity() async {
+        async let timeline: Void = readHistory(.refresh)
+        await refreshOperationEvidence()
+        await timeline
+    }
+
+    private func readHistory(_ action: HistoryRead) async {
+        let epoch = historyEpoch
+        let requested = history.next
+        if let running = historyRead {
+            guard action == .page else { return }
+            await running.value
+        }
+        guard historyRead == nil, isCurrentHistory(epoch) else { return }
+        if action == .page {
+            guard requested == history.next, requested != .end else { return }
         }
 
-        // List is the daemon's authoritative, already-deduplicated activity
-        // view in most-recent-first order. Replacing the snapshot also removes
-        // terminal or request-only rows that are no longer wallet activity.
-        activity = entries
-        activityLoaded = true
+        let task = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.historyEpoch == epoch { self.historyRead = nil }
+            }
+            await self.performHistoryRead(action, epoch: epoch)
+        }
+        historyRead = task
+        await task.value
+    }
+
+    private func isCurrentHistory(_ epoch: Int) -> Bool {
+        epoch == historyEpoch && !Task.isCancelled && !isSessionLocked &&
+            phase.isWalletAvailable && applicationIsActive()
+    }
+
+    private func performHistoryRead(_ action: HistoryRead, epoch: Int) async {
+        let requested = history.next
+        if requested == .first || action == .page {
+            history.isLoading = true
+            history.failed = false
+            let cursor: String
+            switch requested {
+            case .older(let token): cursor = token
+            default: cursor = ""
+            }
+            defer {
+                if historyEpoch == epoch && history.isLoading { history.isLoading = false }
+            }
+            do {
+                let baseline = requested == .first ? try await client.activityCursor() : eventCursor
+                guard isCurrentHistory(epoch) else { return }
+                let result = try await client.list(limit: ActivityHistory.pageSize, cursor: cursor)
+                guard isCurrentHistory(epoch) else { return }
+                guard let page = result.activity else { throw WalletActionError(message: "Activity unavailable") }
+                try history.append(page, requested: requested)
+                eventCursor = baseline
+            } catch {
+                guard isCurrentHistory(epoch) else { return }
+                history.failed = true
+            }
+            history.isLoading = false
+            if history.failed { return }
+        } else if action == .refresh {
+            if let head = try? await client.list(limit: 1), isCurrentHistory(epoch), let page = head.activity {
+                var updated = history
+                if updated.updateOverlay(page.entries) { history = updated }
+            }
+        }
+
+        // Keep each pass bounded so catch-up leaves room for an older-page
+        // request. The next live signal or foreground tick continues it.
+        var through: Int64 = 0
+        for _ in 0..<4 {
+            guard isCurrentHistory(epoch),
+                  let batch = try? await client.readActivityBatch(after: eventCursor, through: through),
+                  isCurrentHistory(epoch) else { return }
+            if !batch.entries.isEmpty {
+                history.mergeChanges(batch.entries)
+                reconcileExitBatches(updating: batch.entries)
+            }
+            eventCursor = batch.nextCursor
+            if !batch.hasMore { return }
+            through = batch.highWater
+        }
+    }
+
+    private func refreshOperationEvidence(force: Bool = false) async {
+        let epoch = historyEpoch
+        guard isCurrentHistory(epoch) else { return }
+        guard force || pendingDispatch != nil || !unresolvedDispatches.isEmpty ||
+                exitBatches.contains(where: \.isPending) else {
+            // The work ledger reads the exact enrolled references. No list
+            // coverage is required for positive completion evidence.
+            await WalletNotifications.shared.reconcileReceiveWork(store: self, entries: [])
+            return
+        }
+        let checkedIntent = stateCreatingCallCount == 0 ? pendingDispatch?.intentID : nil
+        guard let entries = try? await activityEvidence(), isCurrentHistory(epoch) else { return }
+
+        operationActivity = entries
         if let pending = pendingDispatch,
            entries.contains(where: pending.matches) {
             clearPendingDispatch()
@@ -767,7 +887,29 @@ final class WalletStore: ObservableObject {
         let unresolvedCount = unresolvedDispatches.count
         unresolvedDispatches.removeAll { attempt in entries.contains(where: attempt.matches) }
         if unresolvedDispatches.count != unresolvedCount { persistUnresolvedChecks() }
+        reconcileExitBatches()
+        await checkOlderExitEvidence(epoch: epoch, recent: entries)
+        guard isCurrentHistory(epoch) else { return }
         await WalletNotifications.shared.reconcileReceiveWork(store: self, entries: entries)
+    }
+
+    private func checkOlderExitEvidence(epoch: Int, recent: [Entry]) async {
+        // A transition that landed before the event baseline can belong to an
+        // exit older than the recent evidence window. Look for exact journal
+        // IDs in bounded pages without requiring a trip through Activity.
+        let pending = exitBatches.filter(\.isPending)
+        let linked = Set(pending.flatMap { operation in
+            operation.inputs.filter { $0.state.isPending }.compactMap(\.entryID)
+        })
+        let missing = linked.subtracting(recent.map(\.id))
+        if exitHistoryLookup.ids != missing {
+            exitHistoryLookup = (missing, missing.isEmpty ? nil : "")
+        }
+        guard let cursor = exitHistoryLookup.cursor,
+              let page = try? await client.list(kinds: ["exit"], limit: 100, cursor: cursor).activity,
+              isCurrentHistory(epoch), exitHistoryLookup.ids == missing, exitHistoryLookup.cursor == cursor else { return }
+        exitHistoryLookup.cursor = page.hasMore == true && page.nextCursor != cursor ? page.nextCursor : nil
+        reconcileExitBatches(updating: page.entries.filter { missing.contains($0.id) })
     }
 
     /// UI authentication is separate from native unlock. Recheck after waiting
@@ -1022,13 +1164,16 @@ final class WalletStore: ObservableObject {
         let currentGeneration = generation
         try await beginStateCreatingCall()
         defer { endStateCreatingCall() }
+        let recent = try await activityEvidence()
+        try requireForegroundInteraction()
         guard currentGeneration == generation else { throw CancellationError() }
         guard exitBatchJournalError == nil, !funds.isEmpty,
               Set(funds.map(\.outpoint)).count == funds.count,
               funds.allSatisfy({ $0.amountSat > 0 && !pendingExitOutpoints.contains($0.outpoint) }) else {
             throw WalletActionError(message: "Check the existing exit before submitting these funds again.")
         }
-        let operation = BatchExitOperation(funds: funds, destination: destination, activity: activity)
+        let operation = BatchExitOperation(funds: funds, destination: destination,
+                                           activity: recent + operationActivity)
         let next = exitBatches + [operation]
         // Failure here proves the native call has not run. Leave no UI receipt
         // that suggests otherwise, and let the caller show the storage error.
@@ -1066,12 +1211,23 @@ final class WalletStore: ObservableObject {
         }
     }
 
-    func reconcileExitBatches() {
+    func reconcileExitBatches(updating changes: [Entry]? = nil) {
         // A failed read must never be overwritten by an empty in-memory list.
         // A failed write still has authoritative memory to save on this pass.
-        guard stateCreatingCallCount == 0, exitBatchJournalLoaded else { return }
+        guard exitBatchJournalLoaded, changes != nil || stateCreatingCallCount == 0 else { return }
         var next = exitBatches
-        for index in next.indices { next[index].reconcile(activity) }
+        let current = changes.map { Dictionary($0.map { ($0.id, $0) }, uniquingKeysWith: { _, newer in newer }) }
+        for index in next.indices where next[index].isPending {
+            if let current {
+                // Known IDs can finish during another dispatch. A change
+                // batch cannot establish that an ambiguous dispatch is unique.
+                let operation = next[index]
+                let linked = Set(operation.inputs.compactMap(\.entryID) + [operation.activityID].compactMap { $0 })
+                next[index].reconcile(linked.compactMap { current[$0] }, knownIDsOnly: true)
+            } else {
+                next[index].reconcile(operationActivity)
+            }
+        }
         guard next != exitBatches || exitBatchJournalError != nil else { return }
         exitBatches = next
         persistExitBatches()

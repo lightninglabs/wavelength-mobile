@@ -312,6 +312,19 @@ public actor WalletClient {
         return try decode(await bg { try Bindings.list(body) })
     }
 
+    /// Capture the end of the local transition log before reading a snapshot.
+    public func activityCursor() async throws -> Int64 {
+        let result: ActivityCursorResult = try decode(await bg { try Bindings.activityCursor() })
+        return result.cursor
+    }
+
+    /// Read current rows for a bounded range of transitions after `after`.
+    /// Keep `highWater` as `through` until `hasMore` is false.
+    public func readActivityBatch(after: Int64, through: Int64 = 0, limit: Int = 64) async throws -> ActivityBatch {
+        let body = try encoder.encode(ActivityBatchRequest(after: after, through: through, limit: limit))
+        return try decode(await bg { try Bindings.readActivityBatch(body) })
+    }
+
     /// Exit a VTXO back to the chain. The daemon queues a cooperative leave by
     /// default, paying out to `destination` (or a fresh backing-wallet address
     /// when empty). To bypass cooperation and start a unilateral unroll, pass
@@ -511,6 +524,20 @@ private struct SubscribeReq: Encodable {
         case includeExisting = "IncludeExisting"
         case kinds = "Kinds"
         case cursor = "Cursor"
+    }
+}
+
+private struct ActivityCursorResult: Decodable {
+    let cursor: Int64
+}
+
+private struct ActivityBatchRequest: Encodable {
+    let after: Int64
+    let through: Int64
+    let limit: Int
+
+    enum CodingKeys: String, CodingKey {
+        case after = "after_cursor", through = "through_cursor", limit
     }
 }
 

@@ -63,11 +63,11 @@ struct ContentView: View {
         }
         .sheet(isPresented: $notifications.showsActivity) {
             NavigationView {
-                List(store.visibleActivity) { entry in
-                    NavigationLink(destination: ActivityDetailView(entry: entry).environmentObject(store)) {
-                        ActivityRow(entry: entry)
-                    }
-                }.navigationTitle("Activity")
+                WalletPage(onBottomPull: store.pullForOlderActivity) {
+                    ActivityHistoryRows()
+                }
+                    .navigationTitle("Activity")
+                    .refreshable { await store.refresh() }
                     .toolbar { Button("Done") { notifications.showsActivity = false } }
             }.environmentObject(store)
         }
