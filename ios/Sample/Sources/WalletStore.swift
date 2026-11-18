@@ -536,12 +536,16 @@ final class WalletStore: ObservableObject {
         try requireForegroundInteraction()
         let receiptContext = WalletNotifications.shared.receiptCreationContext()
 
-        // A request deadline or lifecycle cancellation can race durable
-        // creation. The request ID lets the wallet return that exact invoice,
-        // with its receipt reference, instead of guessing from Activity.
+        // A request deadline, lifecycle cancellation or app termination can
+        // race durable creation. The saved request ID lets the wallet return
+        // that exact invoice, with its receipt reference, instead of guessing
+        // from Activity.
         let client = client
-        let result = try await ReceiveAdmission.create(
-            requestID: UUID().uuidString,
+        let pending = PendingReceive(requestID: UUID().uuidString, amountSat: amountSat, memo: memo,
+                                     network: network.rawValue, identity: notificationRuntimeIdentity)
+        return try await ReceiveAdmission.create(
+            pending,
+            journal: pendingReceiveJournal,
             create: { requestID in
                 try await client.receiveLightning(
                     amountSat: amountSat,
@@ -552,13 +556,37 @@ final class WalletStore: ObservableObject {
             },
             lookup: { requestID in
                 try await client.lookupReceive(requestID: requestID)
+            },
+            enroll: { result in
+                Self.enrollReceive(result, pending: pending, receiptContext: receiptContext)
             }
         )
-        if let identity = notificationRuntimeIdentity {
-            WalletNotifications.shared.enrollReceiveWork(result, network: network.rawValue, identity: identity)
+    }
+
+    /// Reads back a receive admitted before the app was last killed and
+    /// enrolls it for background work. Never creates another invoice.
+    private func recoverPendingReceive() async {
+        let client = client
+        await ReceiveAdmission.recover(
+            journal: pendingReceiveJournal,
+            lookup: { try await client.lookupReceive(requestID: $0) },
+            enroll: { pending, result in
+                Self.enrollReceive(result, pending: pending,
+                                   receiptContext: WalletNotifications.shared.receiptCreationContext())
+            }
+        )
+    }
+
+    private static func enrollReceive(_ result: ReceiveResult, pending: PendingReceive,
+                                      receiptContext: ReceiptCreationContext?) {
+        if let identity = pending.identity {
+            WalletNotifications.shared.enrollReceiveWork(result, network: pending.network, identity: identity)
         }
         WalletNotifications.shared.enrollCreatedReceive(result, context: receiptContext)
-        return result
+    }
+
+    private var pendingReceiveJournal: PendingReceiveJournal {
+        PendingReceiveJournal(defaults: defaults, key: preferenceKey("pendingReceive"))
     }
 
     func newDepositAddress(amountHintSat: Int64) async throws -> DepositResult {
@@ -660,6 +688,7 @@ final class WalletStore: ObservableObject {
         }
         beginMonitoring()
         WalletNotifications.shared.reconcile()
+        await recoverPendingReceive()
     }
 
     private func refreshLifecycleAfterAmbiguousSetup() async -> WalletState? {
