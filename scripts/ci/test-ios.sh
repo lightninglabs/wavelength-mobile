@@ -32,6 +32,7 @@ xcodebuild test \
   -project ios/Sample/Wavelength.xcodeproj -scheme Wavelength \
   -configuration Debug -destination "platform=iOS Simulator,id=${simulator_id}" \
   -destination-timeout 120 -only-testing:WavelengthTests \
+  -only-testing:WavelengthUITests/ActivityPullUITests \
   -resultBundlePath "${result_root}/Tests.xcresult" \
   -derivedDataPath "${RUNNER_TEMP:-/tmp}/wavelength-ci-derived-data" \
   CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES DEVELOPMENT_TEAM= \
