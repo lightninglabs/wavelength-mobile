@@ -140,10 +140,19 @@ class PaymentOperations(
   }
 
   private fun finishReceive(pending: PendingPayment, result: ReceiveResult) {
-    enroll(pending, result)
+    val warning = try {
+      if (pending.receiptConsentEpoch != null && pending.receiptConsentEpoch == receiptConsentEpoch()) {
+        enroll(pending, result)
+      }
+      null
+    } catch (error: CancellationException) {
+      throw error
+    } catch (_: Exception) {
+      "Invoice ready. Payment notification enrollment failed."
+    }
     onEntry(result.entry)
     persist(null)
-    mutable.update { it.copy(result = result.entry, request = result.invoice, error = null) }
+    mutable.update { it.copy(result = result.entry, request = result.invoice, error = warning) }
   }
 
   suspend fun checkPending() {

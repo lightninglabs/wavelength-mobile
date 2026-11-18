@@ -85,7 +85,7 @@ class PaymentOperationsTest {
 
   @Test fun timedOutReceiveRecoversExactRequestWithoutAnotherCreate() = runTest {
     val gateway = Gateway(); val journal = Journal()
-    val payments = PaymentOperations(backgroundScope, gateway, journal, { true }, {})
+    val payments = PaymentOperations(backgroundScope, gateway, journal, { true }, {}, receiptConsentEpoch = { "original" })
     payments.receive(3200, "Android"); runCurrent()
     assertNotNull(journal.value)
     payments.receive(3200, "Android"); runCurrent()
@@ -99,12 +99,41 @@ class PaymentOperationsTest {
     assertEquals(requestId, gateway.lookedUpId)
     gateway.found = ReceiveResult(invoice = "lntbs1original", entry = entry)
     gateway.lookupFails = false
-    val restarted = PaymentOperations(backgroundScope, gateway, journal, { true }, {})
+    var enrollments = 0
+    val restarted = PaymentOperations(backgroundScope, gateway, journal, { true }, {},
+      receiptConsentEpoch = { "original" }, enroll = { pending, result ->
+        assertEquals("original", pending.receiptConsentEpoch)
+        assertEquals("lntbs1original", result.invoice)
+        enrollments++
+        throw java.io.IOException("receipt database unavailable")
+      })
+    restarted.checkPending()
     restarted.checkPending()
     assertEquals(requestId, gateway.lookedUpId)
     assertEquals(1, gateway.calls)
     assertEquals("lntbs1original", restarted.state.value.request)
     assertNull(journal.value)
+    assertEquals(1, enrollments)
+    assertTrue(restarted.state.value.error.orEmpty().contains("notification"))
+  }
+
+  @Test fun recoveredReceiveSkipsEnrollmentAfterConsentChanges() = runTest {
+    val gateway = Gateway()
+    val journal = Journal()
+    val original = PaymentOperations(backgroundScope, gateway, journal, { true }, {},
+      receiptConsentEpoch = { "original" })
+    original.receive(3200, "Android"); runCurrent()
+    assertEquals("original", journal.value?.receiptConsentEpoch)
+
+    gateway.found = ReceiveResult(invoice = "lntbs1original", entry = Entry(id = "receive"))
+    gateway.lookupFails = false
+    val restarted = PaymentOperations(backgroundScope, gateway, journal, { true }, {},
+      receiptConsentEpoch = { "replacement" }, enroll = { _, _ -> fail("Consent changed") })
+    restarted.checkPending()
+    assertNull(journal.value)
+    assertEquals("lntbs1original", restarted.state.value.request)
+    assertNull(restarted.state.value.error)
+    assertEquals(1, gateway.calls)
   }
 
   @Test fun unreadableJournalBlocksEveryNewPayment() = runTest {

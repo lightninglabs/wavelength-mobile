@@ -65,9 +65,7 @@ class WalletSession(private val context: Context) {
         it.connection == connectionFingerprint() }?.epoch
     },
     enroll = { pending, result ->
-      if (pending.receiptConsentEpoch != null && notices.consent(network)?.epoch == pending.receiptConsentEpoch) {
-        notices.admission(network, state.value.info?.identityPubKey.orEmpty(), connectionFingerprint(), pending.amountSat)?.invoke(result)
-      }
+      notices.admission(network, state.value.info?.identityPubKey.orEmpty(), connectionFingerprint(), pending.amountSat)?.invoke(result)
     })
 
   fun resume() {
