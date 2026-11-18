@@ -25,7 +25,7 @@ import androidx.fragment.app.FragmentActivity
 import engineering.lightning.wavelength.BuildConfig
 import engineering.lightning.wavelength.data.*
 
-internal enum class WalletScreen(val title: String) { HOME(""), SETTINGS("Settings"), CONNECTION("Connection"), SECURITY("Security"), NOTIFICATIONS("Notifications"), CREDIT("Credit"), ACTIVITY("Payment"), DIAGNOSTICS("Diagnostics") }
+internal enum class WalletScreen(val title: String) { HOME(""), EXIT("Exit"), SETTINGS("Settings"), CONNECTION("Connection"), SECURITY("Security"), NOTIFICATIONS("Notifications"), CREDIT("Credit"), ACTIVITY("Payment"), DIAGNOSTICS("Diagnostics") }
 
 @Composable internal fun SettingsScreen(session: WalletSession, state: WalletUiState, modifier: Modifier,
   navigate: (WalletScreen) -> Unit, diagnostics: Boolean = false) {
@@ -33,6 +33,7 @@ internal enum class WalletScreen(val title: String) { HOME(""), SETTINGS("Settin
   Column(modifier.verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 12.dp)) {
     SettingsNavigation("Security", Icons.Outlined.Lock) { navigate(WalletScreen.SECURITY) }; HorizontalDivider()
     SettingsNavigation("Notifications", Icons.Outlined.Notifications) { navigate(WalletScreen.NOTIFICATIONS) }; HorizontalDivider()
+    SettingsNavigation("Cooperative exit", Icons.Outlined.ArrowOutward) { navigate(WalletScreen.EXIT) }; HorizontalDivider()
     SettingsNavigation("Credit", Icons.Outlined.Toll) { navigate(WalletScreen.CREDIT) }; HorizontalDivider()
     if (diagnostics) { SettingsNavigation("Diagnostics", Icons.Outlined.MonitorHeart) { navigate(WalletScreen.DIAGNOSTICS) }; HorizontalDivider() }
     SettingsNavigation("Appearance", Icons.Outlined.Contrast, state.appearance.title) { appearance = true }; HorizontalDivider()

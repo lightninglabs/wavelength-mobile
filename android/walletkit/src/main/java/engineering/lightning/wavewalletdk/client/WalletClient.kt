@@ -226,6 +226,12 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
     },
   )
 
+  suspend fun estimateExitFee(outpoint: String): ExitFeeEstimate =
+    decode(io { Mobile.estimateExitFee(encode(ExitStatusReq.serializer(), ExitStatusReq(outpoint))) })
+
+  suspend fun exitBatch(outpoints: List<String>, destination: String): ExitBatchResult =
+    decode(io { Mobile.exitBatch(encode(ExitBatchReq.serializer(), ExitBatchReq(outpoints, destination))) })
+
   /** Query the phase of an exit job for a VTXO outpoint. */
   suspend fun exitStatus(outpoint: String): ExitStatusResult =
     decode(io { Mobile.exitStatus(encode(ExitStatusReq.serializer(), ExitStatusReq(outpoint))) })
@@ -391,4 +397,10 @@ private data class ExitStatusReq(
   @SerialName("amount_sat") val amountSat: Long? = null,
   val description: String = "",
   @SerialName("expires_at_unix") val expiresAtUnix: Long = 0,
+)
+
+
+@Serializable private data class ExitBatchReq(
+  @SerialName("Outpoints") val outpoints: List<String>,
+  @SerialName("Destination") val destination: String,
 )
