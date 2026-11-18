@@ -33,6 +33,21 @@ class BackgroundTests {
     assertEquals(BackgroundCancellation.DEADLINE,owner.active!!.cancellationReason)
     returned.complete(Unit);runCurrent();caller.await();assertFalse(lock.isLocked);assertNull(owner.active)
   }
+  @Test fun defaultFallbackAllowsWorkPastOldCutoffsAndJoinsCancellation() = runTest {
+    val lock = Mutex(); val returned = CompletableDeferred<Unit>(); val cancelReturned = CompletableDeferred<Unit>()
+    var cancellations = 0
+    val owner = MaintenanceOwner(backgroundScope,lock) { cancellations++; cancelReturned.await() }
+    val caller = async { owner.run { returned.await(); BackgroundOutcome("Returned") } }
+    runCurrent()
+    advanceTimeBy(20_001); runCurrent()
+    assertEquals(0,cancellations); assertFalse(owner.active!!.expired)
+    advanceTimeBy(7_999); runCurrent()
+    assertEquals(1,cancellations); assertTrue(lock.isLocked)
+    assertEquals(BackgroundCancellation.DEADLINE,owner.active!!.cancellationReason)
+    returned.complete(Unit); runCurrent(); assertFalse(caller.isCompleted)
+    cancelReturned.complete(Unit); runCurrent(); caller.await()
+    assertFalse(lock.isLocked); assertNull(owner.active)
+  }
   @Test fun receiptRequiresCurrentConsentOriginalPrincipalAndCompleteSourceProof() {
     val consent = ReceiptConsent("epoch",100,"owner","connection",true)
     val enrollment = EnrolledReceipt("signet",consent,ReceiptReference("credit_receive","id"),"canonical",999,101)
