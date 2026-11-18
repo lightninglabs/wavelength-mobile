@@ -31,7 +31,8 @@ final class SDKIntegrationTests: XCTestCase {
         XCTAssertTrue(inventory.vtxos.isEmpty)
         XCTAssertEqual(inventory.total, 0)
         let receive = try await client.receiveLightning(
-            amountSat: 10, memo: "Micro payment quote \(UUID().uuidString)"
+            amountSat: 10, memo: "Micro payment quote \(UUID().uuidString)",
+            requestID: UUID().uuidString
         )
         try await client.stop()
 
@@ -42,7 +43,8 @@ final class SDKIntegrationTests: XCTestCase {
         _ = try await client.unlockWallet(walletPassword: password)
         try await waitForServices(client)
         let ordinaryReceive = try await client.receiveLightning(
-            amountSat: 5_000, memo: "Durable restart \(UUID().uuidString)"
+            amountSat: 5_000, memo: "Durable restart \(UUID().uuidString)",
+            requestID: UUID().uuidString
         )
         XCTAssertTrue(ordinaryReceive.invoice.lowercased().hasPrefix("lntbs"))
         try await client.stop()
