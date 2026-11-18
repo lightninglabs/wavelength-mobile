@@ -14,8 +14,9 @@ final class BackgroundWorkAdmission {
     private var waiters: [Waiter] = []
 
     func run<Value>(id: String, lease: ReceiptFetchLease,
+                    onWait: (String) -> Void = { _ in },
                     operation: () async throws -> Value) async rethrows -> Value? {
-        guard await acquire(id: id, lease: lease) else { return nil }
+        guard await acquire(id: id, lease: lease, onWait: onWait) else { return nil }
         defer { release(id: id) }
         guard !lease.expired, !Task.isCancelled else { return nil }
         return try await operation()
@@ -35,9 +36,9 @@ final class BackgroundWorkAdmission {
         waiters.remove(at: index).continuation.resume(returning: false)
     }
 
-    private func acquire(id: String, lease: ReceiptFetchLease) async -> Bool {
+    private func acquire(id: String, lease: ReceiptFetchLease, onWait: (String) -> Void) async -> Bool {
         guard !lease.expired, !Task.isCancelled else { return false }
-        if activeWindowID == nil {
+        guard let owner = activeWindowID else {
             activeWindowID = id
             return true
         }
@@ -48,6 +49,7 @@ final class BackgroundWorkAdmission {
                     return
                 }
                 waiters.append(Waiter(id: id, lease: lease, continuation: continuation))
+                onWait(owner)
             }
         } onCancel: {
             Task { @MainActor [weak self] in self?.cancelPending(id) }

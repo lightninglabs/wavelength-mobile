@@ -7,57 +7,46 @@ struct DiagnosticBackgroundView: View {
 
     var body: some View {
         WalletPage {
-            if let operation = store.refreshOperation {
-                VStack(alignment: .leading, spacing: 16) {
-                    NavigationLink(destination: RefreshWalletView()) {
-                        WalletNavigationRow(title: "Current refresh", icon: "arrow.triangle.2.circlepath")
-                    }.buttonStyle(.plain)
-                    DiagnosticRow(label: "Status", value: operation.status)
-                    if let count = operation.confirmedCount {
-                        DiagnosticRow(label: "Confirmed inputs", value: "\(count) of \(operation.outpoints.count)")
-                    }
-                    if let amount = operation.confirmedAmountSat, amount > 0 {
-                        DiagnosticRow(label: "Refreshed", value: WalletFormatting.sats(amount))
-                    }
-                    if let remaining = operation.remainingOutpoints {
-                        DiagnosticRow(label: operation.canRetry == true ? "Available inputs" : "Live inputs", value: "\(remaining.count)")
-                    }
-                    if let amount = operation.remainingAmountSat, amount > 0 {
-                        DiagnosticRow(label: operation.canRetry == true ? "Available to refresh" : "Live amount", value: WalletFormatting.sats(amount))
-                    }
-                    if let unresolved = operation.unresolvedInputCount {
-                        DiagnosticRow(label: "Unclassified inputs", value: "\(unresolved)")
-                    }
-                    NavigationLink(destination: DiagnosticRoundsView()) { Text("View rounds") }
-                        .buttonStyle(.plain)
-                    Text("Current wallet state. The runs below are earlier observations.")
-                        .font(.caption).foregroundStyle(WalletTheme.secondary)
-                    DiagnosticFailure(message: store.refreshCheckError)
-                }
-                WalletDivider()
-            }
-            let runs = journal.runs.filter { $0.network == store.network.rawValue }.reversed()
+            let runs = journal.runs.filter { $0.network == store.network.rawValue }
+            let retained = Set(runs.map(\.id))
+            let callbacksByOwner = Dictionary(grouping: runs.filter(\.endedWhileWaiting)) { $0.waitedBehind ?? "" }
             if runs.isEmpty {
                 Text("No background runs recorded yet").foregroundStyle(WalletTheme.secondary)
                 Text("New pushes and scheduled opportunities will appear here when iOS runs the app.")
                     .font(.footnote).foregroundStyle(WalletTheme.secondary)
             }
-            ForEach(Array(runs)) { run in
-                NavigationLink(destination: DiagnosticRunView(runID: run.id)) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text(run.trigger).font(.headline)
-                            Spacer()
-                            Text(String(format: "%.1f s", run.duration)).font(.callout)
-                        }
-                        Text("\(diagnosticTime(run.started, milliseconds: true)) · \(run.status)")
-                            .font(.caption).foregroundStyle(WalletTheme.secondary)
-                    }
-                }.buttonStyle(.plain)
-                WalletDivider()
+            ForEach(Array(runs.reversed())) { run in
+                if !run.endedWhileWaiting || !retained.contains(run.waitedBehind ?? "") {
+                    DiagnosticRunLink(run: run, relatedCount: callbacksByOwner[run.id]?.count ?? 0)
+                    WalletDivider()
+                }
             }
         }.navigationTitle("Background").navigationBarTitleDisplayMode(.inline)
-            .task { await store.checkRefreshStatus() }
+    }
+}
+
+private struct DiagnosticRunLink: View {
+    let run: DiagnosticRun
+    var relatedCount = 0
+
+    var body: some View {
+        NavigationLink(destination: DiagnosticRunView(runID: run.id)) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text(run.wakeTitle).font(.headline)
+                    Spacer()
+                    Text(String(format: "%.1f s", run.duration)).font(.callout)
+                }
+                Text("\(diagnosticTime(run.started, milliseconds: true)) · \(run.outcomeLabel)")
+                    .font(.caption).foregroundStyle(WalletTheme.secondary)
+                if run.wakeReasonUnavailable {
+                    Text("Reason unavailable").font(.caption).foregroundStyle(WalletTheme.secondary)
+                }
+                if relatedCount > 0 {
+                    Text("\(relatedCount + 1) callbacks").font(.caption).foregroundStyle(WalletTheme.secondary)
+                }
+            }.contentShape(Rectangle())
+        }.buttonStyle(.plain)
     }
 }
 
@@ -69,12 +58,18 @@ private struct DiagnosticRunView: View {
     var body: some View {
         WalletPage {
             if let run {
-                Text(String(format: "%.1f s", run.duration)).font(.largeTitle)
-                Text(run.status).foregroundStyle(WalletTheme.secondary)
-                DiagnosticRow(label: "Wake reason", value: run.trigger)
+                Text(run.wakeTitle).font(.largeTitle)
+                Text("\(run.outcomeLabel) · \(String(format: "%.1f s", run.duration))")
+                    .foregroundStyle(WalletTheme.secondary)
+                if run.wakeReasonUnavailable { DiagnosticRow(label: "Producer reason", value: "Unavailable") }
+                DiagnosticRow(label: "Received", value: diagnosticTime(run.started, milliseconds: true))
                 DiagnosticRow(label: "Entry point", value: run.wake?.entryPoint ?? "Not recorded")
                 DiagnosticRow(label: "Startup", value: run.startup ?? "Not recorded")
                 if let source = run.wake?.source { DiagnosticRow(label: "Source", value: source) }
+                if let producer = run.wake?.producer, let label = producer.reason?.deadlineLabel,
+                   let deadline = producer.deadline {
+                    DiagnosticRow(label: label, value: diagnosticTime(deadline, milliseconds: false))
+                }
                 DisclosureGroup("Timing details") {
                     if let host = run.hostBudgetSeconds { DiagnosticRow(label: "Host fallback", value: "\(host) s") }
                     if let native = run.nativeBudgetSeconds { DiagnosticRow(label: "SDK ceiling", value: "\(native) s") }
@@ -82,7 +77,12 @@ private struct DiagnosticRunView: View {
                     Text("iOS can end the opportunity earlier. The host fallback includes startup; the SDK ceiling applies to native work.")
                         .font(.caption).foregroundStyle(WalletTheme.secondary)
                 }
-                if let batches = run.batches { DiagnosticRow(label: "Mailbox batches", value: "\(batches)") }
+                Text("Work observed").font(.headline)
+                if let batches = run.batches { DiagnosticRow(label: "Mailbox batches attempted", value: "\(batches)") }
+                else {
+                    Text(run.nativeBudgetSeconds == nil ? "No native work recorded" : "Work result unavailable")
+                        .font(.caption).foregroundStyle(WalletTheme.secondary)
+                }
                 if let checked = run.checked { DiagnosticRow(label: "VTXO owners checked", value: "\(checked)") }
                 if let proofs = run.receiptProofs { DiagnosticRow(label: "Receipt proofs", value: "\(proofs)") }
                 if let complete = run.completedReceipts { DiagnosticRow(label: "Complete proofs", value: "\(complete)") }
@@ -91,8 +91,14 @@ private struct DiagnosticRunView: View {
                 if run.budgetExhausted == true { DiagnosticRow(label: "Native result", value: "SDK ceiling reached") }
                 if run.more == true { DiagnosticRow(label: "Maintenance", value: "More work remains") }
                 if run.needsForeground == true { DiagnosticRow(label: "Foreground", value: "Required") }
-                Text("Mailbox batches count nonempty dispatch attempts. These counters do not prove a round completed.")
-                    .font(.caption).foregroundStyle(WalletTheme.secondary)
+                let waiters = journal.runs.filter {
+                    $0.network == run.network && $0.waitedBehind == run.id && $0.endedWhileWaiting
+                }
+                if !waiters.isEmpty {
+                    WalletDivider()
+                    Text("Callbacks that waited").font(.headline)
+                    ForEach(waiters) { DiagnosticRunLink(run: $0) }
+                }
                 WalletDivider()
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(run.events.enumerated()), id: \.offset) { index, event in
@@ -128,6 +134,8 @@ private struct DiagnosticRunView: View {
                 NavigationLink(destination: DiagnosticLogsView(since: run.started, until: run.logUntil)) {
                     Text("View logs during this run").frame(maxWidth: .infinity)
                 }.buttonStyle(WalletButtonStyle(secondary: true))
+            } else {
+                Text("This run is no longer retained.").foregroundStyle(WalletTheme.secondary)
             }
         }.navigationTitle("Background run").navigationBarTitleDisplayMode(.inline)
     }

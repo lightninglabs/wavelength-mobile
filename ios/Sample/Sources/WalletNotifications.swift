@@ -532,7 +532,8 @@ final class WalletNotificationDelegate: NSObject, UIApplicationDelegate, UNUserN
             let expire: (String) -> Void = { reason in
                 guard !lease.finished else { return }
                 lease.expire()
-                Task { await WalletNotifications.shared.cancelReceiptRecovery(windowID, reason: reason) }
+                DiagnosticJournal.shared.observeExpiry(id: windowID, reason: reason)
+                Task { await WalletNotifications.shared.cancelReceiptRecovery(windowID) }
             }
             lease.backgroundTask = application.beginBackgroundTask(withName: "Invoice receipt", expirationHandler: {
                 Task { @MainActor in expire("iOS window expired") }
@@ -647,11 +648,8 @@ extension WalletNotifications {
         ), now: now)
     }
 
-    func cancelReceiptRecovery(_ windowID: String, reason: String = "iOS window expired") async {
+    func cancelReceiptRecovery(_ windowID: String) async {
         backgroundWork.cancelPending(windowID)
-        if let store {
-            DiagnosticJournal.shared.finish(id: windowID, network: store.network.rawValue, status: reason)
-        }
         guard activeReceiptWindow == windowID else { return }
         await store?.cancelReceiptWindow(windowID)
     }
@@ -661,15 +659,24 @@ extension WalletNotifications {
     func received(_ userInfo: [AnyHashable: Any], windowID: String,
                   lease: ReceiptFetchLease) async -> Bool {
         received(userInfo)
-        guard !lease.expired, UIApplication.shared.applicationState != .active else { return false }
+        guard !lease.expired else { return false }
         let diagnosticNetwork = store?.network.rawValue
+        guard UIApplication.shared.applicationState != .active else {
+            if let diagnosticNetwork {
+                DiagnosticJournal.shared.record(network: diagnosticNetwork, label: "Push skipped · App in foreground")
+            }
+            return false
+        }
         if let diagnosticNetwork {
             let payment = ReceiptPaymentHint(userInfo: userInfo)
             let known = payment.flatMap { validPaymentRoute($0.routeID) } ??
                 WalletNotificationRoute.parsePush(userInfo).flatMap { validWakeRoute($0) }
+            let producer = known != nil && payment == nil
+                ? (userInfo["wavelength"] as? [String: Any]).flatMap(DiagnosticProducerWake.init(payload:))
+                : nil
             DiagnosticJournal.shared.begin(id: windowID, network: diagnosticNetwork,
                 trigger: known == nil ? "Unrecognized push" : payment == nil ? "Relay wake" : "Payment hint",
-                wake: .init(entryPoint: "APNs background callback", source: known?.source.rawValue))
+                wake: .init(entryPoint: "APNs background callback", source: known?.source.rawValue, producer: producer))
         }
         defer {
             if let diagnosticNetwork {
@@ -678,7 +685,9 @@ extension WalletNotifications {
         }
         guard let hint = ReceiptPaymentHint(userInfo: userInfo) else {
             guard let id = WalletNotificationRoute.parsePush(userInfo), let route = validWakeRoute(id) else {
-                if let diagnosticNetwork { DiagnosticJournal.shared.event(id: windowID, network: diagnosticNetwork, label: "No eligible local wake route") }
+                if let diagnosticNetwork {
+                    DiagnosticJournal.shared.finish(id: windowID, network: diagnosticNetwork, status: "Rejected · No eligible local route")
+                }
                 return false
             }
             return await runMaintenance(windowID: windowID, lease: lease, expectedIdentity: route.identity)
@@ -688,7 +697,12 @@ extension WalletNotifications {
               receiptLedger.reservePresentation(routeID: hint.routeID, eventHash: hint.eventHash) else {
             // Presentation consent or a duplicate banner claim cannot consume
             // the separate opportunity to advance authorized protocol work.
-            guard let route = validWakeRoute(hint.routeID) else { return false }
+            guard let route = validWakeRoute(hint.routeID) else {
+                if validPaymentRoute(hint.routeID) == nil, let diagnosticNetwork {
+                    DiagnosticJournal.shared.finish(id: windowID, network: diagnosticNetwork, status: "Rejected · No eligible local route")
+                }
+                return false
+            }
             return await runMaintenance(windowID: windowID, lease: lease, expectedIdentity: route.identity)
         }
         defer { receiptLedger.releasePresentation(routeID: hint.routeID, eventHash: hint.eventHash) }
@@ -775,12 +789,17 @@ extension WalletNotifications {
                 DiagnosticJournal.shared.finish(id: windowID, network: store.network.rawValue, status: "No native window")
             }
         }
-        guard !lease.expired, enabled, let store else { return false }
+        guard !lease.expired, let store else { return false }
         let network = store.network
-        if activeReceiptWindow != nil {
-            DiagnosticJournal.shared.event(id: windowID, network: store.network.rawValue, label: "Waiting for native owner")
+        let journal = DiagnosticJournal.shared
+        guard enabled else {
+            journal.finish(id: windowID, network: network.rawValue, status: "Skipped · Background work disabled")
+            return false
         }
-        return await backgroundWork.run(id: windowID, lease: lease) {
+        let changed = await backgroundWork.run(id: windowID, lease: lease, onWait: { owner in
+            journal.wait(id: windowID, network: network.rawValue, behind: owner)
+        }) {
+            journal.endWait(id: windowID, network: network.rawValue, expired: false)
             // The prior owner has joined. Expiry still fences this exact callback.
             guard enabled, store.network == network,
                   await prepareWork(store, windowID, lease, expectedIdentity),
@@ -799,7 +818,11 @@ extension WalletNotifications {
             }
             let result = try? await store.runMaintenanceWindow(windowID, references: references)
             return (result?.batches ?? 0) > 0 || (result?.maintenanceChecked ?? 0) > 0
-        } ?? false
+        }
+        if changed == nil, lease.expired {
+            journal.endWait(id: windowID, network: network.rawValue, expired: true)
+        }
+        return changed ?? false
     }
 
     func validWakeRoute(_ id: String) -> WalletNotificationRoute? {

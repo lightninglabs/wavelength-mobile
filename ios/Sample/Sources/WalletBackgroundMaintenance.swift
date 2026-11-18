@@ -24,7 +24,8 @@ enum WalletBackgroundMaintenance {
                 let expire: (String) -> Void = { reason in
                     guard !lease.finished else { return }
                     lease.expire(.failed)
-                    Task { await WalletNotifications.shared.cancelReceiptRecovery(windowID, reason: reason) }
+                    DiagnosticJournal.shared.observeExpiry(id: windowID, reason: reason)
+                    Task { await WalletNotifications.shared.cancelReceiptRecovery(windowID) }
                 }
                 task.expirationHandler = { Task { @MainActor in expire("iOS window expired") } }
                 let deadline = lease.fallback { expire("Fallback deadline reached") }

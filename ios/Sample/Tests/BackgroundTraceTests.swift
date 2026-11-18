@@ -4,6 +4,52 @@ import WalletKit
 
 @MainActor
 final class BackgroundTraceTests: XCTestCase {
+    func testProducerMetadataIsOptionalAndUsesOnlyKnownReasons() throws {
+        let deadline: Int64 = 1_800_000_000
+        let wake = try XCTUnwrap(DiagnosticProducerWake(payload: [
+            "wake_reason": "scheduled_round", "wake_deadline_unix": deadline
+        ]))
+        XCTAssertEqual(wake.deadline, deadline)
+        XCTAssertEqual(wake.reason?.deadlineLabel, "Registration closes")
+        XCTAssertEqual(diagnosticTime(try XCTUnwrap(wake.deadline), milliseconds: false),
+                       Date(timeIntervalSince1970: Double(deadline)).formatted(date: .abbreviated, time: .standard))
+        XCTAssertNil(DiagnosticProducerWake(payload: ["wake_reason": "future"]))
+        XCTAssertNil(DiagnosticProducerWake(payload: ["wake_deadline_unix": deadline]))
+        for invalid: Any in [true, 0, -1, 1.25, "1800000000", Double.infinity] {
+            let signing = DiagnosticProducerWake(payload: ["wake_reason": "round_signing", "wake_deadline_unix": invalid])
+            XCTAssertEqual(signing?.reason, .roundSigning)
+            XCTAssertNil(signing?.deadline)
+        }
+        XCTAssertNil(DiagnosticProducerWake(payload: [
+            "wake_reason": "mailbox_update", "wake_deadline_unix": deadline
+        ])?.deadline)
+    }
+
+    func testWaitExpiryRetainsOwnerAndStopReasonAcrossRestart() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("journal.json")
+        let journal = DiagnosticJournal(file: file)
+        journal.begin(id: "expired", network: "signet", trigger: "Relay wake")
+        journal.wait(id: "expired", network: "signet", behind: "owner")
+        journal.observeExpiry(id: "expired", reason: "iOS window expired")
+        journal.endWait(id: "expired", network: "signet", expired: true)
+        journal.finish(id: "expired", network: "signet", status: "No native window")
+        let restored = try XCTUnwrap(DiagnosticJournal(file: file).runs.first)
+        XCTAssertEqual(restored.waitedBehind, "owner")
+        XCTAssertEqual(restored.outcomeLabel, "Expired while waiting")
+        XCTAssertEqual(restored.events.last?.label, "iOS window expired")
+        XCTAssertTrue(restored.wakeReasonUnavailable)
+
+        journal.begin(id: "later", network: "signet", trigger: "Relay wake")
+        journal.wait(id: "later", network: "signet", behind: "owner")
+        journal.endWait(id: "later", network: "signet", expired: false)
+        journal.observeExpiry(id: "later", reason: "Fallback deadline reached")
+        let admitted = try XCTUnwrap(journal.runs.last)
+        XCTAssertFalse(admitted.endedWhileWaiting)
+        XCTAssertEqual(admitted.outcomeLabel, "Fallback deadline reached")
+    }
+
     func testLegacyRunRemainsReadableWithoutInventingMeasurements() throws {
         let data = Data(#"{"id":"old","network":"signet","started":1000,"trigger":"Push","finished":2000,"status":"Yielded","events":[{"time":1000,"label":"Wake received"}]}"#.utf8)
         let run = try JSONDecoder().decode(DiagnosticRun.self, from: data)
