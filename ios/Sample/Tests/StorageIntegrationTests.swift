@@ -42,7 +42,8 @@ final class StorageIntegrationTests: XCTestCase {
         let before = try await waitForServices(client)
         XCTAssertFalse(before.identityPubKey.isEmpty)
         let receive = try await client.receiveLightning(
-            amountSat: 50_000, memo: "Storage probe \(UUID().uuidString)"
+            amountSat: 50_000, memo: "Storage probe \(UUID().uuidString)",
+            requestID: UUID().uuidString
         )
         XCTAssertFalse(receive.entry.id.isEmpty)
         XCTAssertTrue(receive.invoice.lowercased().hasPrefix("lntb"))

@@ -214,18 +214,36 @@ public actor WalletClient {
 
     /// Open a Lightning invoice to receive `amountSat` into the wallet. The
     /// native deadline bounds a stale mobile transport but does not prove a
-    /// receive was absent; reconcile Activity before retrying after timeout.
+    /// receive was absent. `requestID` must be made before the call, for
+    /// example a UUID; after an uncertain result, `lookupReceive(requestID:)`
+    /// reads what was created.
     public func receiveLightning(
         amountSat: Int64,
         memo: String = "",
+        requestID: String,
         timeoutSeconds: Int64 = 20
     ) async throws -> ReceiveResult {
         let body = try encoder.encode(ReceiveReq(
             amountSat: amountSat,
             memo: memo,
+            requestID: requestID,
             timeoutSeconds: timeoutSeconds
         ))
         return try decode(await bg { try Bindings.receive(body) })
+    }
+
+    /// Read the receive created under `requestID`, with its receipt
+    /// reference. The wallet waits for a receive call still running under
+    /// the same ID, so nil means no receive exists or is being created. It
+    /// never creates anything; any other failure throws.
+    public func lookupReceive(requestID: String) async throws -> ReceiveResult? {
+        let body = try encoder.encode(ReceiveLookupReq(requestID: requestID))
+        let result: ReceiveLookupResult = try decode(await bg { try Bindings.lookupReceive(body) })
+        guard result.found else { return nil }
+        guard let receive = result.receive else {
+            throw WalletError(message: "receive lookup found a receive without its result")
+        }
+        return receive
     }
 
     /// Allocate a fresh on-chain boarding address to deposit into.
@@ -544,11 +562,29 @@ private struct ActivityBatchRequest: Encodable {
 private struct ReceiveReq: Encodable {
     let amountSat: Int64
     let memo: String
+    let requestID: String
     let timeoutSeconds: Int64
     enum CodingKeys: String, CodingKey {
         case amountSat = "AmountSat"
         case memo = "Memo"
+        case requestID = "RequestID"
         case timeoutSeconds = "TimeoutSeconds"
+    }
+}
+
+private struct ReceiveLookupReq: Encodable {
+    let requestID: String
+    enum CodingKeys: String, CodingKey {
+        case requestID = "RequestID"
+    }
+}
+
+struct ReceiveLookupResult: Decodable {
+    let found: Bool
+    let receive: ReceiveResult?
+    enum CodingKeys: String, CodingKey {
+        case found = "Found"
+        case receive = "Receive"
     }
 }
 

@@ -122,6 +122,11 @@ enum Bindings {
         return try unwrap(MobileReceive(req, &err), err)
     }
 
+    static func lookupReceive(_ req: Data) throws -> Data {
+        var err: NSError?
+        return try unwrap(MobileLookupReceive(req, &err), err)
+    }
+
     static func deposit(_ req: Data) throws -> Data {
         var err: NSError?
         return try unwrap(MobileDeposit(req, &err), err)
@@ -266,6 +271,7 @@ enum Bindings {
     static func createWallet(_ req: Data) throws -> Data { throw missing() }
     static func unlockWallet(_ req: Data) throws -> Data { throw missing() }
     static func receive(_ req: Data) throws -> Data { throw missing() }
+    static func lookupReceive(_ req: Data) throws -> Data { throw missing() }
     static func deposit(_ req: Data) throws -> Data { throw missing() }
     static func decodeInvoice(_ req: Data) throws -> Data { throw missing() }
     static func prepareSend(_ req: Data) throws -> Data { throw missing() }

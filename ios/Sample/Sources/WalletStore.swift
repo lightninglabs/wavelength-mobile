@@ -5,12 +5,6 @@ import WalletKit
 import LocalAuthentication
 import Security
 
-private struct ReceiveCreationUncertainError: LocalizedError {
-    var errorDescription: String? {
-        "The receive request ended before Wavelength could confirm the result. Wavelength couldn’t find a newly created invoice in Activity. Check Activity before trying again."
-    }
-}
-
 struct RefreshOperation: Codable {
     let outpoints: [String]
     let amountSat: Int64
@@ -539,44 +533,32 @@ final class WalletStore: ObservableObject {
     func receiveLightning(amountSat: Int64, memo: String) async throws -> ReceiveResult {
         try await beginStateCreatingCall()
         defer { endStateCreatingCall() }
-        let baseline = try await activityEvidence()
         try requireForegroundInteraction()
-        let existingEntryIDs = Set(baseline.map(\.id))
         let receiptContext = WalletNotifications.shared.receiptCreationContext()
 
-        do {
-            let result = try await client.receiveLightning(
-                amountSat: amountSat,
-                memo: memo,
-                timeoutSeconds: 20
-            )
-            if let identity = notificationRuntimeIdentity {
-                WalletNotifications.shared.enrollReceiveWork(result, network: network.rawValue, identity: identity)
+        // A request deadline or lifecycle cancellation can race durable
+        // creation. The request ID lets the wallet return that exact invoice,
+        // with its receipt reference, instead of guessing from Activity.
+        let client = client
+        let result = try await ReceiveAdmission.create(
+            requestID: UUID().uuidString,
+            create: { requestID in
+                try await client.receiveLightning(
+                    amountSat: amountSat,
+                    memo: memo,
+                    requestID: requestID,
+                    timeoutSeconds: 20
+                )
+            },
+            lookup: { requestID in
+                try await client.lookupReceive(requestID: requestID)
             }
-            WalletNotifications.shared.enrollCreatedReceive(result, context: receiptContext)
-            return result
-        } catch {
-            guard let walletError = error as? WalletError,
-                  walletError.isReceiveOutcomeUncertain ||
-                    walletError.isDeadlineExceeded else {
-                throw error
-            }
-
-            // A request deadline or lifecycle cancellation can race durable
-            // creation. Reconcile Activity and recover that exact invoice.
-            // Never issue a second state-creating call automatically after an
-            // uncertain result.
-            await refreshOperationEvidence(force: true)
-            if let recovered = recoveredReceive(
-                amountSat: amountSat,
-                memo: memo,
-                excluding: existingEntryIDs
-            ) {
-                return recovered
-            }
-
-            throw ReceiveCreationUncertainError()
+        )
+        if let identity = notificationRuntimeIdentity {
+            WalletNotifications.shared.enrollReceiveWork(result, network: network.rawValue, identity: identity)
         }
+        WalletNotifications.shared.enrollCreatedReceive(result, context: receiptContext)
+        return result
     }
 
     func newDepositAddress(amountHintSat: Int64) async throws -> DepositResult {
@@ -738,25 +720,6 @@ final class WalletStore: ObservableObject {
         historyRead?.cancel()
         historyRead = nil
         history.isLoading = false
-    }
-
-    private func recoveredReceive(
-        amountSat: Int64,
-        memo: String,
-        excluding existingEntryIDs: Set<String>
-    ) -> ReceiveResult? {
-        guard let entry = operationActivity.first(where: {
-            !existingEntryIDs.contains($0.id) &&
-                $0.kind == "receive" &&
-                $0.amountSat == amountSat &&
-                $0.note == memo &&
-                $0.request?.type == "lightning" &&
-                !($0.request?.lightningInvoice.isEmpty ?? true)
-        }), let invoice = entry.request?.lightningInvoice else {
-            return nil
-        }
-
-        return ReceiveResult(invoice: invoice, entry: entry)
     }
 
     private func refreshBalanceSnapshot() async {
