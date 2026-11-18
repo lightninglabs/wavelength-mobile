@@ -7,6 +7,18 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class RelayRegistrationTest {
+  @Test fun newWalletCanPublishWhilePreviousSourceGrantsAwaitCleanup() {
+    val first = PushTarget("first", "signet", "old wallet", "connection")
+    val next = first.copy(route = "next", identity = "new wallet")
+    val oldGrant = RemoteGrant(first, "old-grant", 100)
+    val retired = RegistrationState(desired = first, grant = oldGrant).select(next).retire(oldGrant)
+    assertNull(retired.grant)
+    assertNull(retired.bound)
+    val enrolled = retired.copy(grant = RemoteGrant(next, "new-grant", 200)).publish(next, 180)
+    assertEquals(next.route, enrolled.bound?.id)
+    assertEquals(listOf(oldGrant), enrolled.retired)
+  }
+
   @Test fun delayedBindingCannotRestoreDisabledOrReplacedRoute() {
     val old = PushTarget("first", "signet", "wallet", "connection")
     val next = old.copy(route = "second")
