@@ -107,6 +107,7 @@ data class EntryProgress(
   @SerialName("PaymentHash") val paymentHash: String = "",
   @SerialName("Txid") val txid: String = "",
   @SerialName("VTXOOutpoint") val vtxoOutpoint: String = "",
+  @SerialName("ConfirmationHeight") val confirmationHeight: Long = 0,
 )
 
 /** Original request retained by the wallet, including receive invoices. */
@@ -193,6 +194,17 @@ data class ListResult(
 data class ActivityList(
   @SerialName("Entries") val entries: List<Entry> = emptyList(),
   @SerialName("Total") val total: Long = 0,
+  @SerialName("HasMore") val hasMore: Boolean = false,
+  @SerialName("NextCursor") val nextCursor: String = "",
+)
+
+/** Current rows for a bounded range of transitions. IDs may repeat. */
+@Serializable
+data class ActivityBatch(
+  @SerialName("high_water") val highWater: Long,
+  @SerialName("next_cursor") val nextCursor: Long,
+  @SerialName("has_more") val hasMore: Boolean,
+  val entries: List<Entry>,
 )
 
 /** The live VTXO inventory. */
