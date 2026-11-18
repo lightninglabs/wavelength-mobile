@@ -56,15 +56,17 @@ class WalletSession(private val context: Context) {
 
   private fun directory(network: WalletNetwork) = File(root, "wallets/${network.wire}")
   private fun paymentOperations(network: WalletNetwork, epoch: Long) = PaymentOperations(scope,
-    NativePaymentGateway(client, { preferences.network(network).credit }, receiptAdmission = { amount ->
-      val admission = notices.admission(network, state.value.info?.identityPubKey.orEmpty(), connectionFingerprint(),amount)
-      admission?.let { enrolled -> { result: ReceiveResult ->
-        if (epoch == generation) runCatching { enrolled(result) }.onFailure(::reportError)
-      } }
-    }),
+    NativePaymentGateway(client) { preferences.network(network).credit },
     FilePaymentJournal(File(directory(network).apply { mkdirs() }, "pending-payment.json")),
     allowed = { foreground && epoch == generation && state.value.network == network && state.value.phase == WalletPhase.OPEN },
-    onEntry = { if (epoch == generation) observeActivity(it) }, network = network)
+    onEntry = { if (epoch == generation) observeActivity(it) }, network = network,
+    receiptConsentEpoch = {
+      notices.consent(network)?.takeIf { it.identity == state.value.info?.identityPubKey &&
+        it.connection == connectionFingerprint() }?.epoch
+    },
+    enroll = { pending, result ->
+      notices.admission(network, state.value.info?.identityPubKey.orEmpty(), connectionFingerprint(), pending.amountSat)?.invoke(result)
+    })
 
   fun resume() {
     foreground = true
@@ -277,8 +279,7 @@ class WalletSession(private val context: Context) {
       launch { runCatching { client.getInfo() }.onSuccess { info -> if (epoch == generation) mutable.update { it.copy(info = info) } } }
       launch {
         if (payments.state.value.pending == null || payments.state.value.busy) return@launch
-        val evidence = activityRead { client.list(limit = 1000).activity }
-        if (evidence != null && activityIsCurrent(pager)) payments.reconcile(evidence.entries)
+        activityRead { payments.checkPending() }
       }
       balance.join()
     }

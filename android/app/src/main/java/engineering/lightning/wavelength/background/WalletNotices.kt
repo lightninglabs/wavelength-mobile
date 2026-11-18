@@ -52,13 +52,14 @@ class WalletNotices(private val context: Context) {
   /** Capture consent before invoice dispatch; a later opt-in cannot enroll it. */
   fun admission(network: WalletNetwork, identity: String, connection: String, expectedAmount: Long): ((ReceiveResult) -> Unit)? {
     val consent = consent(network)?.takeIf { it.identity == identity && it.connection == connection } ?: return null
-    return { result ->
+    return returnAdmission@{ result ->
       val reference = result.receiptReference
       if (consent(network) == consent && reference?.supported == true && result.entry.id.isNotEmpty() && expectedAmount > 0 && result.entry.amountSat == expectedAmount) {
         val enrollment = EnrolledReceipt(network.wire,consent,reference,result.entry.id,result.entry.amountSat,now())
         // A full ledger stops enrolling; never evict a live obligation for a new one.
         val kept = value.enrolled.filter { now()-it.enrolledAt < 2*24*3600 }
-        if (kept.size < 256) save(value.copy(enrolled = kept.filterNot { it.network == network.wire && it.reference == reference } + enrollment))
+        if (kept.any { it.network == network.wire && it.reference == reference }) return@returnAdmission
+        if (kept.size < 256) save(value.copy(enrolled = kept + enrollment))
       }
     }
   }

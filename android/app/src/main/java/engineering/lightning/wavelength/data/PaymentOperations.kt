@@ -21,6 +21,8 @@ data class PendingPayment(
   val existingIds: List<String>,
   val intentId: String = "",
   val paymentHash: String = "",
+  val requestId: String = "",
+  val receiptConsentEpoch: String? = null,
 ) {
   fun matches(entry: Entry): Boolean {
     if (entry.id in existingIds || entry.creditTopup || kotlin.math.abs(entry.amountSat) != amountSat) return false
@@ -29,7 +31,7 @@ data class PendingPayment(
     return when (kind) {
       "send" -> entry.kind == "send" && (entry.id == intentId ||
         (paymentHash.isNotEmpty() && entry.paymentHash == paymentHash))
-      "receive" -> entry.kind == "receive" && entry.note == note && !entry.request?.lightningInvoice.isNullOrBlank()
+      "receive" -> requestId.isEmpty() && entry.kind == "receive" && entry.note == note && !entry.request?.lightningInvoice.isNullOrBlank()
       else -> false
     }
   }
@@ -60,23 +62,20 @@ interface PaymentGateway {
   suspend fun entries(): List<Entry>
   suspend fun prepare(invoice: String, note: String): PrepareSendResult
   suspend fun send(intentId: String): SendResult
-  suspend fun receive(amount: Long, note: String): ReceiveResult
+  suspend fun receive(amount: Long, note: String, requestId: String): ReceiveResult
+  suspend fun lookupReceive(requestId: String): ReceiveResult?
   suspend fun deposit(): DepositResult
 }
 
-class NativePaymentGateway(private val client: WalletClient, private val limits: () -> CreditLimits = { CreditLimits() },
-  private val receiptAdmission: (Long) -> ((ReceiveResult) -> Unit)? = { null }) : PaymentGateway {
+class NativePaymentGateway(private val client: WalletClient, private val limits: () -> CreditLimits = { CreditLimits() }) : PaymentGateway {
   override suspend fun entries() = client.list(limit = 1000).activity?.entries ?: error("Activity unavailable")
   override suspend fun prepare(invoice: String, note: String) = limits().let {
     client.prepareSend(invoice = invoice, note = note, maxCreditSat = it.use, maxCreditTopupSat = it.topup)
   }
   override suspend fun send(intentId: String) = client.send(intentId)
-  override suspend fun receive(amount: Long, note: String): ReceiveResult {
-    val admitted = receiptAdmission(amount)
-    val result = client.receiveLightning(amount, note)
-    admitted?.invoke(result)
-    return result
-  }
+  override suspend fun receive(amount: Long, note: String, requestId: String) =
+    client.receiveLightning(amount, note, requestId)
+  override suspend fun lookupReceive(requestId: String) = client.lookupReceive(requestId)
   override suspend fun deposit() = client.newDepositAddress()
 }
 
@@ -97,6 +96,8 @@ class PaymentOperations(
   private val allowed: () -> Boolean,
   private val onEntry: (Entry) -> Unit,
   private val network: WalletNetwork = WalletNetwork.SIGNET,
+  private val receiptConsentEpoch: () -> String? = { null },
+  private val enroll: (PendingPayment, ReceiveResult) -> Unit = { _, _ -> },
 ) {
   private val mutable = MutableStateFlow(try { PaymentUiState(pending = journal.read()) }
     catch (_: Exception) { PaymentUiState(blocked = true, error = "Payment tracking is unreadable. Do not send again until it is recovered.") })
@@ -132,20 +133,41 @@ class PaymentOperations(
 
   fun receive(amount: Long, note: String) = launch {
     require(amount > 0) { "Enter an amount in sats." }
-    val pending = PendingPayment("receive", amount, note.trim(), Instant.now().epochSecond, gateway.entries().map { it.id })
+    val pending = PendingPayment("receive", amount, note.trim(), Instant.now().epochSecond, emptyList(),
+      requestId = java.util.UUID.randomUUID().toString(), receiptConsentEpoch = receiptConsentEpoch())
     persist(pending)
-    try {
-      val result = gateway.receive(amount, note.trim())
-      onEntry(result.entry)
-      mutable.update { it.copy(result = result.entry, request = result.invoice) }
-      persist(null)
-    } catch (error: Exception) {
-      // The mobile facade marks canceled/deadline outcomes as uncertain.
-      // Ordinary request rejections follow the same retry contract as iOS.
-      val message = error.message.orEmpty().lowercase()
-      if (error !is CancellationException && !message.contains("receive outcome uncertain") &&
-        !message.contains("deadline") && !message.contains("cancel")) persist(null)
+    finishReceive(pending, gateway.receive(amount, pending.note, pending.requestId))
+  }
+
+  private fun finishReceive(pending: PendingPayment, result: ReceiveResult) {
+    val warning = try {
+      if (pending.receiptConsentEpoch != null && pending.receiptConsentEpoch == receiptConsentEpoch()) {
+        enroll(pending, result)
+      }
+      null
+    } catch (error: CancellationException) {
       throw error
+    } catch (_: Exception) {
+      "Invoice ready. Payment notification enrollment failed."
+    }
+    onEntry(result.entry)
+    persist(null)
+    mutable.update { it.copy(result = result.entry, request = result.invoice, error = warning) }
+  }
+
+  suspend fun checkPending() {
+    val pending = state.value.pending ?: return
+    if (state.value.busy || !allowed()) return
+    if (pending.requestId.isEmpty()) {
+      reconcile(gateway.entries())
+      return
+    }
+    val result = gateway.lookupReceive(pending.requestId)
+    if (state.value.pending != pending || state.value.busy || !allowed()) return
+    if (result != null) finishReceive(pending, result)
+    else {
+      persist(null)
+      mutable.update { it.copy(error = it.error ?: "No active request was found. Try again.") }
     }
   }
 
@@ -182,7 +204,7 @@ class PaymentOperations(
       finally {
         mutable.update { it.copy(busy = false) }
         // A response may have been lost after the daemon committed activity.
-        runCatching { gateway.entries() }.onSuccess(::reconcile)
+        runCatching { checkPending() }
       }
     }
   }

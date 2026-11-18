@@ -30,7 +30,15 @@ class PaymentOperationsTest {
       if (lostResponse) error("deadline exceeded")
       return SendResult(entry = accepted())
     }
-    override suspend fun receive(amount: Long, note: String): ReceiveResult { calls++; error(receiveError) }
+    var found: ReceiveResult? = null
+    var lookupFails = true
+    var lookedUpId = ""
+    override suspend fun lookupReceive(requestId: String): ReceiveResult? {
+      lookedUpId = requestId
+      check(!lookupFails)
+      return found
+    }
+    override suspend fun receive(amount: Long, note: String, requestId: String): ReceiveResult { calls++; error(receiveError) }
     override suspend fun deposit() = DepositResult(address = "tb1...")
   }
 
@@ -77,7 +85,7 @@ class PaymentOperationsTest {
 
   @Test fun timedOutReceiveRecoversExactRequestWithoutAnotherCreate() = runTest {
     val gateway = Gateway(); val journal = Journal()
-    val payments = PaymentOperations(backgroundScope, gateway, journal, { true }, {})
+    val payments = PaymentOperations(backgroundScope, gateway, journal, { true }, {}, receiptConsentEpoch = { "original" })
     payments.receive(3200, "Android"); runCurrent()
     assertNotNull(journal.value)
     payments.receive(3200, "Android"); runCurrent()
@@ -87,8 +95,45 @@ class PaymentOperationsTest {
     payments.reconcile(listOf(entry.copy(note = "different")))
     assertNotNull(journal.value)
     payments.reconcile(listOf(entry))
-    assertEquals("lntbs1original", payments.state.value.request)
+    val requestId = journal.value!!.requestId
+    assertEquals(requestId, gateway.lookedUpId)
+    gateway.found = ReceiveResult(invoice = "lntbs1original", entry = entry)
+    gateway.lookupFails = false
+    var enrollments = 0
+    val restarted = PaymentOperations(backgroundScope, gateway, journal, { true }, {},
+      receiptConsentEpoch = { "original" }, enroll = { pending, result ->
+        assertEquals("original", pending.receiptConsentEpoch)
+        assertEquals("lntbs1original", result.invoice)
+        enrollments++
+        throw java.io.IOException("receipt database unavailable")
+      })
+    restarted.checkPending()
+    restarted.checkPending()
+    assertEquals(requestId, gateway.lookedUpId)
+    assertEquals(1, gateway.calls)
+    assertEquals("lntbs1original", restarted.state.value.request)
     assertNull(journal.value)
+    assertEquals(1, enrollments)
+    assertTrue(restarted.state.value.error.orEmpty().contains("notification"))
+  }
+
+  @Test fun recoveredReceiveSkipsEnrollmentAfterConsentChanges() = runTest {
+    val gateway = Gateway()
+    val journal = Journal()
+    val original = PaymentOperations(backgroundScope, gateway, journal, { true }, {},
+      receiptConsentEpoch = { "original" })
+    original.receive(3200, "Android"); runCurrent()
+    assertEquals("original", journal.value?.receiptConsentEpoch)
+
+    gateway.found = ReceiveResult(invoice = "lntbs1original", entry = Entry(id = "receive"))
+    gateway.lookupFails = false
+    val restarted = PaymentOperations(backgroundScope, gateway, journal, { true }, {},
+      receiptConsentEpoch = { "replacement" }, enroll = { _, _ -> fail("Consent changed") })
+    restarted.checkPending()
+    assertNull(journal.value)
+    assertEquals("lntbs1original", restarted.state.value.request)
+    assertNull(restarted.state.value.error)
+    assertEquals(1, gateway.calls)
   }
 
   @Test fun unreadableJournalBlocksEveryNewPayment() = runTest {
@@ -112,7 +157,7 @@ class PaymentOperationsTest {
   }
 
   @Test fun ordinaryReceiveRejectionDoesNotPermanentlyBlockTheWallet() = runTest {
-    val gateway = Gateway().apply { receiveError = "receive amount exceeds maximum" }
+    val gateway = Gateway().apply { receiveError = "receive amount exceeds maximum"; lookupFails = false }
     val journal = Journal()
     val payments = PaymentOperations(backgroundScope, gateway, journal, { true }, {})
     payments.receive(10000000, ""); runCurrent()
