@@ -36,6 +36,7 @@ import kotlinx.serialization.json.*
       "round" -> DiagnosticRound(session, route.initial, page, navigate)
       "transfers" -> DiagnosticTransfers(session, page, navigate)
       "logs" -> DiagnosticLogs(session, route.target, page, navigate)
+      "background" -> DiagnosticBackground(session,page)
       "runs" -> DiagnosticHostRuns(session, page)
       "log" -> DiagnosticPage(page) {
         SettingsValue("Time", route.initial["time"].text)
@@ -72,6 +73,7 @@ import kotlinx.serialization.json.*
       SettingsNavigation("VTXOs", Icons.Outlined.Layers) { navigate(DiagnosticRoute("vtxos", "VTXOs")) }; HorizontalDivider()
       SettingsNavigation("Rounds", Icons.Outlined.DonutLarge) { navigate(DiagnosticRoute("rounds", "Rounds")) }; HorizontalDivider()
       SettingsNavigation("Transfers & credit", Icons.Outlined.SwapVert) { navigate(DiagnosticRoute("transfers", "Transfers & credit")) }; HorizontalDivider()
+      SettingsNavigation("Background", Icons.Outlined.Schedule) { navigate(DiagnosticRoute("background", "Background")) }; HorizontalDivider()
       SettingsNavigation("App runs", Icons.Outlined.Timeline) { navigate(DiagnosticRoute("runs", "App runs")) }; HorizontalDivider()
       SettingsNavigation("Logs", Icons.AutoMirrored.Outlined.Subject) { navigate(DiagnosticRoute("logs", "Logs")) }
     }
