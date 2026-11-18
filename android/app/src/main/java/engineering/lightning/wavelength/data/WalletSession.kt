@@ -531,7 +531,8 @@ class WalletSession(private val context: Context) {
     try {
       return reads.withLock {
         requireOwner()
-        action(client, ::requireOwner)
+        // Once admitted, navigation cannot discard the reply before the caller journals it.
+        withContext(NonCancellable) { action(client, ::requireOwner) }
       }
     } finally { fundsBusy = false }
   }

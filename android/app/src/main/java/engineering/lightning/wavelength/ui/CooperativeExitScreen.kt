@@ -21,7 +21,7 @@ import kotlinx.serialization.builtins.ListSerializer
   var selected by remember { mutableStateOf(emptySet<String>()) }
   var external by remember { mutableStateOf(false) }
   val address = rememberTextFieldState()
-  var reviewed by remember { mutableStateOf(false) }
+  var review by remember { mutableStateOf<List<WalletVTXO>?>(null) }
   var fee by remember { mutableStateOf<Long?>(null) }
   var busy by remember { mutableStateOf(false) }
   var error by remember { mutableStateOf<String?>(null) }
@@ -62,8 +62,9 @@ import kotlinx.serialization.builtins.ListSerializer
         if (record.error.isNotEmpty()) Text(record.error)
       }
     }
-    if (records.isNotEmpty()) TextButton({ revision++ }, enabled = !busy) { Text("Check status") }
-    if (!reviewed) {
+    if (records.isNotEmpty() && review == null) TextButton({ revision++ }, enabled = !busy) { Text("Check status") }
+    val reviewed = review
+    if (reviewed == null) {
       Text("Choose funds", style = MaterialTheme.typography.titleLarge)
       if (funds.isEmpty()) Text("No available funds")
       val reserved = records.flatMap { it.inputs }.filter { it.pending }.map { it.outpoint }.toSet()
@@ -78,10 +79,10 @@ import kotlinx.serialization.builtins.ListSerializer
       if (external) WalletField("Destination address", address)
       WalletButton("Review exit", !busy && selection.isNotEmpty() && (!external || target.isNotBlank())) { run {
         fee = session.inspect { client -> selection.sumOf { exitFee(it, client.estimateExitFee(it.outpoint)) } }
-        reviewed = true
+        review = selection
       } }
     } else {
-      Amount(selection.sumOf { it.amountSat })
+      Amount(reviewed.sumOf { it.amountSat })
       CopyRow("Destination", target.ifEmpty { "My on-chain wallet" })
       SettingsValue("Estimated fee", fee?.let(::sats) ?: "Unavailable")
       Text("Each selected input creates a separate on-chain output. The round sets the final fee.")
@@ -89,13 +90,13 @@ import kotlinx.serialization.builtins.ListSerializer
         session.fundsAction(network) { client, requireOwner ->
           val previous = journal.read()
           val existing = previous.flatMap { it.inputs }.filter { it.pending }.map { it.outpoint }
-          check(selected.none { it in existing }) { "Check the existing exit." }
+          check(reviewed.isNotEmpty() && reviewed.none { it.outpoint in existing }) { "Check the existing exit." }
           val baseline = client.list(limit = 1000).activity?.entries ?: error("Activity unavailable")
           requireOwner()
-          val pending = BatchExit(selection.map { ExitInput(it.outpoint, it.amountSat) }, target,
+          val pending = BatchExit(reviewed.map { ExitInput(it.outpoint, it.amountSat) }, target,
             baseline.map { it.id }, Instant.now().epochSecond)
           save(previous + pending)
-          reviewed = false
+          review = null
           selected = emptySet()
           val result = try {
             pending.admitted(client.exitBatch(pending.inputs.map { it.outpoint }, target))
@@ -111,7 +112,7 @@ import kotlinx.serialization.builtins.ListSerializer
         }
         revision++
       } }
-      TextButton({ reviewed = false }, enabled = !busy) { Text("Edit") }
+      TextButton({ review = null }, enabled = !busy) { Text("Edit") }
     }
     error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
   }
