@@ -2,7 +2,7 @@ package engineering.lightning.wavelength.ui
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.net.Uri
+import engineering.lightning.wavelength.data.SendDestination
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.aspectRatio
@@ -40,13 +40,13 @@ import engineering.lightning.wavelength.data.WalletNetwork
   if (scanning) {
     AlertDialog(
       onDismissRequest = { scanning = false },
-      title = { Text("Scan a Lightning invoice") },
+      title = { Text("Scan a payment request") },
       text = {
         InvoiceCamera(onCode = { payload ->
           scanning = false
           val invoice = scannedInvoice(payload, network)
           if (invoice != null) onInvoice(invoice)
-          else error = "Use a ${network.title} Lightning invoice QR code."
+          else error = "Use a ${network.title} payment QR code."
         }, onError = {
           scanning = false
           error = "Camera unavailable. Paste or type the invoice."
@@ -62,11 +62,17 @@ import engineering.lightning.wavelength.data.WalletNetwork
 }
 
 internal fun scannedInvoice(payload: String, network: WalletNetwork): String? {
-  val text = payload.trim()
-  val invoice = if (text.startsWith("lightning:", ignoreCase = true)) {
-    Uri.decode(text.substringAfter(':').removePrefix("//"))
-  } else text
-  return invoice.takeIf(network::acceptsInvoice)
+  val target = runCatching { SendDestination.parse(payload) }.getOrNull() ?: return null
+  if (target.lightning) return target.value.takeIf(network::acceptsInvoice)
+  val address = target.value.lowercase()
+  val prefix = when (network) {
+    WalletNetwork.MAINNET -> listOf("bc1", "1", "3")
+    WalletNetwork.REGTEST -> listOf("bcrt1", "m", "n", "2")
+    else -> listOf("tb1", "m", "n", "2")
+  }
+  // Keep the complete URI so a BIP21 amount survives scanning.
+  return payload.trim().takeIf { prefix.any(address::startsWith) && address.length in 14..90 }
+
 }
 
 @Composable private fun InvoiceCamera(onCode: (String) -> Unit, onError: () -> Unit) {

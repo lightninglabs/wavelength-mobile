@@ -28,7 +28,9 @@ class SendInvoiceScanTest {
     val note = TextFieldState()
     compose.setContent {
       ModalBottomSheet(onDismissRequest = {}, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-        Column { SendDraft(invoice, note, WalletNetwork.SIGNET, false) { reviews++ } }
+        Column { SendDraft(invoice, note, WalletNetwork.SIGNET, false, { _, _ ->
+          engineering.lightning.wavewalletdk.client.InvoiceDetails(amountSat = 125)
+        }) { _, _, _ -> reviews++ } }
       }
     }
   }
@@ -44,7 +46,7 @@ class SendInvoiceScanTest {
 
   @Test fun typeAndPasteReplaceTheDraftBeforeExplicitReview() {
     openDraft()
-    val field = compose.onNodeWithContentDescription("Lightning invoice")
+    val field = compose.onNodeWithContentDescription("Invoice or Bitcoin address")
     field.performTextInput("lntbs1typed")
     field.assertTextEquals("lntbs1typed")
     compose.runOnIdle {
@@ -65,7 +67,7 @@ class SendInvoiceScanTest {
     openDraft()
     compose.onNodeWithText("Scan").performClick()
     compose.waitUntil(timeoutMillis = 30_000) { invoice.text.toString() == expected }
-    compose.onNodeWithContentDescription("Lightning invoice").assertTextEquals(expected!!)
+    compose.onNodeWithContentDescription("Invoice or Bitcoin address").assertTextEquals(expected!!)
     compose.onNodeWithText("Cancel").assertDoesNotExist()
     compose.onNodeWithText("Review").assertIsEnabled()
     compose.runOnIdle { assertEquals(0, reviews) }
