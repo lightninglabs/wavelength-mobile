@@ -50,6 +50,14 @@ final class RecoveryPresentationTests: XCTestCase {
         XCTAssertFalse(replayed.showsActivityProgress)
     }
 
+    func testReceiveWithoutLightningMetadataKeepsLedgerPresentation() throws {
+        let ledgerReceive = try entry(kind: "receive", status: "pending", phase: "payment_detected",
+                                      paymentHash: "")
+        XCTAssertEqual(ledgerReceive.displayStatus, "Receiving")
+        XCTAssertFalse(ledgerReceive.isAwaitingIncomingPayment)
+        XCTAssertTrue(ledgerReceive.showsActivityProgress)
+    }
+
     func testCreditTopupAndRefundRemainDistinctFromMerchantPayment() throws {
         let topup = try entry(kind: "send", status: "complete", phase: "confirmed", label: "credit_topup")
         XCTAssertEqual(topup.activityTitle, "Credit top-up")
@@ -66,12 +74,16 @@ final class RecoveryPresentationTests: XCTestCase {
     }
 
     private func entry(kind: String, status: String, phase: String,
-                       label: String = "", failure: String = "", outpoint: String = "") throws -> Entry {
+                       label: String = "", failure: String = "", outpoint: String = "",
+                       paymentHash: String? = nil) throws -> Entry {
+        let progress: [String: Any] = [
+            "Phase": phase, "PhaseLabel": label,
+            "PaymentHash": paymentHash ?? (kind == "receive" ? "payment-hash" : ""),
+            "Txid": "", "ConfirmationHeight": 0, "VTXOOutpoint": outpoint, "Preimage": ""
+        ]
         let json: [String: Any] = ["ID": "test", "Kind": kind, "Status": status,
             "AmountSat": 1000, "FeeSat": 0, "Counterparty": "", "Note": "",
-            "FailureCode": failure, "Progress": ["Phase": phase, "PhaseLabel": label,
-                "PaymentHash": kind == "receive" ? "payment-hash" : "", "Txid": "",
-                "ConfirmationHeight": 0, "VTXOOutpoint": outpoint, "Preimage": ""]]
+            "FailureCode": failure, "Progress": progress]
         return try JSONDecoder().decode(Entry.self, from: JSONSerialization.data(withJSONObject: json))
     }
 }
