@@ -17,6 +17,11 @@
         android:supportsRtl="true"
         android:windowSoftInputMode="adjustResize"
         android:theme="@style/Theme.Wavelength">
+        <provider android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.diagnostic-exports"
+            android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/diagnostic_export_paths" />
+        </provider>
         <meta-data android:name="firebase_messaging_auto_init_enabled" android:value="false" />
         <meta-data android:name="firebase_analytics_collection_enabled" android:value="false" />
         <service android:name=".background.WalletMessagingService" android:exported="false">
