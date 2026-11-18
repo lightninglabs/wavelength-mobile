@@ -57,3 +57,50 @@ class DiagnosticLogWindow {
 
 fun DiagnosticLog.inTimeWindow(since: Long?, until: Long?) =
   (since == null || time >= since) && (until == null || time <= until)
+
+internal data class TransferSummary(val title: String, val amount: String?, val status: String,
+  val failure: String = "", val recoveryPackage: Boolean = false, val relatedSwap: JsonElement = JsonNull)
+
+internal fun transferSummary(rail: String, item: JsonElement, ledger: List<JsonElement>): TransferSummary {
+  val diagnostic = item["diagnostic"]
+  val amount = item["amount_sat"].number.takeIf { it > 0 }?.let(::sats)
+  val unavailable = if (diagnostic["amount_read_failed"].text == "true") "Amount could not be read" else "Amount unavailable"
+  val state = diagnosticLabel(item["state"].text)
+  if (rail == "Credit") {
+    val title = when (item["type"].text.removePrefix("CREDIT_OPERATION_TYPE_")) {
+      "FUNDING" -> "Credit funding"
+      "REDEMPTION" -> "Credit redemption"
+      "PAY" -> "Credit payment"
+      "RECEIVE" -> "Credit attached to receive"
+      else -> "Credit operation"
+    }
+    val rawState = item["state"].text.removePrefix("CREDIT_OPERATION_STATE_")
+    val direction = if (rawState == "CREDITED") "credit" else "debit"
+    val id = item["operation_id"].text
+    val posted = if (id.isNotEmpty() && rawState in setOf("CREDITED", "DEBITED", "REDEEMED")) ledger.singleOrNull {
+      it["operation_id"].text == id && it["direction"].text == direction
+    }?.get("amount_sat")?.number?.takeIf { it > 0 } else null
+    return TransferSummary(title, posted?.let { "Posted · ${sats(it)}" } ?: amount?.let { "Operation amount · $it" } ?: unavailable,
+      state, item["last_error"].text)
+  }
+  if (rail == "Lightning") return TransferSummary(transferDirection(item), amount ?: unavailable, state, item["terminal_reason"].text)
+  val status = diagnosticLabel(item["phase"].text.ifEmpty { item["status"].text.removePrefix("OOR_SESSION_STATUS_") })
+  val failure = item["failure_reason"].text
+  if (item["status"].text == "OOR_SESSION_STATUS_COMPLETED" && failure.isEmpty()) {
+    when (diagnostic["kind"].text) {
+      "recovery_package" -> return TransferSummary("Ark recovery package", null, "Kept for wallet recovery", recoveryPackage = true)
+      "stored_package" -> return TransferSummary("Stored Ark package", amount ?: unavailable, "Wallet relationship unknown")
+      "lightning_receive_claim" -> {
+        val claimed = diagnostic["claimed_amount_sat"].number
+        val claimAmount = when {
+          claimed > 0 -> "Claimed to wallet · ${sats(claimed)}"
+          diagnostic["claimed_amount_read_failed"].text == "true" -> "Amount could not be read"
+          else -> "Amount unavailable"
+        }
+        return TransferSummary("Lightning receive claim", claimAmount, status, relatedSwap =
+          diagnostic["related_swap"].takeIf { it["payment_hash"].text.isNotBlank() } ?: JsonNull)
+      }
+    }
+  }
+  return TransferSummary(transferDirection(item), amount ?: unavailable, status, failure)
+}
