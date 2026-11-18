@@ -114,11 +114,22 @@ final class BackgroundWalletTests: XCTestCase {
         catch { XCTAssertEqual(error.localizedDescription, "Unlock Wavelength to continue.") }
         do { _ = try await store.sendPrepared(invalidQuote()); XCTFail("Background send was admitted") }
         catch { XCTAssertEqual(error.localizedDescription, "Unlock Wavelength to continue.") }
-        _ = try await store.runMaintenanceWindow("cold")
+        let lockedWindow = Task { try await store.runMaintenanceWindow("cold") }
+        let lockedAdmissionDeadline = Date().addingTimeInterval(5)
+        while !store.unlockWaitingForWalletWork && Date() < lockedAdmissionDeadline { await Task.yield() }
         XCTAssertTrue(store.isSessionLocked)
 
         active = true
         await store.resumeAfterBackground()
+        XCTAssertTrue(store.unlockWaitingForWalletWork)
+        XCTAssertFalse(store.canSubmitUnlock)
+        await store.unlockWithBiometrics()
+        XCTAssertEqual(authentications, 0)
+        await store.cancelReceiptWindow("cold")
+        _ = try? await lockedWindow.value
+
+        XCTAssertFalse(store.unlockWaitingForWalletWork)
+        XCTAssertTrue(store.canSubmitUnlock)
         XCTAssertTrue(store.isSessionLocked)
         await store.unlockWithBiometrics()
         XCTAssertFalse(store.isSessionLocked, store.alertMessage ?? "")
