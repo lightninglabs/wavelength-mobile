@@ -122,32 +122,61 @@ final class DiagnosticsTests: XCTestCase {
     }
 
     func testCompletedClaimUsesWalletOutputAndLinksParentSwap() throws {
-        let wire = Data(#"{"status":"OOR_SESSION_STATUS_COMPLETED","direction":"OOR_SESSION_DIRECTION_OUTGOING","amount_sat":"800","diagnostic":{"kind":"lightning_receive_claim","claimed_amount_sat":"1200","related_swap":{"payment_hash":"parent"}}}"#.utf8)
+        let wire = Data("""
+        {
+          "status": "OOR_SESSION_STATUS_COMPLETED",
+          "direction": "OOR_SESSION_DIRECTION_OUTGOING",
+          "amount_sat": "800",
+          "diagnostic": {
+            "kind": "lightning_receive_claim",
+            "claimed_amount_sat": "1200",
+            "related_swap": {
+              "payment_hash": "parent",
+              "direction": "SWAP_DIRECTION_RECEIVE",
+              "state": "SWAP_STATE_COMPLETED",
+              "amount_sat": "800",
+              "attached_credit_sat": "400"
+            }
+          }
+        }
+        """.utf8)
         let row = try JSONDecoder().decode(DiagnosticValue.self, from: wire)
         let claim = DiagnosticTransferSummary(row, rail: .oor)
         XCTAssertEqual(claim.title, "Lightning receive claim")
         XCTAssertEqual(claim.amount, "Claimed to wallet · \(WalletFormatting.sats(1200))")
         XCTAssertEqual(claim.relatedSwap?["payment_hash"].text, "parent")
+        XCTAssertEqual(claim.relatedSwap?["direction"].text, "SWAP_DIRECTION_RECEIVE")
+        XCTAssertEqual(claim.relatedSwap?["amount_sat"].int, 800)
+        XCTAssertEqual(claim.relatedSwap?["attached_credit_sat"].int, 400)
 
         var fields = row.fields
         fields["diagnostic"] = .object([
-            "kind": .string("lightning_receive_claim"), "related_swap": row["diagnostic"]["related_swap"]
+            "kind": .string("lightning_receive_claim"),
+            "related_swap": row["diagnostic"]["related_swap"],
+            "amount_read_failed": .bool(true)
         ])
         let unknown = DiagnosticTransferSummary(.object(fields), rail: .oor)
         XCTAssertEqual(unknown.amount, "Amount unavailable")
         XCTAssertNotNil(unknown.relatedSwap)
+        var failedRead = fields["diagnostic"]?.fields ?? [:]
+        failedRead["claimed_amount_read_failed"] = .bool(true)
+        fields["diagnostic"] = .object(failedRead)
+        XCTAssertEqual(DiagnosticTransferSummary(.object(fields), rail: .oor).amount, "Amount could not be read")
         fields["status"] = .string("OOR_SESSION_STATUS_FAILED")
         XCTAssertNil(DiagnosticTransferSummary(.object(fields), rail: .oor).relatedSwap)
     }
 
-    func testCreditLabelsDistinguishHoldsPostedAmountsAndFailures() {
+    func testCreditLabelsDistinguishHoldsPostedAmountsAndFailures() throws {
         let receive = DiagnosticValue.string("CREDIT_OPERATION_TYPE_RECEIVE")
-        let ledger: [DiagnosticValue] = [
-            .object(["operation_id": .string("unrelated"), "direction": .string("debit"),
-                     "amount_sat": .integer(900)]),
-            .object(["operation_id": .string("op"), "direction": .string("debit"),
-                     "amount_sat": .integer(40)])
-        ]
+        let wire = Data("""
+        {
+          "ledger_entries": [
+            { "operation_id": "unrelated", "direction": "debit", "amount_sat": "900" },
+            { "operation_id": "op", "direction": "debit", "amount_sat": "40" }
+          ]
+        }
+        """.utf8)
+        let ledger = try JSONDecoder().decode(DiagnosticValue.self, from: wire)["ledger_entries"].items
         var fields: [String: DiagnosticValue] = [
             "operation_id": .string("op"), "type": receive, "amount_sat": .integer(50),
             "state": .string("CREDIT_OPERATION_STATE_RELEASED"), "last_error": .string("Route expired")

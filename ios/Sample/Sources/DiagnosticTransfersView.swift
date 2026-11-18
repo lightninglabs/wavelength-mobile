@@ -33,8 +33,7 @@ enum DiagnosticTransferRail: String, CaseIterable {
 
 struct DiagnosticTransfersView: View {
     @EnvironmentObject private var store: WalletStore
-    @State private var rail = DiagnosticTransferRail.oor
-    @State private var previousTokens: [String] = []
+    @State private var query = Query(rail: .oor)
     @State private var showsRecoveryPackages = false
     @State private var loadedValue: DiagnosticValue = .null
     @State private var loadError: String?
@@ -42,29 +41,38 @@ struct DiagnosticTransfersView: View {
 
     private struct Query: Equatable {
         let rail: DiagnosticTransferRail
-        let token: String
+        var previousTokens: [String] = []
+        var token: String { previousTokens.last ?? "" }
     }
 
-    private var query: Query { Query(rail: rail, token: previousTokens.last ?? "") }
+    private var rail: DiagnosticTransferRail { query.rail }
+    private var railSelection: Binding<DiagnosticTransferRail> {
+        Binding(get: { rail }, set: { selection in
+            query = Query(rail: selection)
+            showsRecoveryPackages = false
+        })
+    }
     private var value: DiagnosticValue { loadedQuery == query ? loadedValue : .null }
     private var error: String? { loadedQuery == query ? loadError : nil }
     private var items: [DiagnosticValue] { value[rail.listKey].items }
 
     var body: some View {
         WalletPage {
-            Picker("Type", selection: $rail) {
+            Picker("Type", selection: railSelection) {
                 ForEach(DiagnosticTransferRail.allCases, id: \.self) {
                     Text($0.rawValue).tag($0)
                 }
             }.pickerStyle(.segmented)
-                .onChange(of: rail) { _ in
-                    previousTokens = []
-                    showsRecoveryPackages = false
-                }
             if value == .null && error == nil { ProgressView() }
             if rail == .credit, value != .null {
                 DiagnosticRow(label: "Available", value: WalletFormatting.sats(value["available_sat"].int))
                 DiagnosticRow(label: "Reserved", value: WalletFormatting.sats(value["reserved_sat"].int))
+            }
+            if value["diagnostic"]["package_evidence_unavailable"].flag {
+                DiagnosticFailure(message: "Ark recovery evidence could not be loaded.")
+            }
+            if value["diagnostic"]["swap_evidence_unavailable"].flag {
+                DiagnosticFailure(message: "Related Lightning swaps could not be loaded.")
             }
             let groups = DiagnosticTransferGroups(items, rail: rail)
             transferRows(groups.visible)
@@ -76,13 +84,13 @@ struct DiagnosticTransfersView: View {
             if value != .null && items.isEmpty { Text("No records").foregroundStyle(WalletTheme.secondary) }
             if rail == .oor {
                 HStack {
-                    if !previousTokens.isEmpty {
-                        Button("Newer records") { previousTokens.removeLast() }
+                    if !query.previousTokens.isEmpty {
+                        Button("Newer records") { query.previousTokens.removeLast() }
                     }
                     Spacer()
                     let next = value["next_page_token"].text
                     if !next.isEmpty {
-                        Button("Older records") { previousTokens.append(next) }
+                        Button("Older records") { query.previousTokens.append(next) }
                     }
                 }
             }
@@ -125,6 +133,7 @@ struct DiagnosticTransfersView: View {
     }
 
     private func load(_ requested: Query) async {
+        guard !Task.isCancelled, requested == query else { return }
         if loadedQuery != requested {
             loadedValue = .null
             loadError = nil
@@ -233,8 +242,10 @@ struct DiagnosticTransferSummary {
                 title = "Lightning receive claim"
                 symbol = "bolt"
                 state = status
+                let claimUnavailable = details["claimed_amount_read_failed"].flag
+                    ? "Amount could not be read" : "Amount unavailable"
                 self.amount = Self.positiveAmount(details["claimed_amount_sat"])
-                    .map { "Claimed to wallet · \($0)" } ?? unavailable
+                    .map { "Claimed to wallet · \($0)" } ?? claimUnavailable
             default:
                 (title, symbol) = Self.direction(value["direction"].text)
                 state = status
