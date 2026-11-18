@@ -6,6 +6,7 @@ import engineering.lightning.wavelength.background.*
 import kotlinx.coroutines.flow.first
 import engineering.lightning.wavewalletdk.client.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -34,6 +35,10 @@ class WalletSession(private val context: Context) {
   val state = mutable.asStateFlow()
   private var observations: Job? = null
   private var foreground = false
+  private var history = ActivityHistory()
+  private var activityCursor = 0L
+  private val activitySignals = Channel<Unit>(Channel.CONFLATED)
+  private var notificationLookup: Job? = null
   private val creation = WalletCreation(
     generate = { client.generateSeed().mnemonic },
     initialize = { words ->
@@ -59,7 +64,7 @@ class WalletSession(private val context: Context) {
     }),
     FilePaymentJournal(File(directory(network).apply { mkdirs() }, "pending-payment.json")),
     allowed = { foreground && epoch == generation && state.value.network == network && state.value.phase == WalletPhase.OPEN },
-    onEntry = { if (epoch == generation) upsert(it) }, network = network)
+    onEntry = { if (epoch == generation) observeActivity(it) }, network = network)
 
   fun resume() {
     foreground = true
@@ -92,6 +97,7 @@ class WalletSession(private val context: Context) {
     }
     diagnostics.finish("Paused")
     observations?.cancel()
+    notificationLookup?.cancel()
     mutable.update { it.copy(phase = if (it.phase == WalletPhase.OPEN && it.authentication) WalletPhase.LOCKED else it.phase) }
     scope.launch {
       // Let already admitted native payment calls return before pausing intake.
@@ -151,7 +157,10 @@ class WalletSession(private val context: Context) {
   }
 
   private suspend fun startCurrent() {
-    mutable.update { it.copy(phase = WalletPhase.OPENING, error = null) }
+    history = ActivityHistory()
+    activityCursor = 0
+    mutable.update { it.copy(phase = WalletPhase.OPENING, error = null, history = history.state,
+      notificationTarget = null, notificationEntry = null) }
     val network = state.value.network
     client.start(preferences.network(network).config(network, directory(network).absolutePath, preferences.captureLevel))
   }
@@ -170,6 +179,7 @@ class WalletSession(private val context: Context) {
     pendingUnlock = null
     try {
       observations?.cancelAndJoin(); observations = null
+      notificationLookup?.cancelAndJoin(); notificationLookup = null
       reads.withLock { client.stop() }
       if (endpoints != null) preferences.endpoints(network, endpoints)
       preferences.select(network)
@@ -219,7 +229,7 @@ class WalletSession(private val context: Context) {
 
   private fun startObservations() {
     if (!foreground || observations?.isActive == true) return
-    val epoch = generation
+    val pager = history
     observations = scope.launch {
       launch {
         while (isActive) {
@@ -227,42 +237,128 @@ class WalletSession(private val context: Context) {
             diagnostics.stage("Starting ingress")
             client.setHostForeground(true)
             diagnostics.stage("Ingress started")
-            client.activity(includeExisting = true).collect { entry -> if (epoch == generation) upsert(entry) }
+            client.activity().collect { activitySignals.trySend(Unit) }
           } catch (error: CancellationException) { throw error }
-          catch (_: Exception) { delay(3_000) }
+          catch (_: Exception) { /* The periodic read catches missed signals. */ }
+          delay(3_000)
+        }
+      }
+      launch {
+        for (signal in activitySignals) reads.withLock {
+          if (activityIsCurrent(pager) && pager.state.loaded) readActivityChanges(pager)
         }
       }
       while (isActive) { refresh(); delay(5_000) }
     }
+    resolveNotification()
   }
 
   suspend fun refresh() = reads.withLock {
     val epoch = generation
-    if (state.value.phase != WalletPhase.OPEN) return@withLock
+    val pager = history
+    if (!activityIsCurrent(pager)) return@withLock
     supervisorScope {
       val balance = launch {
         try { val value = client.balance(); if (epoch == generation) { mutable.update { it.copy(balance = value) }; diagnostics.stage("Balance loaded") } }
         catch (error: CancellationException) { throw error }
         catch (_: Exception) { /* Keep the last observed balance while reconnecting. */ }
       }
-      val activity = launch {
-        try {
-          val before = mutable.value.activity.associateBy { it.id }
-          val result = client.list(limit = 1000).activity ?: error("Activity unavailable")
-          if (epoch == generation) mutable.update { current ->
-            current.copy(activity = mergeActivitySnapshot(before, result.entries, current.activity), activityLoaded = true, error = null)
+      launch {
+        if (!pager.state.loaded) readActivityPage(pager)
+        else {
+          val head = activityRead { client.list(limit = 1).activity }
+          if (head != null && activityIsCurrent(pager)) {
+            pager.updateOverlay(head.entries)
+            publishHistory()
           }
-          if (epoch == generation) diagnostics.stage("Activity loaded")
-        } catch (error: CancellationException) { throw error }
-        catch (error: Exception) { if (epoch == generation) fail(error, fatal = false) }
+        }
+        if (activityIsCurrent(pager) && pager.state.loaded) readActivityChanges(pager)
       }
       launch { runCatching { client.getInfo() }.onSuccess { info -> if (epoch == generation) mutable.update { it.copy(info = info) } } }
-      balance.join(); activity.join()
-      pendingNotification?.takeIf { it.first == state.value.network && state.value.activity.any { entry -> entry.id == it.second } }?.let { target ->
-        mutable.update { it.copy(notificationTarget = target.second) }
+      launch {
+        if (payments.state.value.pending == null || payments.state.value.busy) return@launch
+        val evidence = activityRead { client.list(limit = 1000).activity }
+        if (evidence != null && activityIsCurrent(pager)) payments.reconcile(evidence.entries)
       }
-      if (epoch == generation) payments.reconcile(mutable.value.activity)
+      balance.join()
     }
+  }
+
+  fun loadOlderActivity() {
+    val pager = history
+    val requested = pager.state
+    if (requested.loading || (requested.loaded && requested.nextCursor == null)) return
+    scope.launch {
+      reads.withLock {
+        if (!activityIsCurrent(pager) || requested.loaded != pager.state.loaded ||
+          requested.nextCursor != pager.state.nextCursor) return@withLock
+        readActivityPage(pager)
+        if (activityIsCurrent(pager) && pager.state.loaded) readActivityChanges(pager)
+      }
+    }
+  }
+
+  private fun activityIsCurrent(pager: ActivityHistory) =
+    foreground && history === pager && state.value.phase == WalletPhase.OPEN
+
+  private fun publishHistory() { mutable.update { it.copy(history = history.state) } }
+
+  private suspend fun readActivityPage(pager: ActivityHistory) {
+    val requested = pager.state
+    var failed = false
+    pager.loading()
+    publishHistory()
+    try {
+      val baseline = if (requested.loaded) activityCursor else client.activityCursor()
+      if (!activityIsCurrent(pager)) return
+      val page = client.list(limit = ActivityHistory.PAGE_SIZE, cursor = requested.nextCursor.orEmpty()).activity
+        ?: error("Activity unavailable")
+      if (!activityIsCurrent(pager)) return
+      pager.append(page, requested.nextCursor)
+      activityCursor = baseline
+      if (!requested.loaded) {
+        diagnostics.stage("Activity loaded")
+        pager.state.entries.forEach(::suppressVisibleReceipt)
+      }
+    } catch (error: CancellationException) {
+      throw error
+    } catch (_: Exception) {
+      failed = true
+    } finally {
+      if (history === pager) {
+        pager.finish(failed)
+        publishHistory()
+      }
+    }
+  }
+
+  private suspend fun readActivityChanges(pager: ActivityHistory) {
+    var through = 0L
+    repeat(4) {
+      val batch = activityRead { client.readActivityBatch(activityCursor, through) } ?: return
+      if (!activityIsCurrent(pager)) return
+      pager.mergeChanges(batch.entries)
+      publishHistory()
+      batch.entries.distinctBy { it.id }.forEach { entry ->
+        suppressVisibleReceipt(entry)
+        if (state.value.notificationEntry?.id == entry.id) {
+          mutable.update { it.copy(notificationEntry = entry) }
+        }
+      }
+      activityCursor = batch.nextCursor
+      if (!batch.hasMore) return
+      through = batch.highWater
+    }
+    // Release the read lock between passes so paging and other reads can run.
+    activitySignals.trySend(Unit)
+  }
+
+  private suspend fun <T> activityRead(read: suspend () -> T): T? = try {
+    read()
+  } catch (error: CancellationException) {
+    throw error
+  } catch (_: Exception) {
+    null
   }
 
   fun openNotification(network: String?, receipt: String?) {
@@ -270,8 +366,48 @@ class WalletSession(private val context: Context) {
     if (receipt == null || !notices.knownReceipt(selected,receipt)) return
     pendingNotification = selected to receipt
     if (selected != state.value.network) reportError(IllegalStateException("Open ${selected.title} to view this payment."))
-    else if (state.value.activity.any { it.id == receipt }) mutable.update { it.copy(notificationTarget = receipt) }
+    else resolveNotification()
   }
+
+  private fun resolveNotification() {
+    val target = pendingNotification ?: return
+    val pager = history
+    if (target.first != state.value.network || !activityIsCurrent(pager)) return
+    notificationLookup?.cancel()
+    notificationLookup = scope.launch {
+      try {
+        // A tap can target an unloaded row. Resolve it separately so the
+        // home pager keeps the reader's position and its own continuation.
+        var entry = state.value.activity.firstOrNull { it.id == target.second }
+        var cursor = ""
+        while (entry == null) {
+          val page = reads.withLock {
+            if (!activityIsCurrent(pager) || pendingNotification != target) return@launch
+            client.list(kinds = listOf("receive"), limit = 100, cursor = cursor).activity
+              ?: error("Activity unavailable")
+          }
+          entry = page.entries.firstOrNull { it.id == target.second }
+          if (!page.hasMore) break
+          check(page.nextCursor.isNotEmpty() && page.nextCursor != cursor)
+          cursor = page.nextCursor
+        }
+        if (!activityIsCurrent(pager) || pendingNotification != target) return@launch
+        if (entry == null) {
+          pendingNotification = null
+          reportError(IllegalStateException("This payment is no longer available."))
+        } else {
+          mutable.update { it.copy(notificationEntry = entry, notificationTarget = target.second) }
+        }
+      } catch (error: CancellationException) {
+        throw error
+      } catch (_: Exception) {
+        if (activityIsCurrent(pager) && pendingNotification == target) {
+          reportError(IllegalStateException("Couldn’t open this payment. Tap the notification to retry."))
+        }
+      }
+    }
+  }
+
   fun consumeNotification() { pendingNotification = null; mutable.update { it.copy(notificationTarget = null) } }
 
   fun connectionFingerprint(): String {
@@ -390,10 +526,15 @@ class WalletSession(private val context: Context) {
   }
   fun dismissError() { mutable.update { it.copy(error = null) } }
   fun reportError(error: Throwable) = fail(error, fatal = false)
-  fun upsert(entry: Entry) {
+  private fun observeActivity(entry: Entry) {
+    suppressVisibleReceipt(entry)
+    activitySignals.trySend(Unit)
+  }
+
+  private fun suppressVisibleReceipt(entry: Entry) {
     if (foreground && state.value.phase == WalletPhase.OPEN && entry.status == "complete")
       runCatching { notices.suppressVisible(state.value.network, entry.id) }.onFailure(::reportError)
-    mutable.update { it.copy(activity = it.activity.filterNot { old -> old.id == entry.id } + entry) } }
+  }
   private fun fail(error: Throwable, fatal: Boolean = true) {
     if (error is CancellationException) throw error
     if (fatal) pendingUnlock = null
@@ -413,8 +554,10 @@ data class WalletUiState(
   val recoveryWords: List<String>? = null,
   val info: Info? = null,
   val balance: Balance? = null,
-  val activity: List<Entry> = emptyList(),
-  val activityLoaded: Boolean = false,
+  val history: ActivityHistoryState = ActivityHistoryState(),
   val error: String? = null,
   val notificationTarget: String? = null,
-)
+  val notificationEntry: Entry? = null,
+) {
+  val activity: List<Entry> get() = history.entries
+}
