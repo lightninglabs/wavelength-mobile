@@ -1,6 +1,9 @@
 package engineering.lightning.wavelength.ui
 
 import android.content.Intent
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
@@ -18,7 +21,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable internal fun RecoveryMenu(session: WalletSession, modifier: Modifier, navigate: (WalletScreen) -> Unit) {
-  DiagnosticPage(modifier) {
+  Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp)) {
     val operations by session.payments.state.collectAsState()
     if (operations.unresolved.isNotEmpty()) DetailSection("Payment checks") {
       Text("These payments may still complete.")
@@ -30,13 +33,15 @@ import kotlinx.coroutines.withContext
       }
     }
     SettingsNavigation("Unilateral exit", Icons.Outlined.ArrowOutward) { navigate(WalletScreen.UNILATERAL) }
+    HorizontalDivider()
     SettingsNavigation("Send on-chain funds", Icons.Outlined.Send) { navigate(WalletScreen.SWEEP) }
+    HorizontalDivider()
     SettingsNavigation("Export recovery data", Icons.Outlined.Save) { navigate(WalletScreen.EXPORT) }
   }
 }
 
 @Composable internal fun UnilateralScreen(session: WalletSession, network: WalletNetwork, modifier: Modifier) {
-  var funds by remember { mutableStateOf(emptyList<WalletVTXO>()) }
+  var funds by remember { mutableStateOf<List<WalletVTXO>?>(null) }
   var jobs by remember { mutableStateOf(emptyList<ExitSummaryEntry>()) }
   var selected by remember { mutableStateOf("") }
   var plan by remember { mutableStateOf<ExitPlanEntry?>(null) }
@@ -68,7 +73,7 @@ import kotlinx.coroutines.withContext
       catch (e: Exception) { error = e.message } finally { busy = false }
     }
   }
-  DiagnosticPage(modifier) {
+  FundPage(modifier) {
     val item = plan
     if (statusFor.isNotEmpty()) {
       val result = status
@@ -106,7 +111,7 @@ import kotlinx.coroutines.withContext
         else -> {
           Text("Recovery sends these funds to your on-chain wallet. It includes a block waiting period and cannot be undone.")
           if (item.roundCommitment.isNotEmpty()) Text("These funds belong to an active round. Recovery may interrupt it.")
-          Row { Text("I understand", Modifier.weight(1f)); Checkbox(acknowledged, { acknowledged = it }) }
+          WalletToggle("I understand", acknowledged, !busy) { acknowledged = it }
           WalletButton("Start unilateral exit", acknowledged && !busy) { run {
             session.fundsAction(network) { client, requireOwner ->
               val current = client.exitPlan(item.outpoint).plans.single { it.outpoint == item.outpoint }
@@ -122,11 +127,12 @@ import kotlinx.coroutines.withContext
       }
       TextButton({ plan = null; acknowledged = false }, enabled = !busy) { Text("Choose funds") }
     } else {
-      jobs.forEach { job -> WalletButton("View recovery · ${sats(job.vtxoAmountSat)}", secondary = true) { statusFor = job.outpoint } }
-      if (funds.isEmpty()) Text("No available funds")
-      funds.forEach { fund -> Row {
-        RadioButton(selected == fund.outpoint, { selected = fund.outpoint }, enabled = !busy)
-        CopyRow(sats(fund.amountSat), fund.outpoint)
+      jobs.forEach { job -> SettingsNavigation(sats(job.vtxoAmountSat), Icons.Outlined.Restore, diagnosticLabel(job.status)) { statusFor = job.outpoint } }
+      if (funds == null && error == null) CircularProgressIndicator()
+      if (funds?.isEmpty() == true) Text("No available funds", color = MaterialTheme.colorScheme.onSurfaceVariant)
+      Text("Choose funds", style = MaterialTheme.typography.titleLarge)
+      Column { funds.orEmpty().forEach { fund ->
+        FundChoice(fund, selected == fund.outpoint, !busy, single = true) { selected = fund.outpoint }
       } }
       WalletButton("Check recovery plan", selected.isNotEmpty() && !busy) { run {
         plan = session.inspect { client -> client.exitPlan(selected).plans.single { it.outpoint == selected } }
@@ -141,7 +147,7 @@ import kotlinx.coroutines.withContext
 @Composable internal fun RecoveryExportScreen(session: WalletSession, modifier: Modifier) {
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
-  var funds by remember { mutableStateOf(emptyList<WalletVTXO>()) }
+  var funds by remember { mutableStateOf<List<WalletVTXO>?>(null) }
   var selected by remember { mutableStateOf(emptySet<String>()) }
   var busy by remember { mutableStateOf(false) }
   var error by remember { mutableStateOf<String?>(null) }
@@ -150,15 +156,22 @@ import kotlinx.coroutines.withContext
     catch (e: CancellationException) { throw e }
     catch (e: Exception) { error = e.message }
   }
-  DiagnosticPage(modifier) {
+  FundPage(modifier) {
     Text("Export the signed recovery package for the selected funds. Anyone you share it with can inspect the recovery transactions.")
-    if (funds.isEmpty()) Text("No available funds") else TextButton({ selected =
-      if (selected.size == funds.size) emptySet() else funds.map { it.outpoint }.toSet() }, enabled = !busy) {
-      Text(if (selected.size == funds.size) "Deselect all" else "Select all")
+    if (funds == null && error == null) CircularProgressIndicator()
+    val available = funds.orEmpty()
+    if (funds?.isEmpty() == true) {
+      Text("No available funds", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    } else if (available.isNotEmpty()) {
+      val allSelected = selected.size == available.size
+      TextButton({
+        selected = if (allSelected) emptySet() else available.map { it.outpoint }.toSet()
+      }, enabled = !busy) {
+        Text(if (allSelected) "Deselect all" else "Select all")
+      }
     }
-    funds.forEach { fund -> Row {
-      Checkbox(fund.outpoint in selected, { on -> selected = if (on) selected + fund.outpoint else selected - fund.outpoint }, enabled = !busy)
-      CopyRow(sats(fund.amountSat), fund.outpoint)
+    Column { funds.orEmpty().forEach { fund ->
+      FundChoice(fund, fund.outpoint in selected, !busy) { on -> selected = if (on) selected + fund.outpoint else selected - fund.outpoint }
     } }
     WalletButton("Export package", selected.isNotEmpty() && !busy) {
       val selection = selected.sorted()

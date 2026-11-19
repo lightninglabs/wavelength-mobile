@@ -292,6 +292,13 @@ class WalletSession(private val context: Context) {
           (it.status == "live" && it.batchExpiry.toLong() in 1..height) }.sumOf { it.amountSat }
         mutable.update { it.copy(recoverableSat = recoverable) }
       }
+      launch {
+        val saved = runCatching { refreshJournal(directory(state.value.network)).read() }.getOrElse { return@launch }
+        val observed = saved?.let { receipt -> activityRead { client.observeRefresh(receipt.outpoints) } }
+        if (activityIsCurrent(pager)) mutable.update { wallet ->
+          wallet.copy(refreshAmountSat = saved?.amountSat, refreshStatus = observed.label)
+        }
+      }
       balance.join()
     }
   }
@@ -621,6 +628,8 @@ data class WalletUiState(
   val info: Info? = null,
   val balance: Balance? = null,
   val recoverableSat: Long = 0,
+  val refreshAmountSat: Long? = null,
+  val refreshStatus: String = "",
   val history: ActivityHistoryState = ActivityHistoryState(),
   val error: String? = null,
   val notificationTarget: String? = null,

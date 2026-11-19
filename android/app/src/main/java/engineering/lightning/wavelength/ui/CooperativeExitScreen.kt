@@ -1,6 +1,8 @@
 package engineering.lightning.wavelength.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -17,7 +19,7 @@ import kotlinx.serialization.builtins.ListSerializer
   val journal = remember(network) { FundJournal(File(session.fundsDirectory(network), "batch-exits.json"),
     ListSerializer(BatchExit.serializer()), emptyList()) }
   var records by remember { mutableStateOf(emptyList<BatchExit>()) }
-  var funds by remember { mutableStateOf(emptyList<WalletVTXO>()) }
+  var funds by remember { mutableStateOf<List<WalletVTXO>?>(null) }
   var selected by remember { mutableStateOf(emptySet<String>()) }
   var external by remember { mutableStateOf(false) }
   val address = rememberTextFieldState()
@@ -27,7 +29,7 @@ import kotlinx.serialization.builtins.ListSerializer
   var error by remember { mutableStateOf<String?>(null) }
   var revision by remember { mutableIntStateOf(0) }
   val scope = rememberCoroutineScope()
-  val selection = funds.filter { it.outpoint in selected }
+  val selection = funds.orEmpty().filter { it.outpoint in selected }
   fun save(next: List<BatchExit>) { journal.write(next); records = next }
   LaunchedEffect(revision) {
     try {
@@ -58,7 +60,8 @@ import kotlinx.serialization.builtins.ListSerializer
       catch (e: Exception) { error = e.message } finally { busy = false }
     }
   }
-  DiagnosticPage(modifier) {
+  BackHandler(review != null && !busy) { review = null }
+  FundPage(modifier) {
     records.asReversed().forEach { record ->
       DetailSection("Exit · ${sats(record.inputs.sumOf { it.sats })}") {
         if (record.destination.isNotBlank()) CopyRow("Destination", record.destination)
@@ -73,27 +76,27 @@ import kotlinx.serialization.builtins.ListSerializer
     val reviewed = review
     if (reviewed == null) {
       Text("Choose funds", style = MaterialTheme.typography.titleLarge)
-      if (funds.isEmpty()) Text("No available funds")
+      if (funds == null && error == null) CircularProgressIndicator()
+      if (funds?.isEmpty() == true) Text("No available funds", color = MaterialTheme.colorScheme.onSurfaceVariant)
       val reserved = records.flatMap { it.inputs }.filter { it.pending }.map { it.outpoint }.toSet()
-      funds.forEach { fund ->
-        Row {
-          Checkbox(fund.outpoint in selected, { checked -> selected = if (checked) selected + fund.outpoint else selected - fund.outpoint },
-            enabled = !busy && fund.outpoint !in reserved)
-          CopyRow(sats(fund.amountSat), fund.outpoint)
+      Column {
+        funds.orEmpty().forEach { fund ->
+          FundChoice(fund, fund.outpoint in selected, !busy && fund.outpoint !in reserved) { checked ->
+            selected = if (checked) selected + fund.outpoint else selected - fund.outpoint
+          }
         }
       }
-      Row { Text("External Bitcoin address", Modifier.weight(1f)); Switch(external, { external = it }, enabled = !busy) }
-      if (external) WalletField("Destination address", address)
-      WalletButton("Review exit", !busy && selection.isNotEmpty() && (!external || target.isNotBlank())) { run {
-        fee = session.inspect { client -> selection.sumOf { exitFee(it, client.estimateExitFee(it.outpoint)) } }
-        review = selection
-      } }
+      if (selection.isNotEmpty()) SettingsValue("Selected", sats(selection.sumOf { it.amountSat }))
+      WalletButton("Continue", !busy && selection.isNotEmpty()) {
+        val inputs = selection
+        review = inputs
+        fee = null
+        run { fee = session.inspect { client -> inputs.sumOf { exitFee(it, client.estimateExitFee(it.outpoint)) } } }
+      }
     } else {
-      Amount(reviewed.sumOf { it.amountSat })
-      CopyRow("Destination", target.ifEmpty { "My on-chain wallet" })
-      SettingsValue("Estimated fee", fee?.let(::sats) ?: "Unavailable")
-      Text("Each selected input creates a separate on-chain output. The round sets the final fee.")
-      WalletButton("Confirm exit", !busy && fee != null) { run {
+      ExitReview(reviewed, address, external, { external = it }, fee, busy, error, onRetry = { run {
+        fee = session.inspect { client -> reviewed.sumOf { exitFee(it, client.estimateExitFee(it.outpoint)) } }
+      } }) { run {
         session.fundsAction(network) { client, requireOwner ->
           val previous = journal.read()
           val existing = previous.flatMap { it.inputs }.filter { it.pending }.map { it.outpoint }
@@ -115,8 +118,30 @@ import kotlinx.serialization.builtins.ListSerializer
         }
         revision++
       } }
-      TextButton({ review = null }, enabled = !busy) { Text("Edit") }
+      TextButton({ review = null }, enabled = !busy) { Text("Change selection") }
     }
-    error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+    if (review == null) error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
   }
+}
+
+
+@Composable internal fun ExitReview(funds: List<WalletVTXO>, address: TextFieldState, external: Boolean,
+  onExternal: (Boolean) -> Unit, fee: Long?, busy: Boolean, error: String?, onRetry: () -> Unit, onConfirm: () -> Unit) {
+  Amount(funds.sumOf { it.amountSat })
+  if (external) WalletField("To", address, placeholder = "Bitcoin address")
+  else SettingsValue("To", "My on-chain wallet")
+  WalletToggle("Use another address", external, !busy, onExternal)
+  if (busy && fee == null) StatusLine("Estimating fee", true)
+  else SettingsValue("Estimated fee", fee?.let(::sats) ?: "Unavailable")
+  if (error != null) {
+    Text(error, color = MaterialTheme.colorScheme.error)
+    if (fee == null) TextButton(onRetry, enabled = !busy) { Text("Retry") }
+  }
+  DetailSection {
+    funds.forEach { CopyRow(sats(it.amountSat), it.outpoint) }
+    Text("Each selected input creates a separate on-chain output. The round sets the final fee.",
+      style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+  }
+  WalletButton(if (busy && fee != null) "Submitting…" else "Confirm exit",
+    !busy && fee != null && (!external || address.text.isNotBlank()), onClick = onConfirm)
 }

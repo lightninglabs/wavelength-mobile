@@ -31,12 +31,12 @@ internal enum class WalletScreen(val title: String) { HOME(""), EXIT("Exit"), RE
   navigate: (WalletScreen) -> Unit, diagnostics: Boolean = false) {
   var appearance by remember { mutableStateOf(false) }
   Column(modifier.verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 12.dp)) {
-    SettingsNavigation("Security", Icons.Outlined.Lock) { navigate(WalletScreen.SECURITY) }; HorizontalDivider()
     SettingsNavigation("Notifications", Icons.Outlined.Notifications) { navigate(WalletScreen.NOTIFICATIONS) }; HorizontalDivider()
-    SettingsNavigation("Recovery", Icons.Outlined.Restore) { navigate(WalletScreen.RECOVERY) }; HorizontalDivider()
-    SettingsNavigation("Refresh funds", Icons.Outlined.Refresh) { navigate(WalletScreen.REFRESH) }; HorizontalDivider()
-    SettingsNavigation("Cooperative exit", Icons.Outlined.ArrowOutward) { navigate(WalletScreen.EXIT) }; HorizontalDivider()
+    SettingsNavigation("Security", Icons.Outlined.Lock) { navigate(WalletScreen.SECURITY) }; HorizontalDivider()
     SettingsNavigation("Credit", Icons.Outlined.Toll) { navigate(WalletScreen.CREDIT) }; HorizontalDivider()
+    SettingsNavigation("Exit", Icons.Outlined.ArrowOutward) { navigate(WalletScreen.EXIT) }; HorizontalDivider()
+    SettingsNavigation("Refresh", Icons.Outlined.Refresh) { navigate(WalletScreen.REFRESH) }; HorizontalDivider()
+    SettingsNavigation("Recovery", Icons.Outlined.Restore) { navigate(WalletScreen.RECOVERY) }; HorizontalDivider()
     if (diagnostics) { SettingsNavigation("Diagnostics", Icons.Outlined.MonitorHeart) { navigate(WalletScreen.DIAGNOSTICS) }; HorizontalDivider() }
     SettingsNavigation("Appearance", Icons.Outlined.Contrast, state.appearance.title) { appearance = true }; HorizontalDivider()
     SettingsNavigation("Connection", Icons.Outlined.Language) { navigate(WalletScreen.CONNECTION) }; HorizontalDivider()

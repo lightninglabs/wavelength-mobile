@@ -12,16 +12,8 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.nullable
 
-@Serializable internal data class RefreshReceipt(val outpoints: List<String>, val amountSat: Long)
-
-/** An explicit retry may only preview outputs the wallet classifies as available. */
-internal fun RefreshObservation.retrySelection(receipt: RefreshReceipt): List<String>? {
-  if (complete) return emptyList()
-  return remaining.takeIf { retryAllowed && it.isNotEmpty() && it.all(receipt.outpoints::contains) }
-}
-
 @Composable internal fun RefreshScreen(session: WalletSession, network: WalletNetwork, modifier: Modifier) {
-  val journal = remember(network) { FundJournal(File(session.fundsDirectory(network), "refresh.json"), RefreshReceipt.serializer().nullable, null) }
+  val journal = remember(network) { refreshJournal(session.fundsDirectory(network)) }
   var receipt by remember { mutableStateOf<RefreshReceipt?>(null) }
   var observation by remember { mutableStateOf<RefreshObservation?>(null) }
   var preview by remember { mutableStateOf<RefreshResult?>(null) }
@@ -60,19 +52,13 @@ internal fun RefreshObservation.retrySelection(receipt: RefreshReceipt): List<St
       catch (e: Exception) { error = e.message } finally { busy = false }
     }
   }
-  DiagnosticPage(modifier) {
+  FundPage(modifier) {
     val saved = receipt
     val quote = preview
     if (saved != null && quote == null) {
       val observed = observation
       if (saved.amountSat > 0) Amount(saved.amountSat)
-      Text(when {
-        observed == null -> "Checking status"
-        observed.complete -> "Complete"
-        observed.retryAllowed && observed.confirmed > 0 -> "Partially refreshed"
-        observed.retryAllowed -> "Not completed"
-        else -> "In progress"
-      })
+      Text(observed.label)
       observed?.let {
         SettingsValue("Confirmed", "${it.confirmed} of ${saved.outpoints.size}")
         SettingsValue("Refreshed", sats(it.confirmedSat))
