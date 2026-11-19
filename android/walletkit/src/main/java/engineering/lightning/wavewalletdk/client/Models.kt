@@ -324,3 +324,21 @@ data class CreditPreview(
   @SerialName("RemainingOutpoints") val remaining: List<String> = emptyList(),
   @SerialName("RemainingAmountSat") val remainingSat: Long = 0,
 )
+
+@Serializable
+data class NotificationFeedGrant(
+  val source: String,
+  @SerialName("grant_id") val grantId: String,
+  @SerialName("subscriber_pubkey") val subscriberPubkey: String? = null,
+  @SerialName("subscriber_signature") val subscriberSignature: String? = null,
+  @SerialName("event_classes") val eventClasses: Int? = null,
+  @SerialName("expires_at_unix") val expiresAt: Long? = null,
+  val remove: Boolean = false,
+)
+
+@Serializable
+data class NotificationFeedResult(
+  @SerialName("grant_id") val grantId: String,
+  @SerialName("feed_token") val feedToken: String,
+  @SerialName("expires_at_unix") val expiresAt: Long,
+)

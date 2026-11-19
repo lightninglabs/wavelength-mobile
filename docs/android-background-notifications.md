@@ -51,7 +51,9 @@ reference. Admission captures the current wallet identity, network, connection a
 consent epoch before the create call. The successful response adds the typed
 source reference, canonical identity and original principal.
 A timeout-recovered invoice or historical activity does not enroll retrospectively.
-A bounded background check reads those specific source references. Only a complete
+A bounded background check reads those specific source references while the
+native work window advances them. A busy window can consume its full budget.
+Reading concurrently lets a verified receipt appear before the host deadline. Only a complete
 matching source/canonical proof can present a receipt. Push payloads cannot supply
 its amount, receipt reference, invoice, signer or endpoint. Amounts remain hidden
 unless the current matching consent explicitly permits them.
@@ -68,56 +70,47 @@ A tap resolves a locally claimed receipt, waits for UI authentication and opens
 its native Activity entry. Another network asks the user to open that network;
 the tap does not switch a wallet or approve a payment.
 
-## Prepared FCM integration; not active yet
+## Firebase push notifications
 
-There is no Wavelength Firebase project configured for this build. The reference
-relay currently ships Apple App Attest/APNs modules, not Android device admission
-or FCM delivery. This PR creates no Firebase project, credentials, cloud resources
-or server bypass. Scheduled maintenance and local alerts work without FCM.
-
-The app includes an FCM data-message receiver, strict versioned hint parsing,
-local route lookup and worker handoff. A hint must name a known unexpired local
-route. The worker rechecks selected network, wallet identity, connection and
-consent; cold startup checks the actual native identity again. Payload fields
-never choose a wallet, URL, invoice or RPC. The route store has no app/debug
-registrar in this PR and therefore stays empty. Adding Firebase config alone
-cannot activate enrollment. Token/installation registration and uploads are not
-performed, and FCM automatic initialization is disabled.
-
-Publisher-local Firebase values can be staged in the ignored file
-`android/firebase.local.properties`:
+The publisher supplies the following values in the ignored
+`android/firebase.local.properties` before building the tester APK.
 
 ```properties
 APP_ID=<Firebase Android application ID>
 PROJECT_ID=<Firebase project ID>
 SENDER_ID=<project number>
-API_KEY=<Firebase Android API key>
+API_KEY=<Firebase Android client API key>
+RELAY_URL=<HTTPS relay origin>
+RELAY_ALIAS=<publisher-configured Android application alias>
+RELAY_NETWORK=signet
+RELAY_SWAP_ISSUER=<trusted compressed swap source public key in hex>
 ```
 
-These public client configuration values are not server credentials. Never put
-a service-account key in the APK or repository. The Android app registration must
-use package `engineering.lightning.wavelength.wallet` and the intended signing
-certificate. The build works with all four values absent.
+Register package `engineering.lightning.wavelength.wallet` in Firebase. Use
+the same publisher-controlled signing key for distributed APKs. Configure its
+certificate digest at the relay. The tester needs a supported Google Play
+services device and can install the signed APK directly. Play Integrity checks
+the package, publisher signature, device integrity and fresh registration
+challenge. Each opted-in installation holds its own Android Keystore key.
+The Firebase project owner is the publisher. Testers need no project access.
+Keep relay sender credentials on the server.
 
-Activation requires a separate reviewed server/application integration:
+With the default network endpoints selected, enable **Payment alerts**, then
+**Push notifications** in Settings → Notifications. The second switch registers
+the Firebase installation for delivery. The wallet signs each source offer,
+and the installation signs its corresponding relay binding. The local route
+becomes usable once both producers are bound. Local receipt verification and
+amount consent apply to every payment alert. WorkManager retries registration
+and rotates changed destinations. Opening the wallet permits wallet signatures
+for renewal or removal. Opting out immediately disables the local route and
+queues relay revocation. Expired routes reject incoming hints.
 
-1. Select and implement publisher-controlled Android device authentication that
-   binds the exact relay challenge, application/signing audience, installation key
-   and request payload. Do not relax the Apple authenticator or add an HTTP bypass.
-2. Add an FCM delivery provider with server-held credentials, destination refresh,
-   expiry and invalid-registration handling. Use the current Firebase registration
-   API appropriate to the configured SDK; installation identifiers are sensitive
-   routing metadata, not authentication.
-3. Add client enrollment, renewal/revocation, rotation and lost-response recovery.
-   Persist relay grants before wallet-authorized source binding. Only authenticated
-   enrollment may populate `notification-relay-routes.json` after verified binding.
-4. Send **data-only** messages with `version`, `route_id`, `kind` (`wake` or
-   `payment_activity`) and a lowercase 32-byte hex `event_id` for payment hints.
-   Never send an FCM `notification` payload: Android may display it before app
-   validation. Use normal priority for silent maintenance hints. High priority is
-   reserved for user-visible events and must follow Firebase policy.
-5. Validate real provider delivery, route revocation and physical-device behavior.
-   An emulator worker or local fixture is not evidence of push delivery.
+For an emulator without a physical-device integrity verdict, use a debug APK
+with a separate relay alias ending in `.emulator`. Verify the installed APK's
+signer, then pair its **Emulator pairing fingerprint** at the relay. This
+credential is specific to the test installation. Distribute tester APKs with
+the standard signer-based alias. Switching Firebase projects requires a new
+configured APK and relay policy, followed by fresh device registration.
 
 For diagnostic context, wake data can optionally carry `wake_reason` and the
 UTC second `wake_deadline_unix` as strings. Only a locally validated wake route

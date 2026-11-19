@@ -22,6 +22,7 @@ data class WalletConfig(
   val walletPollIntervalSeconds: Long? = null,
 
   @SerialName("swap_server_address") val swapServerAddress: String? = null,
+  @SerialName("swap_notification_issuer") val swapNotificationIssuer: String? = null,
   @SerialName("swap_server_insecure") val swapServerInsecure: Boolean? = null,
 
   @SerialName("debug_level") val debugLevel: String? = null,

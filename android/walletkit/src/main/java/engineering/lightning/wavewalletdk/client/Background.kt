@@ -16,6 +16,12 @@ data class LightningReceipt(val reference: ReceiptReference,
 internal data class ReceiptReadRequest(val references: List<ReceiptReference>,
   @SerialName("created_after_unix") val createdAfterUnix: Long)
 
+@Serializable
+internal data class BackgroundWorkRequest(
+  @SerialName("window_id") val windowId: String,
+  val references: List<ReceiptReference>,
+)
+
 /** A bounded attempt, never a proof of global catch-up or round completion. */
 @Serializable
 data class MaintenanceResult(val receipts: List<LightningReceipt> = emptyList(), val batches: Int = 0,

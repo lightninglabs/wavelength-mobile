@@ -20,7 +20,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import engineering.lightning.wavelength.background.WalletFirebase
+import engineering.lightning.wavelength.BuildConfig
 import engineering.lightning.wavelength.data.*
 
 @Composable internal fun NotificationsScreen(session: WalletSession, state: WalletUiState, modifier: Modifier) {
@@ -66,8 +66,31 @@ import engineering.lightning.wavelength.data.*
     HorizontalDivider()
     SettingsValue("Background maintenance","Automatic")
     Text("Android chooses when to run. The wallet can stay locked. Round completion is not guaranteed.",style = MaterialTheme.typography.bodySmall,color = MaterialTheme.colorScheme.onSurfaceVariant)
-    SettingsValue("Push delivery",if (WalletFirebase.configured) "Awaiting relay enrollment" else "Not configured for this build")
-    Text("Scheduled checks work without Firebase. Push delivery needs publisher configuration and Android relay enrollment.",style = MaterialTheme.typography.bodySmall,color = MaterialTheme.colorScheme.onSurfaceVariant)
+    val identity = state.info?.identityPubKey.orEmpty()
+    val connection = session.connectionFingerprint()
+    if (session.relay.configured && state.network.wire == BuildConfig.FIREBASE_RELAY_NETWORK &&
+      state.settings.endpoints == EndpointOverrides() && consent != null && identity == consent.identity &&
+      connection == consent.connection) {
+      var enabled by remember(identity,connection,consent) {
+        mutableStateOf(session.relay.wants(state.network.wire,identity,connection))
+      }
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+          Text("Push notifications")
+          Text("Let the relay wake this wallet for rounds and payment updates.", style = MaterialTheme.typography.bodySmall)
+        }
+        Switch(enabled, { on ->
+          session.relay.select(state.network.wire,identity,connection,on)
+          enabled = on
+        })
+      }
+      if (BuildConfig.DEBUG && BuildConfig.FIREBASE_RELAY_ALIAS.endsWith(".emulator") && enabled) {
+        val fingerprint by produceState("", enabled) {
+          value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { session.relay.pairingID }
+        }
+        SettingsValue("Emulator pairing fingerprint", fingerprint)
+      }
+    }
   }
   if (confirm) AlertDialog(onDismissRequest = { confirm = false },title = { Text("Enable payment alerts?") },
     text = { Text("New invoice receipts may show generic activity alerts while the app is locked. Amounts stay hidden unless you enable them separately.") },

@@ -1,6 +1,7 @@
 package engineering.lightning.wavelength.background
 
 import android.content.Context
+import engineering.lightning.wavelength.WalletApplication
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
 import com.google.firebase.messaging.FirebaseMessagingService
@@ -10,6 +11,10 @@ import engineering.lightning.wavelength.data.WalletSession
 
 /** Prepared data-only FCM ingress. No sender can supply a native RPC or amount. */
 class WalletMessagingService : FirebaseMessagingService() {
+  override fun onRegistered(installationId: String) {
+    (application as WalletApplication).wallet.relay.schedule()
+  }
+
   override fun onMessageReceived(message: RemoteMessage) {
     // Do not use FCM notification payloads: Android would display those before
     // local route/consent/proof checks while the process is in the background.
@@ -26,17 +31,10 @@ class WalletMessagingService : FirebaseMessagingService() {
 
 }
 
-/** The reference relay currently ships Apple admission only. Fail closed. */
+/** Only a fully bound local route can admit a remote hint. */
 class RelayPushRegistry(context: Context) {
-  private val file = android.util.AtomicFile(java.io.File(context.noBackupFilesDir,"notification-relay-routes.json"))
-  // Only publisher enrollment may populate this store after authenticated relay
-  // admission and wallet-signed source binding. This PR ships no registrar or
-  // debug grant writer; a Firebase project alone cannot enroll a route.
-  private fun routes(): List<RelayRoute> = runCatching {
-    if (!file.baseFile.exists() && !java.io.File(file.baseFile.path + ".bak").exists()) emptyList()
-    else kotlinx.serialization.json.Json.decodeFromString<List<RelayRoute>>(file.readFully().toString(Charsets.UTF_8)).take(8)
-  }.getOrDefault(emptyList())
-  private fun route(id: String) = routes().singleOrNull { it.id == id && it.expiresAt > System.currentTimeMillis()/1000 }
+  private val registration = (context.applicationContext as WalletApplication).wallet.relay
+  private fun route(id: String) = registration.route(id)
   fun contains(routeId: String) = route(routeId) != null
   fun resolve(routeId: String, wallet: WalletSession): RelayRoute? = route(routeId)?.takeIf {
     val state = wallet.state.value
