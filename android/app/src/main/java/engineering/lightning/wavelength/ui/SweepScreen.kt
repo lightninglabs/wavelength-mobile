@@ -20,6 +20,16 @@ import kotlinx.serialization.builtins.ListSerializer
 internal fun SweepReceipt.checked(txs: List<OnchainTx>) = copy(checks = (checks + 1).coerceAtMost(2),
   confirmed = confirmed || (txid.isNotEmpty() && txs.any { it.txid == txid && it.status in setOf("confirmed", "complete") }))
 
+internal suspend fun checkedSweepPreview(
+  readExits: suspend () -> ExitSummary,
+  preview: suspend () -> SweepPreview,
+): SweepPreview {
+  check(readExits().exits.isEmpty()) {
+    "On-chain recovery needs funds for fees. Wait for recovery to finish before sending."
+  }
+  return preview()
+}
+
 @Composable internal fun SweepScreen(session: WalletSession, network: WalletNetwork, modifier: Modifier) {
   val journal = remember(network) { FundJournal(File(session.fundsDirectory(network), "sweeps.json"),
     ListSerializer(SweepReceipt.serializer()), emptyList()) }
@@ -79,7 +89,9 @@ internal fun SweepReceipt.checked(txs: List<OnchainTx>) = copy(checks = (checks 
         session.fundsAction(network) { client, requireOwner ->
           val prior = journal.read()
           check(prior.none { !it.separate }) { "Check the existing transfer first." }
-          val current = client.sweepWallet(target, false, quote.feeRateSatPerVByte)
+          val current = checkedSweepPreview(client::exitSummary) {
+            client.sweepWallet(target, false, quote.feeRateSatPerVByte)
+          }
           check(current.canBroadcast && current.netAmountSat == quote.netAmountSat && current.estimatedFeeSat == quote.estimatedFeeSat) {
             "Available funds or fees changed. Review the transfer again."
           }
@@ -104,7 +116,9 @@ internal fun SweepReceipt.checked(txs: List<OnchainTx>) = copy(checks = (checks 
       WalletButton("Preview transfer", loaded && !busy && destination.text.isNotBlank()) {
         val address = destination.text.toString().trim()
         run {
-          val quote = session.inspect { it.sweepWallet(address, false) }
+          val quote = session.inspect { client ->
+            checkedSweepPreview(client::exitSummary) { client.sweepWallet(address, false) }
+          }
           target = address; preview = quote
         }
       }
