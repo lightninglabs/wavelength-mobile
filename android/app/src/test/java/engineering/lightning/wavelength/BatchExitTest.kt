@@ -2,6 +2,7 @@ package engineering.lightning.wavelength
 
 import engineering.lightning.wavelength.data.*
 import engineering.lightning.wavewalletdk.client.*
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -20,6 +21,26 @@ class BatchExitTest {
     val partial = pending.admitted(ExitBatchResult(listOf(ExitBatchInput("a:0", "accepted")), activityId = "batch-exit-new"))
     val checked = partial.reconcile(listOf(entry("batch-exit-new", -900)))
     assertEquals(listOf("Exited", "Checking status"), checked.inputs.map { it.state })
+  }
+
+  @Test fun closedRequestReleasesInputsEvenWithoutActivity() = runBlocking {
+    val attempt = pending.copy(requestId = "request")
+    val recovered = attempt.recover { id -> assertEquals("request", id); null }
+    assertTrue(recovered.inputs.all { it.state == "Not exited" })
+  }
+
+  @Test fun lostReplyUsesOnlyTheReceiptAndKeepsTheOriginalActivityId() = runBlocking {
+    val attempt = pending.copy(requestId = "request")
+    val unrelated = entry("batch-exit-unrelated", -1500)
+    assertEquals(attempt, attempt.reconcile(listOf(unrelated)))
+    assertThrows(IllegalStateException::class.java) {
+      runBlocking { attempt.recover { error("wallet offline") } }
+    }
+    val receipt = ExitBatchResult(listOf(ExitBatchInput("a:0", "accepted"), ExitBatchInput("b:1", "failed")),
+      activityId = "batch-exit-original")
+    val recovered = attempt.recover { receipt }.reconcile(listOf(unrelated))
+    assertEquals(listOf("Exiting", "Not exited"), recovered.inputs.map { it.state })
+    assertEquals("Exited", recovered.reconcile(listOf(entry("batch-exit-original", -900))).inputs.first().state)
   }
 
   @Test fun estimateMustCoverSameFundsAndLeaveSpendableOutput() {

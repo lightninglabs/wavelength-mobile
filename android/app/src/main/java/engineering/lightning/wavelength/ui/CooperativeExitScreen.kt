@@ -32,9 +32,16 @@ import kotlinx.serialization.builtins.ListSerializer
   LaunchedEffect(revision) {
     try {
       session.inspect { client ->
+        check(session.state.value.network == network) { "Reopen this wallet." }
         records = journal.read()
         val activity = client.list(limit = 1000).activity?.entries ?: error("Activity unavailable")
-        val next = records.map { it.reconcile(activity) }
+        val next = records.map { record ->
+          val recovered = try {
+            record.recover(client::resolveExitBatch)
+          } catch (e: CancellationException) { throw e }
+          catch (e: Exception) { error = e.message; record }
+          recovered.reconcile(activity)
+        }
         if (next != records) save(next)
         funds = client.list(ListView.VTXOS, limit = 1000).vtxos?.vtxos.orEmpty()
       }
@@ -94,19 +101,15 @@ import kotlinx.serialization.builtins.ListSerializer
           val baseline = client.list(limit = 1000).activity?.entries ?: error("Activity unavailable")
           requireOwner()
           val pending = BatchExit(reviewed.map { ExitInput(it.outpoint, it.amountSat) }, target,
-            baseline.map { it.id }, Instant.now().epochSecond)
+            baseline.map { it.id }, Instant.now().epochSecond, requestId = java.util.UUID.randomUUID().toString())
           save(previous + pending)
           review = null
           selected = emptySet()
           val result = try {
-            pending.admitted(client.exitBatch(pending.inputs.map { it.outpoint }, target))
+            pending.admitted(client.exitBatch(pending.inputs.map { it.outpoint }, target, pending.requestId))
           } catch (e: CancellationException) { throw e }
           catch (e: Exception) {
-            val message = e.message.orEmpty()
-            val rejected = listOf("InvalidArgument", "FailedPrecondition", "Unimplemented").any {
-              message.startsWith("exit batch (do not retry without reconciling admission): rpc error: code = $it desc = ")
-            }
-            pending.copy(error = message, inputs = if (rejected) pending.inputs.map { it.copy(state = "Not exited") } else pending.inputs)
+            pending.copy(error = e.message.orEmpty())
           }
           save(previous + result)
         }

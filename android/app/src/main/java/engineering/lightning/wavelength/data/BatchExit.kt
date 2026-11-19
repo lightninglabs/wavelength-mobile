@@ -9,7 +9,7 @@ import kotlinx.serialization.Serializable
   val pending get() = state == "Checking status" || state == "Exiting"
 }
 @Serializable internal data class BatchExit(val inputs: List<ExitInput>, val destination: String,
-  val baseline: List<String>, val started: Long, val error: String = "") {
+  val baseline: List<String>, val started: Long, val error: String = "", val requestId: String = "") {
   fun admitted(reply: ExitBatchResult) = copy(destination = reply.destination.ifEmpty { destination }, inputs = inputs.map { input ->
     val row = reply.results.singleOrNull { it.outpoint == input.outpoint } ?: return@map input
     when (row.outcome) {
@@ -19,11 +19,20 @@ import kotlinx.serialization.Serializable
     }
   })
 
+  suspend fun recover(resolve: suspend (String) -> ExitBatchResult?): BatchExit {
+    if (requestId.isEmpty() || inputs.none { it.state == "Checking status" }) return this
+    val receipt = resolve(requestId) ?: return copy(error = "", inputs = inputs.map {
+      it.copy(state = "Not exited", error = "")
+    })
+    require(receipt.results.map { it.outpoint } == inputs.map { it.outpoint }) { "Exit receipt selection differs" }
+    return admitted(receipt).copy(error = "")
+  }
+
   fun reconcile(entries: List<Entry>): BatchExit {
     val fresh = entries.filter { entry -> entry.kind == "exit" && entry.counterparty != "unilateral" &&
       entry.id !in baseline && (destination.isEmpty() || entry.request?.onchainAddress == destination) &&
       (runCatching { Instant.parse(entry.createdAt).epochSecond }.getOrNull() ?: Long.MIN_VALUE) >= started }
-    val batch = if (inputs.all { it.state == "Checking status" }) fresh.singleOrNull {
+    val batch = if (requestId.isEmpty() && inputs.all { it.state == "Checking status" }) fresh.singleOrNull {
       it.id.startsWith("batch-exit-") && it.progress?.vtxoOutpoint == inputs.first().outpoint &&
         it.amountSat == -inputs.sumOf { input -> input.sats }
     } else null
@@ -31,6 +40,7 @@ import kotlinx.serialization.Serializable
       if (!input.pending) return@map input
       val entry = when {
         input.entryId.isNotEmpty() -> entries.singleOrNull { it.kind == "exit" && it.id == input.entryId }
+        requestId.isNotEmpty() -> null
         batch != null -> batch
         else -> fresh.singleOrNull { it.amountSat == -input.sats && it.progress?.vtxoOutpoint == input.outpoint }
       } ?: return@map input
