@@ -111,7 +111,10 @@ internal class RelayRegistration(private val context: Context) {
           for (role in listOf("operator", "swap_server")) {
             wallet.signRelayGrant(retired.target, NotificationFeedGrant(role, retired.subscription, remove = true))
           }
-        } catch (_: RelayWalletUnavailable) {
+        } catch (e: CancellationException) {
+          throw e
+        } catch (_: Exception) {
+          // Keep the retired grant for a later cleanup without blocking enrollment.
           continue
         }
       }
