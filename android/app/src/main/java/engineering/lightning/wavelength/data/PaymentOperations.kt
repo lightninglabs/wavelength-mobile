@@ -27,14 +27,15 @@ data class PendingPayment(
   val balanceSweep: Boolean = false,
   val recipientSat: Long? = null,
   val checks: Int = 0,
+  val exactIntentOnly: Boolean = false,
 ) {
   fun matches(entry: Entry): Boolean {
     if (entry.id in existingIds || entry.creditTopup || kotlin.math.abs(entry.amountSat) != amountSat) return false
     val created = runCatching { Instant.parse(entry.createdAt).epochSecond }.getOrNull() ?: return false
     if (created < startedAt) return false
     return when (kind) {
-      "send" -> entry.kind in setOf("send", "exit") && (entry.id == intentId ||
-        (paymentHash.isNotEmpty() && entry.paymentHash == paymentHash) ||
+      "send" -> entry.kind in setOf("send", "exit") && ((intentId.isNotBlank() && entry.id == intentId) ||
+        (!exactIntentOnly && paymentHash.isNotEmpty() && entry.paymentHash == paymentHash) ||
         (entry.kind == "exit" && destination.isNotEmpty() && entry.request?.onchainAddress == destination &&
           entry.progress?.vtxoOutpoint in selectedOutpoints))
       "receive" -> requestId.isEmpty() && entry.kind == "receive" && entry.note == note && !entry.request?.lightningInvoice.isNullOrBlank()
@@ -55,16 +56,27 @@ interface PaymentJournal {
 internal fun decodePaymentLedger(bytes: String): PaymentLedger {
   val json = Json { ignoreUnknownKeys = true }
   val record = json.parseToJsonElement(bytes)
-  if (record == JsonNull) return PaymentLedger(1)
-  return if ("version" in record.jsonObject) json.decodeFromJsonElement<PaymentLedger>(record).also {
-    require(it.version == 1) { "Unsupported payment journal version." }
-  } else PaymentLedger(1, json.decodeFromJsonElement<PendingPayment>(record))
+  if (record == JsonNull) return PaymentLedger(2)
+  if ("version" !in record.jsonObject) return PaymentLedger(2, json.decodeFromJsonElement<PendingPayment>(record))
+  val ledger = json.decodeFromJsonElement<PaymentLedger>(record)
+  if (ledger.version == 2) return ledger
+  require(ledger.version == 1) { "Unsupported payment journal version." }
+  // Older builds allowed another send to the same invoice. A completed second
+  // send may already be absent from the journal. Its Activity hash proves too little.
+  val archived = ledger.unresolved.map {
+    if (it.kind == "send" && it.paymentHash.isNotBlank()) it.copy(exactIntentOnly = true) else it
+  }
+  val pending = ledger.pending?.let { attempt ->
+    if (archived.any { it.exactIntentOnly && it.paymentHash == attempt.paymentHash })
+      attempt.copy(exactIntentOnly = true) else attempt
+  }
+  return PaymentLedger(2, pending, archived)
 }
 
 class FilePaymentJournal(file: File) : PaymentJournal {
   private val file = AtomicFile(file)
   override fun read(): PaymentLedger {
-    if (!file.baseFile.exists() && !File(file.baseFile.path + ".bak").exists()) return PaymentLedger(1)
+    if (!file.baseFile.exists() && !File(file.baseFile.path + ".bak").exists()) return PaymentLedger(2)
     return decodePaymentLedger(file.readFully().toString(Charsets.UTF_8))
   }
   override fun write(value: PaymentLedger) {
@@ -143,6 +155,9 @@ class PaymentOperations(
   fun send() = launch {
     val quote = mutable.value.quote ?: error("Review the payment first.")
     require(quote.expiresAtUnix == 0L || Instant.now().epochSecond < quote.expiresAtUnix) { "Quote expired. Review again." }
+    check(quote.paymentHash.isBlank() || state.value.unresolved.none {
+      it.kind == "send" && it.paymentHash == quote.paymentHash
+    }) { "This invoice already has a payment in Payment checks. Check it before paying again." }
     val pending = PendingPayment("send", quote.amountSat, "", Instant.now().epochSecond,
       gateway.entries().map { it.id }, quote.sendIntentId, quote.paymentHash,
       destination = quote.destinationSummary, selectedOutpoints = quote.selectedOutpoints,
@@ -244,7 +259,7 @@ class PaymentOperations(
   }
 
   private fun persist(value: PendingPayment?, unresolved: List<PendingPayment> = state.value.unresolved) {
-    journal.write(PaymentLedger(1, value, unresolved))
+    journal.write(PaymentLedger(2, value, unresolved))
     mutable.update { it.copy(pending = value, unresolved = unresolved) }
   }
 

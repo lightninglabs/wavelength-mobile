@@ -26,7 +26,8 @@ class PaymentOperationsTest {
     var receiveError = "receive outcome uncertain"
     var afterDispatch: (() -> Unit)? = null
     override suspend fun entries() = entries
-    override suspend fun prepare(terms: SendTerms) = quote
+    var prepared = quote
+    override suspend fun prepare(terms: SendTerms) = prepared
     override suspend fun send(intentId: String): SendResult {
       calls++; afterDispatch?.invoke()
       if (lostResponse) error("deadline exceeded")
@@ -157,11 +158,45 @@ class PaymentOperationsTest {
     assertEquals(1, gateway.calls)
   }
 
+  @Test fun separateSendCannotReuseUnresolvedInvoiceButCanPayADifferentOne() = runTest {
+    val gateway = Gateway()
+    val original = PendingPayment("send", 999, "", 10, emptyList(), "first", "hash", checks = 2)
+    val journal = Journal().apply { ledger = PaymentLedger(2, unresolved = listOf(original)) }
+    val payments = PaymentOperations(backgroundScope, gateway, journal, { true }, {})
+    payments.prepare("lntbs1example", ""); runCurrent()
+    payments.send(); runCurrent()
+    assertEquals(0, gateway.calls)
+    assertTrue(payments.state.value.error.orEmpty().contains("Payment checks"))
+    gateway.prepared = quote.copy(paymentHash = "different")
+    payments.prepare("lntbs1other", ""); runCurrent()
+    payments.send(); runCurrent()
+    assertEquals(1, gateway.calls)
+    assertEquals(listOf(original), journal.ledger.unresolved)
+  }
+
+  @Test fun oldSameInvoiceAttemptsOnlyResolveFromTheirOwnIntentAcrossRestart() = runTest {
+    val a = PendingPayment("send", 999, "", 10, emptyList(), "first", "hash")
+    val b = a.copy(intentId = "second")
+    fun upgrade(pending: PendingPayment?) = decodePaymentLedger(kotlinx.serialization.json.Json.encodeToString(
+      PaymentLedger.serializer(), PaymentLedger(1, pending, listOf(a))))
+    val row = accepted().copy(id = "second")
+    for (pending in listOf(b, null)) {
+      val journal = Journal().apply { ledger = upgrade(pending) }
+      fun restart() = PaymentOperations(backgroundScope, Gateway(), journal, { true }, {})
+      restart().reconcile(listOf(row, accepted()))
+      assertNull(journal.value)
+      restart().reconcile(listOf(row, accepted()))
+      assertEquals("first", journal.ledger.unresolved.single().intentId)
+      restart().reconcile(listOf(row, row.copy(id = "first")))
+      assertTrue(journal.ledger.unresolved.isEmpty())
+    }
+  }
+
   @Test fun existingPaymentJournalSurvivesUpgrade() {
     assertNull(decodePaymentLedger("null").pending)
     val old = """{"kind":"send","amountSat":125,"note":"","startedAt":10,"existingIds":[],"intentId":"old"}"""
     assertEquals("old", decodePaymentLedger(old).pending?.intentId)
-    assertTrue(runCatching { decodePaymentLedger("""{"version":2}""") }.isFailure)
+    assertTrue(runCatching { decodePaymentLedger("""{"version":3}""") }.isFailure)
   }
 
   @Test fun unreadableJournalBlocksEveryNewPayment() = runTest {
