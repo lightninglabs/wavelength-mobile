@@ -12,6 +12,7 @@ import androidx.fragment.app.FragmentActivity
 import androidx.compose.runtime.getValue
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import engineering.lightning.wavelength.background.WalletKeepAliveService
 import engineering.lightning.wavelength.data.WalletAppearance
 import engineering.lightning.wavelength.ui.WalletApp
 import engineering.lightning.wavelength.ui.WalletTheme
@@ -37,7 +38,12 @@ class MainActivity : FragmentActivity() {
     wallet.openNotification(intent.getStringExtra("notification_network"),intent.getStringExtra("notification_receipt"))
   }
 
-  override fun onStart() { super.onStart(); wallet.resume() }
+  override fun onStart() {
+    super.onStart()
+    // Only a visible app may start it, so re-arm the opt-in service here.
+    if (wallet.state.value.keepRunning) WalletKeepAliveService.start(this)
+    wallet.resume()
+  }
   override fun onStop() { wallet.pause(); super.onStop() }
 
   private fun authenticate(success: () -> Unit) {

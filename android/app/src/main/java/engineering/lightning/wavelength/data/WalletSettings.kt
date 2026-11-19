@@ -68,6 +68,9 @@ class WalletPreferences(context: Context) {
   val selectedNetwork get() = WalletNetwork.fromWire(preferences.getString("network", null))
   val appearance get() = runCatching { WalletAppearance.valueOf(preferences.getString("appearance", "SYSTEM")!!) }.getOrDefault(WalletAppearance.SYSTEM)
   val authentication get() = preferences.getBoolean("authentication", secureDevice)
+  /** Opt-in: a foreground service keeps the wallet connected in the background. */
+  val keepRunning get() = preferences.getBoolean("keep-running", false)
+  fun keepRunning(value: Boolean) { check(preferences.edit().putBoolean("keep-running", value).commit()) { "Could not save the background preference." } }
   fun network(network: WalletNetwork): NetworkSettings {
     fun text(key: String) = preferences.getString("${network.wire}.$key", "").orEmpty()
     return NetworkSettings(EndpointOverrides(text("operator"), text("swap"), text("esplora")),

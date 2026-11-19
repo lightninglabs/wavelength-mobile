@@ -21,6 +21,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import engineering.lightning.wavelength.BuildConfig
+import engineering.lightning.wavelength.background.WalletKeepAliveService
 import engineering.lightning.wavelength.data.*
 
 @Composable internal fun NotificationsScreen(session: WalletSession, state: WalletUiState, modifier: Modifier) {
@@ -44,6 +45,15 @@ import engineering.lightning.wavelength.data.*
     if (session.notices.allowedBySystem()) session.configureNotifications(true)
     else if (Build.VERSION.SDK_INT >= 33) request.launch(android.Manifest.permission.POST_NOTIFICATIONS)
   }
+  var confirmKeepRunning by remember { mutableStateOf(false) }
+  // The service runs without the permission; only its notification is hidden.
+  val keepRunningRequest = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { permission = session.notices.allowedBySystem() }
+  fun keepRunning(enabled: Boolean) {
+    session.setKeepRunning(enabled)
+    if (!session.state.value.keepRunning) { WalletKeepAliveService.stop(context); return }
+    WalletKeepAliveService.start(context)
+    if (Build.VERSION.SDK_INT >= 33 && !session.notices.allowedBySystem()) keepRunningRequest.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+  }
   Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),verticalArrangement = Arrangement.spacedBy(24.dp)) {
     Row(verticalAlignment = Alignment.CenterVertically) {
       Column(Modifier.weight(1f),verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -64,8 +74,16 @@ import engineering.lightning.wavelength.data.*
       TextButton({ context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,context.packageName)) }) { Text("Open Android settings") }
     }
     HorizontalDivider()
-    SettingsValue("Background maintenance","Automatic")
-    Text("Android chooses when to run. The wallet can stay locked. Round completion is not guaranteed.",style = MaterialTheme.typography.bodySmall,color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+      Column(Modifier.weight(1f),verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Keep running in background")
+        Text("Stays connected with an ongoing notification",style = MaterialTheme.typography.bodySmall,color = MaterialTheme.colorScheme.onSurfaceVariant)
+      }
+      Switch(state.keepRunning,{ enabled -> if (enabled) confirmKeepRunning = true else keepRunning(false) },modifier = Modifier.semantics { contentDescription = "Keep running in background" })
+    }
+    SettingsValue("Background maintenance",if (state.keepRunning) "Continuous" else "Automatic")
+    Text(if (state.keepRunning) "The wallet stays connected after you leave the app and the screen stays locked. Android can still pause it to save battery, and it starts again when you next open the app."
+      else "Android chooses when to run. The wallet can stay locked. Round completion is not guaranteed.",style = MaterialTheme.typography.bodySmall,color = MaterialTheme.colorScheme.onSurfaceVariant)
     val identity = state.info?.identityPubKey.orEmpty()
     val connection = session.connectionFingerprint()
     if (session.relay.configured && state.network.wire == BuildConfig.FIREBASE_RELAY_NETWORK &&
@@ -95,6 +113,9 @@ import engineering.lightning.wavelength.data.*
   if (confirm) AlertDialog(onDismissRequest = { confirm = false },title = { Text("Enable payment alerts?") },
     text = { Text("New invoice receipts may show generic activity alerts while the app is locked. Amounts stay hidden unless you enable them separately.") },
     dismissButton = { TextButton({ confirm = false }) { Text("Cancel") } },confirmButton = { TextButton({ confirm = false; enable() }) { Text("Enable") } })
+  if (confirmKeepRunning) AlertDialog(onDismissRequest = { confirmKeepRunning = false },title = { Text("Keep running in background?") },
+    text = { Text("Wavelength stays connected after you leave the app, so payments and wallet upkeep continue. Android shows an ongoing notification while it runs, and this uses more battery and data.") },
+    dismissButton = { TextButton({ confirmKeepRunning = false }) { Text("Cancel") } },confirmButton = { TextButton({ confirmKeepRunning = false; keepRunning(true) }) { Text("Keep running") } })
   if (amounts) AlertDialog(onDismissRequest = { amounts = false },title = { Text("Show received amounts?") },
     text = { Text("Amounts for new invoices can appear on the lock screen after local verification. Existing requests are not included.") },
     dismissButton = { TextButton({ amounts = false }) { Text("Cancel") } },confirmButton = { TextButton({ amounts = false; session.configureNotifications(true,true) }) { Text("Show amounts") } })
