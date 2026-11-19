@@ -17,8 +17,18 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-@Composable internal fun RecoveryMenu(modifier: Modifier, navigate: (WalletScreen) -> Unit) {
+@Composable internal fun RecoveryMenu(session: WalletSession, modifier: Modifier, navigate: (WalletScreen) -> Unit) {
   DiagnosticPage(modifier) {
+    val operations by session.payments.state.collectAsState()
+    if (operations.unresolved.isNotEmpty()) DetailSection("Payment checks") {
+      Text("These payments may still complete.")
+      operations.unresolved.forEach { payment ->
+        Amount(payment.recipientSat ?: payment.amountSat)
+        CopyRow("Payment reference", payment.intentId)
+        if (payment.paymentHash.isNotEmpty()) CopyRow("Payment hash", payment.paymentHash)
+        if (payment.destination.isNotEmpty()) CopyRow("Destination", payment.destination)
+      }
+    }
     SettingsNavigation("Unilateral exit", Icons.Outlined.ArrowOutward) { navigate(WalletScreen.UNILATERAL) }
     SettingsNavigation("Send on-chain funds", Icons.Outlined.Send) { navigate(WalletScreen.SWEEP) }
     SettingsNavigation("Export recovery data", Icons.Outlined.Save) { navigate(WalletScreen.EXPORT) }

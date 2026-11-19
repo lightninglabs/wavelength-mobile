@@ -133,7 +133,7 @@ import kotlin.math.abs
     when (screen) {
       WalletScreen.SETTINGS -> { SettingsScreen(session, state, page, navigate, diagnostics = true); return@Scaffold }
       WalletScreen.NOTIFICATIONS -> { NotificationsScreen(session, state, page); return@Scaffold }
-      WalletScreen.RECOVERY -> { RecoveryMenu(page, navigate); return@Scaffold }
+      WalletScreen.RECOVERY -> { RecoveryMenu(session, page, navigate); return@Scaffold }
       WalletScreen.UNILATERAL -> { UnilateralScreen(session, state.network, page); return@Scaffold }
       WalletScreen.EXPORT -> { RecoveryExportScreen(session, page); return@Scaffold }
       WalletScreen.SWEEP -> { SweepScreen(session, state.network, page); return@Scaffold }

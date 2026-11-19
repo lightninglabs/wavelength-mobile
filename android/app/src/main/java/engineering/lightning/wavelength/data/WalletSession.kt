@@ -279,7 +279,7 @@ class WalletSession(private val context: Context) {
       }
       launch { runCatching { client.getInfo() }.onSuccess { info -> if (epoch == generation) mutable.update { it.copy(info = info) } } }
       launch {
-        if (payments.state.value.pending == null || payments.state.value.busy) return@launch
+        if (payments.state.value.busy || (payments.state.value.pending == null && payments.state.value.unresolved.isEmpty())) return@launch
         activityRead { payments.checkPending() }
       }
       launch {
