@@ -51,14 +51,15 @@ class WalletSession(private val context: Context) {
   private var pendingUnlock: WalletNetwork? = null
   var payments = paymentOperations(mutable.value.network, generation)
     private set
-  val canChangeWallet: Boolean get() = maintenance.active == null && state.value.phase != WalletPhase.OPENING && state.value.recoveryWords == null &&
+  private var fundsBusy = false
+  val canChangeWallet: Boolean get() = !fundsBusy && maintenance.active == null && state.value.phase != WalletPhase.OPENING && state.value.recoveryWords == null &&
     !payments.state.value.busy && payments.state.value.pending == null && !payments.state.value.blocked
 
   private fun directory(network: WalletNetwork) = File(root, "wallets/${network.wire}")
   private fun paymentOperations(network: WalletNetwork, epoch: Long) = PaymentOperations(scope,
     NativePaymentGateway(client) { preferences.network(network).credit },
     FilePaymentJournal(File(directory(network).apply { mkdirs() }, "pending-payment.json")),
-    allowed = { foreground && epoch == generation && state.value.network == network && state.value.phase == WalletPhase.OPEN },
+    allowed = { !fundsBusy && foreground && epoch == generation && state.value.network == network && state.value.phase == WalletPhase.OPEN },
     onEntry = { if (epoch == generation) observeActivity(it) }, network = network,
     receiptConsentEpoch = {
       notices.consent(network)?.takeIf { it.identity == state.value.info?.identityPubKey &&
@@ -515,6 +516,25 @@ class WalletSession(private val context: Context) {
         backgroundHistory.finish(lease.id,lease.cancellationReason?.label ?: outcome.label)
       }
     }
+  }
+
+  internal fun fundsDirectory(network: WalletNetwork) = directory(network)
+
+  /** Serialize one reviewed action against lifecycle changes and other sends. */
+  internal suspend fun <T> fundsAction(network: WalletNetwork, action: suspend (WalletClient, () -> Unit) -> T): T {
+    val epoch = generation
+    fun requireOwner() = check(foreground && epoch == generation && state.value.network == network &&
+      state.value.phase == WalletPhase.OPEN) { "Reopen this wallet and review again." }
+    requireOwner()
+    check(canChangeWallet) { "Check the current wallet operation first." }
+    fundsBusy = true
+    try {
+      return reads.withLock {
+        requireOwner()
+        // Once admitted, navigation cannot discard the reply before the caller journals it.
+        withContext(NonCancellable) { action(client, ::requireOwner) }
+      }
+    } finally { fundsBusy = false }
   }
 
   suspend fun <T> inspect(action: suspend (WalletClient) -> T): T {

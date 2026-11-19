@@ -283,3 +283,23 @@ data class CreditPreview(
   @SerialName("CreditTopupSat") val creditTopupSat: Long = 0,
   @SerialName("ArkFundingSat") val arkFundingSat: Long = 0,
 )
+
+
+@Serializable data class ExitFeeEstimate(
+  @SerialName("Outpoint") val outpoint: String,
+  @SerialName("AmountSat") val amountSat: Long,
+  @SerialName("EstimatedFeeSat") val estimatedFeeSat: Long,
+  @SerialName("BelowDustWarning") val belowDust: Boolean,
+)
+
+@Serializable data class ExitBatchResult(
+  @SerialName("Results") val results: List<ExitBatchInput> = emptyList(),
+  @SerialName("Destination") val destination: String = "",
+  @SerialName("ActivityID") val activityId: String = "",
+)
+
+@Serializable data class ExitBatchInput(
+  @SerialName("Outpoint") val outpoint: String,
+  @SerialName("Outcome") val outcome: String,
+  @SerialName("Error") val error: String = "",
+)
