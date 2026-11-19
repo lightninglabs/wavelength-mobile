@@ -268,6 +268,9 @@ data class ExitResult(
  */
 @Serializable
 data class ExitStatusResult(
+  @SerialName("Progress") val progress: ExitProgress? = null,
+  @SerialName("CSV") val csv: ExitCSV? = null,
+  @SerialName("Fees") val fees: ExitFees? = null,
   @SerialName("Found") val found: Boolean = false,
   @SerialName("Status") val status: String = "",
   @SerialName("SweepTxid") val sweepTxid: String = "",

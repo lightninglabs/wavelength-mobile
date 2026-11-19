@@ -133,6 +133,10 @@ import kotlin.math.abs
     when (screen) {
       WalletScreen.SETTINGS -> { SettingsScreen(session, state, page, navigate, diagnostics = true); return@Scaffold }
       WalletScreen.NOTIFICATIONS -> { NotificationsScreen(session, state, page); return@Scaffold }
+      WalletScreen.RECOVERY -> { RecoveryMenu(page, navigate); return@Scaffold }
+      WalletScreen.UNILATERAL -> { UnilateralScreen(session, state.network, page); return@Scaffold }
+      WalletScreen.EXPORT -> { RecoveryExportScreen(session, page); return@Scaffold }
+      WalletScreen.SWEEP -> { SweepScreen(session, state.network, page); return@Scaffold }
       WalletScreen.REFRESH -> { RefreshScreen(session, state.network, page); return@Scaffold }
       WalletScreen.EXIT -> { CooperativeExitScreen(session, state.network, page); return@Scaffold }
       WalletScreen.SECURITY -> { SecurityScreen(session, state, page, authenticate); return@Scaffold }
@@ -174,6 +178,9 @@ import kotlin.math.abs
           Text("Provider-held", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
           Spacer(Modifier.height(16.dp)); HorizontalDivider()
         }
+      }
+      if (state.recoverableSat > 0) item(key = "wallet.recovery") {
+        TextButton({ navigate(WalletScreen.REFRESH) }) { Text("Recovery available · ${sats(state.recoverableSat)}") }
       }
       item(key = "wallet.activity") {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {

@@ -38,7 +38,7 @@ internal fun RefreshObservation.retrySelection(receipt: RefreshReceipt): List<St
         session.inspect { client ->
           val result = client.refreshFunds(emptyList(), true)
           val selected = result.outpoints.toSet()
-          amount = client.list(ListView.VTXOS, limit = 1000).vtxos?.vtxos.orEmpty().filter { it.outpoint in selected }.sumOf { it.amountSat }
+          amount = client.recoveryInventory().vtxos.filter { it.outpoint in selected }.sumOf { it.amountSat }
           preview = result
         }
       } else {
@@ -65,7 +65,7 @@ internal fun RefreshObservation.retrySelection(receipt: RefreshReceipt): List<St
     val quote = preview
     if (saved != null && quote == null) {
       val observed = observation
-      Amount(saved.amountSat)
+      if (saved.amountSat > 0) Amount(saved.amountSat)
       Text(when {
         observed == null -> "Checking status"
         observed.complete -> "Complete"
@@ -83,7 +83,7 @@ internal fun RefreshObservation.retrySelection(receipt: RefreshReceipt): List<St
           session.inspect { client ->
             val result = client.refreshFunds(available, true)
             check(available.isEmpty() || result.outpoints.all(available::contains)) { "Refresh selection changed. Check status again." }
-            amount = client.list(ListView.VTXOS, limit = 1000).vtxos?.vtxos.orEmpty().filter { it.outpoint in result.outpoints }.sumOf { it.amountSat }
+            amount = client.recoveryInventory().vtxos.filter { it.outpoint in result.outpoints }.sumOf { it.amountSat }
             preview = result
           }
         } }
@@ -92,7 +92,7 @@ internal fun RefreshObservation.retrySelection(receipt: RefreshReceipt): List<St
       TextButton({ revision++ }, enabled = !busy) { Text("Check status") }
     } else if (quote != null) {
       if (quote.outpoints.isEmpty()) Text("No funds to refresh") else {
-        Amount(amount)
+        if (amount > 0) Amount(amount)
         SettingsValue("Fee estimate", quote.feeEstimate?.totalFeeSat?.let(::sats) ?: "Unavailable")
         quote.feeEstimate?.error?.takeIf(String::isNotEmpty)?.let { Text(it) }
         DetailSection { quote.outpoints.forEach { CopyRow("Selected funds", it) } }

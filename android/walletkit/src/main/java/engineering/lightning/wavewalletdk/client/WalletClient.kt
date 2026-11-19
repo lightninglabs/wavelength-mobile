@@ -227,7 +227,7 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
   )
 
   suspend fun estimateExitFee(outpoint: String): ExitFeeEstimate =
-    decode(io { Mobile.estimateExitFee(encode(ExitStatusReq.serializer(), ExitStatusReq(outpoint))) })
+    decode(io { Mobile.estimateExitFee(encode(ExitFeeReq.serializer(), ExitFeeReq(outpoint))) })
 
   suspend fun exitBatch(outpoints: List<String>, destination: String, requestId: String = ""): ExitBatchResult =
     decode(io { Mobile.exitBatch(encode(ExitBatchReq.serializer(), ExitBatchReq(outpoints, destination, requestId))) })
@@ -247,9 +247,25 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
   suspend fun observeRefresh(outpoints: List<String>): RefreshObservation =
     decode(io { Mobile.observeRefresh(encode(OutpointsReq.serializer(), OutpointsReq(outpoints))) })
 
+  suspend fun recoveryInventory(): VTXOInventory = decode(io { Mobile.recoveryInventory() })
+
+  suspend fun exitPlan(outpoint: String): ExitPlan = decode(io {
+    Mobile.getExitPlan(encode(OutpointsReq.serializer(), OutpointsReq(listOf(outpoint))))
+  })
+
+  suspend fun exitSummary(): ExitSummary = decode(io { Mobile.exitSummary("{}".toByteArray()) })
+
+  suspend fun exportRecovery(outpoints: List<String>): ByteArray = io {
+    Mobile.exportExits(encode(OutpointsReq.serializer(), OutpointsReq(outpoints)))
+  }
+
+  suspend fun sweepWallet(destination: String, broadcast: Boolean, feeRate: Long = 0): SweepPreview = decode(io {
+    Mobile.sweepWallet(encode(SweepReq.serializer(), SweepReq(destination, broadcast, feeRate)))
+  })
+
   /** Query the phase of an exit job for a VTXO outpoint. */
-  suspend fun exitStatus(outpoint: String): ExitStatusResult =
-    decode(io { Mobile.exitStatus(encode(ExitStatusReq.serializer(), ExitStatusReq(outpoint))) })
+  suspend fun exitStatus(outpoint: String, detailed: Boolean = false): ExitStatusResult =
+    decode(io { Mobile.exitStatus(encode(ExitStatusReq.serializer(), ExitStatusReq(outpoint, detailed))) })
 
   /**
    * Stream only incoming payments (receives and deposits) as they arrive and
@@ -404,6 +420,7 @@ private data class ExitReq(
 @Serializable
 private data class ExitStatusReq(
   @SerialName("Outpoint") val outpoint: String,
+  @SerialName("Detailed") val detailed: Boolean = false,
 )
 
 @Serializable private data class InvoiceDecodeReq(val invoice: String, val network: String)
@@ -430,3 +447,10 @@ private data class ExitStatusReq(
 
 @Serializable private data class OutpointsReq(@SerialName("Outpoints") val outpoints: List<String>)
 @Serializable private data class RefreshReq(@SerialName("Outpoints") val outpoints: List<String>, @SerialName("DryRun") val dryRun: Boolean)
+
+@Serializable private data class ExitFeeReq(@SerialName("Outpoint") val outpoint: String)
+@Serializable private data class SweepReq(
+  @SerialName("DestinationAddress") val destination: String,
+  @SerialName("Broadcast") val broadcast: Boolean,
+  @SerialName("FeeRateSatPerVByte") val feeRate: Long,
+)

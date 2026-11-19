@@ -282,6 +282,14 @@ class WalletSession(private val context: Context) {
         if (payments.state.value.pending == null || payments.state.value.busy) return@launch
         activityRead { payments.checkPending() }
       }
+      launch {
+        val inventory = activityRead { client.recoveryInventory() } ?: return@launch
+        if (!activityIsCurrent(pager)) return@launch
+        val height = state.value.info?.blockHeight ?: 0
+        val recoverable = inventory.vtxos.filter { it.status == "expired" ||
+          (it.status == "live" && it.batchExpiry.toLong() in 1..height) }.sumOf { it.amountSat }
+        mutable.update { it.copy(recoverableSat = recoverable) }
+      }
       balance.join()
     }
   }
@@ -576,6 +584,7 @@ data class WalletUiState(
   val recoveryWords: List<String>? = null,
   val info: Info? = null,
   val balance: Balance? = null,
+  val recoverableSat: Long = 0,
   val history: ActivityHistoryState = ActivityHistoryState(),
   val error: String? = null,
   val notificationTarget: String? = null,
