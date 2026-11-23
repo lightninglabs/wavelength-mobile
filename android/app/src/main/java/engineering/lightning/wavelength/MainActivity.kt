@@ -9,6 +9,10 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import androidx.compose.runtime.getValue
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import engineering.lightning.wavelength.data.WalletAppearance
 import engineering.lightning.wavelength.ui.WalletApp
 import engineering.lightning.wavelength.ui.WalletTheme
 
@@ -18,8 +22,19 @@ class MainActivity : FragmentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     if (!BuildConfig.DEBUG) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+    wallet.openNotification(intent.getStringExtra("notification_network"),intent.getStringExtra("notification_receipt"))
     enableEdgeToEdge()
-    setContent { WalletTheme { WalletApp(wallet, ::authenticate) } }
+    setContent {
+      val state by wallet.state.collectAsStateWithLifecycle()
+      val dark = when (state.appearance) { WalletAppearance.DARK -> true; WalletAppearance.LIGHT -> false; else -> isSystemInDarkTheme() }
+      WalletTheme(dark) { WalletApp(wallet, ::authenticate) }
+    }
+  }
+
+  override fun onNewIntent(intent: android.content.Intent) {
+    super.onNewIntent(intent)
+    setIntent(intent)
+    wallet.openNotification(intent.getStringExtra("notification_network"),intent.getStringExtra("notification_receipt"))
   }
 
   override fun onStart() { super.onStart(); wallet.resume() }

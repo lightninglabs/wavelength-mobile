@@ -38,12 +38,13 @@ import java.text.NumberFormat
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun WalletField(label: String, state: androidx.compose.foundation.text.input.TextFieldState,
-  modifier: Modifier = Modifier, keyboardOptions: androidx.compose.foundation.text.KeyboardOptions = androidx.compose.foundation.text.KeyboardOptions.Default) {
+  modifier: Modifier = Modifier, placeholder: String? = null, keyboardOptions: androidx.compose.foundation.text.KeyboardOptions = androidx.compose.foundation.text.KeyboardOptions.Default) {
   Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
     Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
     TextField(state = state, modifier = modifier.fillMaxWidth().semantics { contentDescription = label },
       lineLimits = androidx.compose.foundation.text.input.TextFieldLineLimits.MultiLine(maxHeightInLines = 4), shape = RoundedCornerShape(12.dp),
       keyboardOptions = keyboardOptions,
+      placeholder = placeholder?.let { text -> { Text(text) } },
       colors = TextFieldDefaults.colors(focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
         unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
         focusedContainerColor = MaterialTheme.colorScheme.surface, unfocusedContainerColor = MaterialTheme.colorScheme.surface))

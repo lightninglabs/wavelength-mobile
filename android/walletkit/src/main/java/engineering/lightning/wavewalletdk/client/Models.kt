@@ -104,9 +104,11 @@ data class Entry(
 data class EntryProgress(
   @SerialName("Phase") val phase: String = "",
   @SerialName("PhaseLabel") val phaseLabel: String = "",
+  @SerialName("Preimage") val preimage: String = "",
   @SerialName("PaymentHash") val paymentHash: String = "",
   @SerialName("Txid") val txid: String = "",
   @SerialName("VTXOOutpoint") val vtxoOutpoint: String = "",
+  @SerialName("ConfirmationHeight") val confirmationHeight: Long = 0,
 )
 
 /** Original request retained by the wallet, including receive invoices. */
@@ -124,6 +126,7 @@ data class EntryRequest(
 data class ReceiveResult(
   @SerialName("Invoice") val invoice: String = "",
   @SerialName("Entry") val entry: Entry = Entry(),
+  @SerialName("ReceiptReference") val receiptReference: ReceiptReference? = null,
 )
 
 /** A fresh on-chain boarding address to deposit into, plus its initial entry. */
@@ -192,6 +195,17 @@ data class ListResult(
 data class ActivityList(
   @SerialName("Entries") val entries: List<Entry> = emptyList(),
   @SerialName("Total") val total: Long = 0,
+  @SerialName("HasMore") val hasMore: Boolean = false,
+  @SerialName("NextCursor") val nextCursor: String = "",
+)
+
+/** Current rows for a bounded range of transitions. IDs may repeat. */
+@Serializable
+data class ActivityBatch(
+  @SerialName("high_water") val highWater: Long,
+  @SerialName("next_cursor") val nextCursor: Long,
+  @SerialName("has_more") val hasMore: Boolean,
+  val entries: List<Entry>,
 )
 
 /** The live VTXO inventory. */
@@ -254,6 +268,9 @@ data class ExitResult(
  */
 @Serializable
 data class ExitStatusResult(
+  @SerialName("Progress") val progress: ExitProgress? = null,
+  @SerialName("CSV") val csv: ExitCSV? = null,
+  @SerialName("Fees") val fees: ExitFees? = null,
   @SerialName("Found") val found: Boolean = false,
   @SerialName("Status") val status: String = "",
   @SerialName("SweepTxid") val sweepTxid: String = "",
@@ -268,4 +285,42 @@ data class CreditPreview(
   @SerialName("CreditShortfallSat") val creditShortfallSat: Long = 0,
   @SerialName("CreditTopupSat") val creditTopupSat: Long = 0,
   @SerialName("ArkFundingSat") val arkFundingSat: Long = 0,
+)
+
+
+@Serializable data class ExitFeeEstimate(
+  @SerialName("Outpoint") val outpoint: String,
+  @SerialName("AmountSat") val amountSat: Long,
+  @SerialName("EstimatedFeeSat") val estimatedFeeSat: Long,
+  @SerialName("BelowDustWarning") val belowDust: Boolean,
+)
+
+@Serializable data class ExitBatchResult(
+  @SerialName("Results") val results: List<ExitBatchInput> = emptyList(),
+  @SerialName("Destination") val destination: String = "",
+  @SerialName("ActivityID") val activityId: String = "",
+)
+
+@Serializable data class ExitBatchInput(
+  @SerialName("Outpoint") val outpoint: String,
+  @SerialName("Outcome") val outcome: String,
+  @SerialName("Error") val error: String = "",
+)
+
+
+@Serializable data class RefreshResult(
+  @SerialName("QueuedOutpoints") val outpoints: List<String> = emptyList(),
+  @SerialName("FeeEstimate") val feeEstimate: RefreshEstimate? = null,
+)
+@Serializable data class RefreshEstimate(
+  @SerialName("TotalFeeSat") val totalFeeSat: Long? = null,
+  @SerialName("EstimateError") val error: String = "",
+)
+@Serializable data class RefreshObservation(
+  @SerialName("Complete") val complete: Boolean,
+  @SerialName("RetryAllowed") val retryAllowed: Boolean = false,
+  @SerialName("ConfirmedCount") val confirmed: Int = 0,
+  @SerialName("ConfirmedAmountSat") val confirmedSat: Long = 0,
+  @SerialName("RemainingOutpoints") val remaining: List<String> = emptyList(),
+  @SerialName("RemainingAmountSat") val remainingSat: Long = 0,
 )

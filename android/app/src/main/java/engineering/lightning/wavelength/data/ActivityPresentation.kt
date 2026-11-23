@@ -11,7 +11,29 @@ fun sats(amount: Long): String = "${NumberFormat.getIntegerInstance().format(amo
 val Entry.incoming: Boolean get() = kind == "receive" || kind == "deposit"
 val Entry.creditTopup: Boolean get() = kind == "send" && progress?.phaseLabel == "credit_topup"
 val Entry.paymentHash: String get() = progress?.paymentHash?.ifEmpty { null } ?: request?.paymentHash.orEmpty()
+val Entry.rail: String get() = when (request?.type?.lowercase()) {
+  "ark" -> "Ark"
+  "onchain" -> "On-chain"
+  "lightning" -> "Lightning"
+  else -> when {
+    kind == "receive" || paymentHash.isNotEmpty() -> "Lightning"
+    kind == "exit" || kind == "deposit" -> "On-chain"
+    else -> "Not reported"
+  }
+}
+private val Entry.pendingLightningStatus: String? get() {
+  if (kind != "receive" || status != "pending" || rail != "Lightning" || (request == null && paymentHash.isEmpty())) return null
+  val phase = progress?.phase.orEmpty().takeUnless { it.isEmpty() || it == "unspecified" } ?: progress?.phaseLabel.orEmpty()
+  return when (phase) {
+    "request_created", "waiting_for_payment" -> "Waiting for payment"
+    "awaiting_funding" -> "Awaiting funding"
+    "settling" -> if (progress?.vtxoOutpoint.isNullOrEmpty()) "Checking status" else "Receiving"
+    else -> "Checking status"
+  }
+}
+val Entry.showsProgress: Boolean get() = status == "pending" && (pendingLightningStatus?.let { it == "Receiving" } ?: !awaitingPayment)
 val Entry.awaitingPayment: Boolean get() {
+  pendingLightningStatus?.let { return it == "Waiting for payment" }
   val phase = progress?.phaseLabel?.ifEmpty { null } ?: progress?.phase.orEmpty()
   return incoming && status == "pending" && phase in listOf("", "request_created", "waiting_for_payment", "address_issued", "unspecified")
 }
@@ -21,6 +43,7 @@ val Entry.statusLabel: String get() = when {
   failureCode == "refunded" || progress?.phase == "refunded" -> "Refunded"
   kind == "receive" && failureCode == "expired" -> "Expired"
   status == "failed" -> "Failed"
+  pendingLightningStatus != null -> pendingLightningStatus!!
   awaitingPayment -> "Waiting for payment"
   status == "pending" -> if (incoming) "Receiving" else if (kind == "send") "Sending" else "In progress"
   status == "complete" -> if (incoming) "Received" else if (kind == "send") "Sent" else "Complete"
@@ -38,7 +61,6 @@ val Entry.title: String get() = when {
 fun visibleActivity(entries: List<Entry>): List<Entry> {
   val hashes = entries.filter { it.kind == "send" && !it.creditTopup }.map { it.paymentHash }.filter { it.isNotEmpty() }.toSet()
   return entries.filterNot { it.creditTopup && it.status != "failed" && it.paymentHash.isNotEmpty() && it.paymentHash in hashes }
-    .sortedWith(compareByDescending<Entry> { it.createdAt }.thenBy { it.id })
 }
 fun activityTime(value: String): String = runCatching {
   val zone = ZoneId.systemDefault()
@@ -46,11 +68,3 @@ fun activityTime(value: String): String = runCatching {
   val pattern = if (instant.atZone(zone).toLocalDate() == LocalDate.now(zone)) "HH:mm" else "MMM d, HH:mm"
   DateTimeFormatter.ofPattern(pattern).withZone(zone).format(instant)
 }.getOrDefault("")
-
-/** Snapshot entries have no event cursor. Only updates during this read win. */
-fun mergeActivitySnapshot(before: Map<String, Entry>, snapshot: List<Entry>, current: List<Entry>): List<Entry> {
-  val latest = current.associateBy { it.id }
-  val ids = snapshot.map { it.id }.toSet()
-  return snapshot.map { entry -> latest[entry.id]?.takeIf { it != before[entry.id] } ?: entry } +
-    current.filterNot { it.id in ids }
-}

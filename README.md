@@ -45,48 +45,44 @@ embedded wallet, create a key, sync the chain from Esplora, and read balances.
 | Path | Contents |
 |------|----------|
 | `android/walletkit/` | Idiomatic Kotlin wrapper (`suspend` + `Flow` + typed models) over the generated bindings. The Android library other apps depend on. |
-| `android/app/` | Sample Android app (Jetpack Compose, AGP 9) that drives `walletkit`. |
+| `android/app/` | Native Signet wallet in Kotlin/Jetpack Compose, with encrypted credentials, device unlock, payments, credit and activity. |
 | `ios/WalletKit/` | Idiomatic Swift wrapper (`actor` + `async` + `AsyncThrowingStream` + `Codable`). Mirrors the Kotlin library. |
 | `ios/Sample/` | Native SwiftUI wallet with dark/light themes, Face ID, balance and activity, send/receive, refresh, exit, and recovery. |
-| `scripts/fetch-aar.sh` | Downloads `Wavewalletdk.aar` from the `wavelength` GitHub release (or builds it from a `WAVELENGTH_DIR` checkout) and stages it under `android/walletkit/libs`. |
+| `scripts/fetch-aar.sh` | Builds the pinned source plus mobile bridge and stages `Wavewalletdk.aar` with provenance under `android/walletkit/libs`; release-tag overrides download a packaged AAR. |
 | `scripts/fetch-xcframework.sh` | Builds the pinned Wavelength source with the carried iOS recovery bridge and stages `Wavewalletdk.xcframework`; verifies source/patch provenance. |
 | `Makefile` | One-command iOS Simulator build, test, run, and opt-in live regtest workflows. |
 | `docs/` | Architecture, the Android workflow, and signet setup. |
 
-Both the Android and iOS wrappers and their sample apps run end to end — Android
-on an emulator, iOS on the Simulator — booting the embedded wallet, creating a
-wallet, and syncing signet to the chain tip. wavelength CI builds the bindings
-on release tags. iOS uses the source commit in
-[`.wavelength-ios-version`](.wavelength-ios-version) plus
-`scripts/wavelength-ios-recovery.patch`;
-Android uses `.wavelength-version` (currently `v0.1.2`). The separate pins let
-each host wrapper adopt SDK changes after its own validation. iOS build, test,
-and run commands replace a staged framework when its recorded source commit or bridge digest
-differs from the iOS pin and patch. For Android, rerun the fetch script after changing its pin.
+The Android and iOS hosts share the embedded Go wallet engine. Android's first
+wallet milestone covers Signet payments and activity. The remaining screen
+parity, including diagnostics and background delivery, is tracked in
+[`docs/android-port.md`](docs/android-port.md).
+
+Both SDK pins now identify reviewed source commits: `.wavelength-version` for
+Android and `.wavelength-ios-version` for iOS. Both builds apply the existing
+platform-neutral mobile bridge in `scripts/wavelength-ios-recovery.patch`.
+The separate pins let each platform adopt changes after its own validation.
+Fetch scripts record the exact source commit and bridge digest beside the
+ignored native artifact; `--if-needed` reuses only matching provenance.
 
 ## Quick start (Android)
 
-You need three things:
+You need:
 
-1. The [`gh` CLI](https://cli.github.com/) authenticated to an account with
-   read access to `wavelength` (`gh auth login`). `fetch-aar.sh` downloads the
-   `.aar` from the `wavelength` GitHub release by default; no Go or gomobile
-   toolchain is needed. (To build the binding from source against an unreleased
-   daemon instead, set `WAVELENGTH_DIR` to a local checkout — that path needs
-   the Android + gomobile toolchain and a modern JDK.)
+1. The [`gh` CLI](https://cli.github.com/) authenticated for read access to
+   Wavelength, plus Go and gomobile. The current commit pin builds from source;
+   `WAVELENGTH_DIR` can select a checkout prepared at that exact pin and bridge.
 2. The Android SDK and NDK. The [`android` CLI](https://developer.android.com/tools/agents/android-cli)
    installs them: `android sdk install platform-tools emulator
    platforms/android-36 build-tools/36.1.0 ndk/29.0.14206865
    system-images/android-36/google_apis/arm64-v8a`.
-3. A modern JDK (17 or newer).
+3. JDK 17 or newer.
 
 ```bash
-# 1. Fetch the binding and stage it here. Uses .wavelength-version by
-#    default; set WAVELENGTH_VERSION=<tag> to override the pin, or
-#    WAVELENGTH_DIR=<checkout> to build from source instead.
-./scripts/fetch-aar.sh
+# 1. Build or reuse the exact pinned native binding.
+./scripts/fetch-aar.sh --if-needed
 
-# 2. Build the sample app.
+# 2. Build the wallet app.
 cd android && ./gradlew :app:assembleDebug
 
 # 3. Run it on an emulator (or a device).

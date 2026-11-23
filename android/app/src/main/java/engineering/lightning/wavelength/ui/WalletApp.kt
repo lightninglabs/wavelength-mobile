@@ -5,7 +5,9 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.text.input.rememberTextFieldState
@@ -22,6 +24,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -32,79 +37,126 @@ import engineering.lightning.wavewalletdk.client.Entry
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable fun WalletApp(session: WalletSession, authenticate: (() -> Unit) -> Unit) {
   val state by session.state.collectAsStateWithLifecycle()
-  Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-    Crossfade(state.phase, label = "wallet phase") { phase ->
-      when (phase) {
-        WalletPhase.OPENING -> Column(Modifier.fillMaxSize(), Arrangement.Center, Alignment.CenterHorizontally) {
-          WaveMark(Modifier.size(80.dp)); Spacer(Modifier.height(24.dp)); CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+  key(state.network) {
+    val activityScroll = key(state.history.sessionId) { rememberLazyListState() }
+    var connection by remember { mutableStateOf(false) }
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+      Crossfade(state.phase, label = "wallet phase") { phase ->
+        when (phase) {
+          WalletPhase.OPENING -> Column(Modifier.fillMaxSize(), Arrangement.Center, Alignment.CenterHorizontally) {
+            WaveMark(Modifier.size(80.dp)); Spacer(Modifier.height(24.dp))
+            CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+          }
+          WalletPhase.BACKUP -> state.recoveryWords?.let { CreationBackup(it, session::acknowledgeBackup) }
+          WalletPhase.SETUP -> Setup(session, state) { connection = true }
+          WalletPhase.LOCKED -> Column(Modifier.fillMaxSize().padding(24.dp), Arrangement.Center, Alignment.CenterHorizontally) {
+            WaveMark(Modifier.size(80.dp)); Spacer(Modifier.height(32.dp))
+            Text("Wavelength", style = MaterialTheme.typography.headlineMedium)
+            Text(state.network.title, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            WalletButton("Unlock") { authenticate { session.open() } }
+            Spacer(Modifier.height(24.dp)); NetworkControl(session, state)
+            TextButton({ connection = true }) { Text("Connection") }
+          }
+          WalletPhase.ERROR -> Column(Modifier.fillMaxSize().padding(24.dp), Arrangement.Center) {
+            Text("Wallet unavailable", style = MaterialTheme.typography.headlineMedium)
+            Text(state.error.orEmpty(), Modifier.padding(vertical = 24.dp))
+            WalletButton("Try again") { session.retry() }
+            NetworkControl(session, state); TextButton({ connection = true }) { Text("Connection") }
+          }
+          WalletPhase.OPEN -> WalletHome(session, state, activityScroll, authenticate)
         }
-        WalletPhase.BACKUP -> CreationBackup(state.recoveryWords.orEmpty(), session::acknowledgeBackup)
-        WalletPhase.SETUP -> Setup { words -> session.open(create = true, mnemonic = words) }
-        WalletPhase.LOCKED -> Column(Modifier.fillMaxSize().padding(24.dp), Arrangement.Center, Alignment.CenterHorizontally) {
-          WaveMark(Modifier.size(80.dp)); Spacer(Modifier.height(32.dp))
-          Text("Wavelength", style = MaterialTheme.typography.headlineMedium)
-          Text("Signet", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-          WalletButton("Unlock") { authenticate { session.open() } }
-        }
-        WalletPhase.ERROR -> Column(Modifier.fillMaxSize().padding(24.dp), Arrangement.Center) {
-          Text("Wallet unavailable", style = MaterialTheme.typography.headlineMedium)
-          Text(state.error.orEmpty(), Modifier.padding(vertical = 24.dp))
-          WalletButton("Try again") { session.resume() }
-        }
-        WalletPhase.OPEN -> WalletHome(session, state)
       }
+      if (state.error != null && state.phase == WalletPhase.OPEN) AlertDialog(onDismissRequest = session::dismissError,
+        title = { Text("Wallet") }, text = { Text(state.error.orEmpty()) }, confirmButton = { TextButton(session::dismissError) { Text("OK") } })
     }
-    if (state.error != null && state.phase == WalletPhase.OPEN) {
-      AlertDialog(onDismissRequest = session::dismissError, title = { Text("Wallet") },
-        text = { Text(state.error.orEmpty()) }, confirmButton = { TextButton(session::dismissError) { Text("OK") } })
+    if (connection) ModalBottomSheet(onDismissRequest = { connection = false }, containerColor = MaterialTheme.colorScheme.background) {
+      Text("Connection", Modifier.padding(horizontal = 24.dp, vertical = 16.dp), style = MaterialTheme.typography.titleLarge)
+      ConnectionScreen(session, state)
     }
   }
 }
 
-@Composable private fun Setup(create: (List<String>) -> Unit) {
+@Composable private fun Setup(session: WalletSession, state: WalletUiState, connection: () -> Unit) {
   var restore by remember { mutableStateOf(false) }
   val words = remember { androidx.compose.foundation.text.input.TextFieldState() }
   if (restore) SensitiveScreen()
   Column(Modifier.fillMaxSize().systemBarsPadding().padding(24.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
     Spacer(Modifier.weight(1f)); WaveMark(Modifier.size(80.dp))
     Text("Wavelength", fontSize = 36.sp)
-    Text("Signet", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(state.network.title, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Spacer(Modifier.weight(1f))
     if (restore) WalletField("Recovery words", words)
-    WalletButton(if (restore) "Restore wallet" else "Create wallet", !restore || words.text.toString().trim().split(Regex("\\s+")).size in listOf(12, 24)) {
-      create(if (restore) words.text.toString().trim().split(Regex("\\s+")) else emptyList())
+    WalletButton(if (restore) "Restore wallet" else "Create wallet", !restore || words.text.toString().trim().split(Regex("\\s+")).size == 24) {
+      session.open(create = true, mnemonic = if (restore) words.text.toString().trim().split(Regex("\\s+")) else emptyList())
     }
     TextButton({ restore = !restore }) { Text(if (restore) "Create a new wallet" else "Restore wallet") }
+    NetworkControl(session, state)
+    TextButton(connection) { Text("Connection") }
   }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable private fun WalletHome(session: WalletSession, state: WalletUiState) {
-  var settings by remember { mutableStateOf(false) }
+@Composable private fun WalletHome(
+  session: WalletSession,
+  state: WalletUiState,
+  list: LazyListState,
+  authenticate: (() -> Unit) -> Unit,
+) {
+  var stack by remember { mutableStateOf(listOf(WalletScreen.HOME)) }
+  val screen = stack.last()
+  val navigate: (WalletScreen) -> Unit = { stack = stack + it }
+  val back: () -> Unit = { if (stack.size > 1) stack = stack.dropLast(1) }
   var selected by remember { mutableStateOf<String?>(null) }
   val scope = rememberCoroutineScope()
-  BackHandler(settings || selected != null) { settings = false; selected = null }
+  LaunchedEffect(state.phase, state.notificationTarget) {
+    val target = state.notificationTarget
+    if (state.phase == WalletPhase.OPEN && target != null) {
+      selected = target; stack = listOf(WalletScreen.HOME,WalletScreen.ACTIVITY)
+      session.consumeNotification()
+    }
+  }
+  BackHandler(stack.size > 1, back)
+  if (screen == WalletScreen.DIAGNOSTICS) { DiagnosticsApp(session, back); return }
   Scaffold(containerColor = MaterialTheme.colorScheme.background, topBar = {
     CenterAlignedTopAppBar(title = {
-      if (settings) Text("Settings") else if (selected != null) Text("Payment") else Row(verticalAlignment = Alignment.CenterVertically) {
+      if (screen != WalletScreen.HOME) Text(screen.title) else Row(verticalAlignment = Alignment.CenterVertically) {
         WaveMark(); Spacer(Modifier.width(8.dp)); Text("wavelength", fontSize = 21.sp, fontWeight = FontWeight.Medium)
       }
-    }, navigationIcon = { if (settings || selected != null) IconButton({ settings = false; selected = null }) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back") } },
-      actions = { if (!settings && selected == null) IconButton({ settings = true }) { Icon(Icons.Outlined.Settings, "Settings") } },
+    }, navigationIcon = { if (stack.size > 1) IconButton(back) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back") } },
+      actions = { if (screen == WalletScreen.HOME) IconButton({ navigate(WalletScreen.SETTINGS) }) { Icon(Icons.Outlined.Settings, "Settings") } },
       colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background))
   }) { padding ->
-    if (settings) {
-      Settings(session, state, Modifier.padding(padding)); return@Scaffold
+    val page = Modifier.padding(padding)
+    when (screen) {
+      WalletScreen.SETTINGS -> { SettingsScreen(session, state, page, navigate, diagnostics = true); return@Scaffold }
+      WalletScreen.NOTIFICATIONS -> { NotificationsScreen(session, state, page); return@Scaffold }
+      WalletScreen.RECOVERY -> { RecoveryMenu(session, page, navigate); return@Scaffold }
+      WalletScreen.UNILATERAL -> { UnilateralScreen(session, state.network, page); return@Scaffold }
+      WalletScreen.EXPORT -> { RecoveryExportScreen(session, page); return@Scaffold }
+      WalletScreen.SWEEP -> { SweepScreen(session, state.network, page); return@Scaffold }
+      WalletScreen.REFRESH -> { RefreshScreen(session, state.network, page); return@Scaffold }
+      WalletScreen.EXIT -> { CooperativeExitScreen(session, state.network, page); return@Scaffold }
+      WalletScreen.SECURITY -> { SecurityScreen(session, state, page, authenticate); return@Scaffold }
+      WalletScreen.CREDIT -> { CreditScreen(session, state, page, back); return@Scaffold }
+      WalletScreen.CONNECTION -> { ConnectionScreen(session, state, page); return@Scaffold }
+      WalletScreen.ACTIVITY -> {
+        val entry = state.activity.firstOrNull { it.id == selected } ?: state.notificationEntry?.takeIf { it.id == selected }
+        entry?.let { ActivityDetails(it, page, state.activity) }
+        return@Scaffold
+      }
+      else -> Unit
     }
-    val entry = state.activity.firstOrNull { it.id == selected }
-    if (entry != null) {
-      ActivityDetails(entry, Modifier.padding(padding), state.activity); return@Scaffold
-    }
-    LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(24.dp),
+    val history = state.history
+    val entries = remember(history.entries) { visibleActivity(history.entries) }
+    LazyColumn(
+      Modifier.fillMaxSize().padding(padding).testTag("activity.list")
+        .activityBottomPull(list, history.nextCursor != null && !history.loading, session::loadOlderActivity),
+      state = list, contentPadding = PaddingValues(24.dp),
       verticalArrangement = Arrangement.spacedBy(16.dp)) {
-      item {
+      item(key = "wallet.balance") {
         Text("Balance", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(10.dp))
         val balance = state.balance
@@ -116,30 +168,55 @@ import kotlin.math.abs
         }
         Spacer(Modifier.height(24.dp))
       }
-      item { PaymentActions(session, state) }
+      item(key = "wallet.actions") { PaymentActions(session, state) }
       state.balance?.takeIf { it.creditAvailableSat > 0 }?.let { balance ->
-        item {
+        item(key = "wallet.credit") {
           HorizontalDivider(); Spacer(Modifier.height(16.dp))
-          Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+          Row(Modifier.fillMaxWidth().clickable { navigate(WalletScreen.CREDIT) }.heightIn(min = 44.dp), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("Credit"); Text(sats(balance.creditAvailableSat))
           }
           Text("Provider-held", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
           Spacer(Modifier.height(16.dp)); HorizontalDivider()
         }
       }
-      item {
+      if (state.recoverableSat > 0) item(key = "wallet.recovery") {
+        TextButton({ navigate(WalletScreen.REFRESH) }) { Text("Recovery available · ${sats(state.recoverableSat)}") }
+      }
+      item(key = "wallet.activity") {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-          Text("Activity", fontSize = 24.sp, fontWeight = FontWeight.Medium)
+          Text("Activity", Modifier.semantics { heading() }, fontSize = 24.sp, fontWeight = FontWeight.Medium)
           TextButton({ scope.launch { session.refresh() } }) { Text("Refresh") }
         }
       }
-      val entries = visibleActivity(state.activity)
-      if (!state.activityLoaded && entries.isEmpty()) item { CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp) }
-      else if (entries.isEmpty()) item { Text("No activity", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-      items(entries, key = { it.id }) { item ->
-        ActivityRow(item) { selected = item.id }
+      items(entries, key = { "activity:${it.id}" }) { item ->
+        ActivityRow(item) { selected = item.id; navigate(WalletScreen.ACTIVITY) }
         HorizontalDivider()
       }
+      item(key = "wallet.activity-footer") { ActivityFooter(history, entries.isEmpty(), session::loadOlderActivity) }
+    }
+  }
+}
+
+@Composable private fun ActivityFooter(history: ActivityHistoryState, empty: Boolean, load: () -> Unit) {
+  Column(
+    Modifier.fillMaxWidth().heightIn(min = 48.dp),
+    horizontalAlignment = Alignment.CenterHorizontally,
+    verticalArrangement = Arrangement.Center,
+  ) {
+    when {
+      history.loading || (!history.loaded && !history.failed) -> {
+        CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+        Text(if (history.loaded) "Loading older activity" else "Loading activity", style = MaterialTheme.typography.bodySmall)
+      }
+      history.failed || history.nextCursor != null -> {
+        if (history.failed) {
+          Text(if (history.loaded) "Couldn’t load older activity" else "Couldn’t load activity")
+        }
+        TextButton(onClick = load, modifier = Modifier.testTag("activity.loadOlder")) {
+          Text(if (history.failed) "Retry" else "Load older activity")
+        }
+      }
+      else -> Text(if (empty) "No activity" else "End of activity", color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
   }
 }
@@ -168,6 +245,7 @@ import kotlin.math.abs
     if (entry.note.isNotEmpty()) Text(entry.note)
     Text(activityTime(entry.createdAt), color = MaterialTheme.colorScheme.onSurfaceVariant)
     if (entry.feeSat > 0) CopyRow("Fee", sats(entry.feeSat))
+    if (entry.failureReason.isNotBlank()) Text(paymentFailure(entry.failureReason))
     PendingRequest(entry)
     DetailSection {
       entries.filter { it.creditTopup && entry.kind == "send" && !entry.creditTopup &&
@@ -178,23 +256,21 @@ import kotlin.math.abs
           topup.progress?.vtxoOutpoint?.takeIf { it.isNotEmpty() }?.let { CopyRow("Outpoint", it) }
         }
       }
+      SettingsValue("Network", entry.rail)
+      if (entry.counterparty.isNotBlank()) CopyRow("Destination", entry.counterparty)
+      entry.progress?.let { detail ->
+        val phase = detail.phaseLabel.ifEmpty { detail.phase }
+        if (phase.isNotEmpty()) SettingsValue("Phase", diagnosticLabel(phase))
+        if (detail.txid.isNotEmpty()) CopyRow("Transaction", detail.txid)
+        if (detail.vtxoOutpoint.isNotEmpty()) CopyRow("Outpoint", detail.vtxoOutpoint)
+        if (detail.preimage.isNotEmpty()) CopyRow("Payment proof", detail.preimage)
+      }
       CopyRow("Reference", entry.id)
       entry.progress?.paymentHash?.takeIf { it.isNotEmpty() }?.let { CopyRow("Payment hash", it) }
       entry.request?.lightningInvoice?.takeIf { it.isNotEmpty() }?.let { CopyRow("Invoice", it) }
       entry.request?.onchainAddress?.takeIf { it.isNotEmpty() }?.let { CopyRow("On-chain", it) }
       if (entry.failureReason.isNotEmpty()) CopyRow("Status details", entry.failureReason)
     }
-  }
-}
-
-@Composable private fun Settings(session: WalletSession, state: WalletUiState, modifier: Modifier) {
-  Column(modifier.verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
-    CopyRow("Network", "Signet")
-    CopyRow("Client ID", state.info?.identityPubKey.orEmpty())
-    CopyRow("Operator", "signet.wavelength.lightning.finance:443")
-    CopyRow("Lightning", "swap.signet.wavelength.lightning.finance:443")
-    CopyRow("Version", state.info?.version.orEmpty())
-
   }
 }
 
@@ -214,7 +290,3 @@ import kotlin.math.abs
     }
   }
 }
-
-// Payment screens are added in the next PR in the Android stack.
-@Composable internal fun PaymentActions(session: WalletSession, state: WalletUiState) {}
-@Composable internal fun PendingRequest(entry: Entry) {}

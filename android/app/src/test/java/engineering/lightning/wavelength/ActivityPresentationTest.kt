@@ -13,6 +13,15 @@ class ActivityPresentationTest {
     assertEquals(listOf(payment), visibleActivity(listOf(funding, payment)))
     assertEquals(2, visibleActivity(listOf(funding.copy(status = "failed"), payment)).size)
   }
+  @Test fun receiveNeedsFundingEvidenceBeforeAnimating() {
+    val request = Entry(kind = "receive", status = "pending", request = EntryRequest(type = "lightning"))
+    assertEquals("Awaiting funding", request.copy(progress = EntryProgress(phase = "awaiting_funding")).statusLabel)
+    val accepted = request.copy(progress = EntryProgress(phase = "settling"))
+    assertEquals("Checking status", accepted.statusLabel)
+    assertFalse(accepted.showsProgress)
+    assertTrue(request.copy(progress = EntryProgress(phase = "settling", vtxoOutpoint = "tx:0")).showsProgress)
+  }
+
   @Test fun pendingInvoiceAndIncomingFundsHaveDifferentStatuses() {
     val entry = Entry(kind = "receive", status = "pending", progress = EntryProgress(phase = "waiting_for_payment"))
     assertEquals("Waiting for payment", entry.statusLabel)
@@ -21,12 +30,4 @@ class ActivityPresentationTest {
     assertEquals("Expired", entry.copy(status = "failed", failureCode = "expired").statusLabel)
   }
 
-  @Test fun snapshotsReplaceOldStreamValuesButPreserveConcurrentUpdates() {
-    val pending = Entry(id = "payment", status = "pending", cursor = 42)
-    val completeSnapshot = pending.copy(status = "complete", cursor = 0)
-    val before = mapOf(pending.id to pending)
-    assertEquals(listOf(completeSnapshot), mergeActivitySnapshot(before, listOf(completeSnapshot), listOf(pending)))
-    val concurrent = pending.copy(status = "complete", cursor = 43)
-    assertEquals(listOf(concurrent), mergeActivitySnapshot(before, listOf(pending.copy(cursor = 0)), listOf(concurrent)))
-  }
 }

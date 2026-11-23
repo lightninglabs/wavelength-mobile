@@ -85,8 +85,16 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
    * returned invoice with the payer; the matching entry shows up on the
    * activity stream as it is paid.
    */
-  suspend fun receiveLightning(amountSat: Long, memo: String = ""): ReceiveResult =
-    decode(io { Mobile.receive(encode(ReceiveReq.serializer(), ReceiveReq(amountSat, memo, 20))) })
+  suspend fun receiveLightning(amountSat: Long, memo: String = "", requestId: String = java.util.UUID.randomUUID().toString()): ReceiveResult =
+    decode(io { Mobile.receive(encode(ReceiveReq.serializer(), ReceiveReq(amountSat, memo, requestId))) })
+
+  /** A successful absent lookup excludes a receive still being created under this ID. */
+  suspend fun lookupReceive(requestId: String): ReceiveResult? {
+    val result = decode<ReceiveLookupResult>(io {
+      Mobile.lookupReceive(encode(ReceiveLookupReq.serializer(), ReceiveLookupReq(requestId)))
+    })
+    return if (result.found) requireNotNull(result.receive) { "Missing receive result" } else null
+  }
 
   /**
    * Allocate a fresh on-chain boarding address to deposit into. The optional
@@ -109,16 +117,21 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
     sweepAll: Boolean = false,
     maxCreditSat: Long = 10_000,
     maxCreditTopupSat: Long = 10_000,
+    maxAmount: Boolean = false,
   ): PrepareSendResult = decode(
     io {
       Mobile.prepareSend(
         encode(
           PrepareSendReq.serializer(),
-          PrepareSendReq(invoice, onchainAddress, amountSat, note, maxFeeSat, sweepAll, maxCreditSat, maxCreditTopupSat),
+          PrepareSendReq(invoice, onchainAddress, amountSat, note, maxFeeSat, sweepAll, maxCreditSat, maxCreditTopupSat, maxAmount),
         ),
       )
     },
   )
+
+  suspend fun decodeInvoice(invoice: String, network: String): InvoiceDetails = decode(io {
+    Mobile.decodeInvoice(encode(InvoiceDecodeReq.serializer(), InvoiceDecodeReq(invoice, network)))
+  })
 
   /** Dispatch a prepared send, consuming the single-use intent id. */
   suspend fun send(sendIntentId: String): SendResult =
@@ -171,8 +184,8 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
   /**
    * List a unified wallet view: the merged activity history, the live VTXO
    * inventory, or the on-chain transaction history. Read the [ListResult] field
-   * named by its `view`. `kinds`, `pendingOnly`, `limit`, and `offset` apply to
-   * the activity view.
+   * named by its `view`. Canonical activity uses [ActivityList.nextCursor]
+   * and ignores offsets.
    */
   suspend fun list(
     view: ListView = ListView.ACTIVITY,
@@ -180,13 +193,21 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
     pendingOnly: Boolean = false,
     limit: Long = 0,
     offset: Long = 0,
+    cursor: String = "",
   ): ListResult = decode(
     io {
       Mobile.list(
-        encode(ListReq.serializer(), ListReq(view.wire, pendingOnly, kinds, limit, offset)),
+        encode(ListReq.serializer(), ListReq(view.wire, pendingOnly, kinds, limit, offset, cursor)),
       )
     },
   )
+
+  /** Capture the end of the local transition log before reading a snapshot. */
+  suspend fun activityCursor(): Long = decode<ActivityCursorResult>(io { Mobile.activityCursor() }).cursor
+
+  /** Read current rows after [after]. Keep the returned high water until the range is drained. */
+  suspend fun readActivityBatch(after: Long, through: Long = 0, limit: Int = 64): ActivityBatch =
+    decode(io { Mobile.readActivityBatch(encode(ActivityBatchReq.serializer(), ActivityBatchReq(after, through, limit))) })
 
   /**
    * Exit a VTXO back to the chain. The daemon queues a cooperative leave by
@@ -205,9 +226,46 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
     },
   )
 
+  suspend fun estimateExitFee(outpoint: String): ExitFeeEstimate =
+    decode(io { Mobile.estimateExitFee(encode(ExitFeeReq.serializer(), ExitFeeReq(outpoint))) })
+
+  suspend fun exitBatch(outpoints: List<String>, destination: String, requestId: String = ""): ExitBatchResult =
+    decode(io { Mobile.exitBatch(encode(ExitBatchReq.serializer(), ExitBatchReq(outpoints, destination, requestId))) })
+
+  /** Returns null only when the daemon permanently closes this unused ID. */
+  suspend fun resolveExitBatch(requestId: String): ExitBatchResult? {
+    val reply = decode<ExitBatchResolution>(io {
+      Mobile.resolveExitBatch(encode(ExitBatchId.serializer(), ExitBatchId(requestId)))
+    })
+    require(reply.closed == (reply.admission == null)) { "Invalid exit admission receipt" }
+    return reply.admission
+  }
+
+  suspend fun refreshFunds(outpoints: List<String>, dryRun: Boolean): RefreshResult =
+    decode(io { Mobile.refresh(encode(RefreshReq.serializer(), RefreshReq(outpoints, dryRun))) })
+
+  suspend fun observeRefresh(outpoints: List<String>): RefreshObservation =
+    decode(io { Mobile.observeRefresh(encode(OutpointsReq.serializer(), OutpointsReq(outpoints))) })
+
+  suspend fun recoveryInventory(): VTXOInventory = decode(io { Mobile.recoveryInventory() })
+
+  suspend fun exitPlan(outpoint: String): ExitPlan = decode(io {
+    Mobile.getExitPlan(encode(OutpointsReq.serializer(), OutpointsReq(listOf(outpoint))))
+  })
+
+  suspend fun exitSummary(): ExitSummary = decode(io { Mobile.exitSummary("{}".toByteArray()) })
+
+  suspend fun exportRecovery(outpoints: List<String>): ByteArray = io {
+    Mobile.exportExits(encode(OutpointsReq.serializer(), OutpointsReq(outpoints)))
+  }
+
+  suspend fun sweepWallet(destination: String, broadcast: Boolean, feeRate: Long = 0): SweepPreview = decode(io {
+    Mobile.sweepWallet(encode(SweepReq.serializer(), SweepReq(destination, broadcast, feeRate)))
+  })
+
   /** Query the phase of an exit job for a VTXO outpoint. */
-  suspend fun exitStatus(outpoint: String): ExitStatusResult =
-    decode(io { Mobile.exitStatus(encode(ExitStatusReq.serializer(), ExitStatusReq(outpoint))) })
+  suspend fun exitStatus(outpoint: String, detailed: Boolean = false): ExitStatusResult =
+    decode(io { Mobile.exitStatus(encode(ExitStatusReq.serializer(), ExitStatusReq(outpoint, detailed))) })
 
   /**
    * Stream only incoming payments (receives and deposits) as they arrive and
@@ -217,6 +275,27 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
    */
   fun incomingPayments(includeExisting: Boolean = false): Flow<Entry> =
     activity(includeExisting = includeExisting, kinds = listOf("receive", "deposit"))
+
+  /** Lossless protobuf JSON, including string-encoded 64-bit fields. */
+  suspend fun diagnosticRead(view: DiagnosticView, outpoint: String = "", roundId: String = "",
+    history: Boolean = false, pageToken: String = ""): kotlinx.serialization.json.JsonElement {
+    val request = DiagnosticRequest(view.wire, outpoint, roundId, history, pageToken)
+    return json.parseToJsonElement(String(io { Mobile.diagnosticRead(encode(DiagnosticRequest.serializer(), request)) }))
+  }
+
+  /** Bounded wallet-scoped native log snapshot with the SDK’s sensitive-entry filter. */
+  suspend fun diagnosticLogs(): DiagnosticLogSnapshot = decode(io { Mobile.diagnosticLogs() })
+
+  /** Advance persisted round/refresh work within the native maximum budget. */
+  suspend fun runMaintenanceWindow(id: String, timeoutSeconds: Long = 30): MaintenanceResult =
+    decode(io { Mobile.runMaintenanceWindow(id, timeoutSeconds) })
+
+  /** Signal the exact window, retaining its caller until native cleanup returns. */
+  suspend fun cancelMaintenanceWindow(id: String) = io { Mobile.cancelReceiptWindow(id) }
+
+  /** Source/canonical proof for locally enrolled invoices only. */
+  suspend fun readLightningReceipts(references: List<ReceiptReference>, since: Long): List<LightningReceipt> =
+    decode(io { Mobile.readLightningReceipts(encode(ReceiptReadRequest.serializer(), ReceiptReadRequest(references, since))) })
 
   // --- internals -----------------------------------------------------------
 
@@ -275,7 +354,17 @@ private data class SubscribeReq(
 private data class ReceiveReq(
   @SerialName("AmountSat") val amountSat: Long,
   @SerialName("Memo") val memo: String = "",
+  @SerialName("RequestID") val requestId: String,
   @SerialName("TimeoutSeconds") val timeoutSeconds: Long = 20,
+)
+
+@Serializable
+private data class ReceiveLookupReq(@SerialName("RequestID") val requestId: String)
+
+@Serializable
+private data class ReceiveLookupResult(
+  @SerialName("Found") val found: Boolean,
+  @SerialName("Receive") val receive: ReceiveResult? = null,
 )
 
 @Serializable
@@ -293,6 +382,7 @@ internal data class PrepareSendReq(
   @SerialName("SweepAll") val sweepAll: Boolean = false,
   @SerialName("MaxCreditSat") val maxCreditSat: Long = 10_000,
   @SerialName("MaxCreditTopupSat") val maxCreditTopupSat: Long = 10_000,
+  @SerialName("MaxAmount") val maxAmount: Boolean = false,
 )
 
 @Serializable
@@ -307,6 +397,17 @@ private data class ListReq(
   @SerialName("Kinds") val kinds: List<String> = emptyList(),
   @SerialName("Limit") val limit: Long = 0,
   @SerialName("Offset") val offset: Long = 0,
+  @SerialName("Cursor") val cursor: String = "",
+)
+
+@Serializable
+private data class ActivityCursorResult(val cursor: Long)
+
+@Serializable
+private data class ActivityBatchReq(
+  @SerialName("after_cursor") val after: Long,
+  @SerialName("through_cursor") val through: Long,
+  val limit: Int,
 )
 
 @Serializable
@@ -319,4 +420,37 @@ private data class ExitReq(
 @Serializable
 private data class ExitStatusReq(
   @SerialName("Outpoint") val outpoint: String,
+  @SerialName("Detailed") val detailed: Boolean = false,
+)
+
+@Serializable private data class InvoiceDecodeReq(val invoice: String, val network: String)
+
+@Serializable data class InvoiceDetails(
+  @SerialName("amount_sat") val amountSat: Long? = null,
+  val description: String = "",
+  @SerialName("expires_at_unix") val expiresAtUnix: Long = 0,
+)
+
+
+@Serializable private data class ExitBatchReq(
+  @SerialName("Outpoints") val outpoints: List<String>,
+  @SerialName("Destination") val destination: String,
+  @SerialName("RequestID") val requestId: String,
+)
+
+@Serializable private data class ExitBatchId(@SerialName("RequestID") val requestId: String)
+@Serializable private data class ExitBatchResolution(
+  @SerialName("Closed") val closed: Boolean,
+  @SerialName("Admission") val admission: ExitBatchResult? = null,
+)
+
+
+@Serializable private data class OutpointsReq(@SerialName("Outpoints") val outpoints: List<String>)
+@Serializable private data class RefreshReq(@SerialName("Outpoints") val outpoints: List<String>, @SerialName("DryRun") val dryRun: Boolean)
+
+@Serializable private data class ExitFeeReq(@SerialName("Outpoint") val outpoint: String)
+@Serializable private data class SweepReq(
+  @SerialName("DestinationAddress") val destination: String,
+  @SerialName("Broadcast") val broadcast: Boolean,
+  @SerialName("FeeRateSatPerVByte") val feeRate: Long,
 )
