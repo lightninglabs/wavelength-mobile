@@ -142,6 +142,22 @@ class PaymentOperations(
     if (!mutable.value.busy) mutable.update { it.copy(quote = null, result = null, request = "", error = if (it.blocked) it.error else null) }
   }
 
+  /** Maximum quotes are bound to the exact draft and displayed before review. */
+  suspend fun maximumQuote(terms: SendTerms): PrepareSendResult {
+    check(allowed()) { "Unlock this wallet before calculating the amount." }
+    check(state.value.pending == null && !state.value.blocked) { "Check the pending payment first." }
+    if (terms.destination.lightning) require(network.acceptsInvoice(terms.destination.value)) {
+      "Use a ${network.title} Lightning invoice."
+    }
+    require(terms.maximum && terms.amountSat == 0L && terms.destination.requestedSat == null)
+    return gateway.prepare(terms)
+  }
+
+  fun reviewMaximum(quote: PrepareSendResult) {
+    if (!allowed() || state.value.busy || state.value.pending != null || state.value.blocked) return
+    mutable.update { it.copy(quote = quote, balanceSweep = quote.rail == "onchain", error = null) }
+  }
+
   fun prepare(rawInvoice: String, note: String, amountSat: Long = 0, maximum: Boolean = false, maxFeeSat: Long = 0) = launch {
     val dest = SendDestination.parse(rawInvoice)
     if (dest.lightning) require(network.acceptsInvoice(dest.value)) { "Use a ${network.title} Lightning invoice." }

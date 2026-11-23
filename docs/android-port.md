@@ -70,15 +70,16 @@ The field regression test checks that a complete invoice survives input, theme
 recomposition and replacement. Real Signet payment checks use the ordinary app
 screens, with settlement verified independently on the receiving Lightning node.
 
-## Remaining screen parity
+## Screen parity
 
-Port each area in a separate, reviewable slice. Compare both appearances against
-the corresponding SwiftUI screen, including loading, empty, pending, success and
-failure states. Do not replace these with generic dashboards.
+Android uses the same Signal Dark and Porcelain Light palettes as iOS. Send
+and Receive lead with the amount. Send keeps the note and maximum fee in
+Options. Exit review shows the selected amount, destination and fee before
+Details and confirmation. Android keeps native camera, back and share controls.
 
 | Area | iOS reference | Required behavior |
 | --- | --- | --- |
-| Network wallets and connections (implemented) | `SettingsView`, `Components`, `WalletAuthentication` | Per-network isolation, effective defaults, consistent authentication and tidy network selection. |
+| Network wallets and connections | `SettingsView`, `Components`, `WalletAuthentication` | Per-network isolation, effective defaults, consistent authentication and tidy network selection. |
 | Payment completion | `SendView`, `ReceiveView`, `ActivityViews` | Camera/BIP-21 handling, on-chain sends, options, payment details, matched credit funding details, copy/share and ordinary QR codes. |
 | Exits and recovery | `CooperativeExitView`, `RecoveryViews` | Destination and fee order, safe selection, accepted/unknown results, unilateral plans, sweeps and exports. Batch exit follows the corresponding merged SDK/app contract. |
 | Expert inventory | `DiagnosticVTXOsView`, `DiagnosticVTXODetailView` | Out-of-round/confirmed status, expiry, copyable underlying UTXOs, raw JSON under Advanced. |
@@ -94,7 +95,8 @@ separately. Never automatically resubmit a payment because its response was lost
 
 ## Distribution
 
-A directly installed APK can use FCM after Android enrollment is implemented.
+A directly installed APK can use FCM when built with the publisher’s Firebase
+configuration and enrolled with the relay.
 Google Play internal testing is an optional distribution channel, not a push
 notification prerequisite. Emulator testing uses a Google APIs/Play image.
 Physical-device notification and hardware-backed authentication checks remain
@@ -118,6 +120,6 @@ independent.
 
 App runs shows actual foreground host stages as a connected timeline, scoped
 to the current network and bounded to the current process. It does not claim
-Android background delivery or persist invented background outcomes. Background maintenance and receipt alerts are described in
-[Android background notifications](android-background-notifications.md). FCM
-enrollment and delivery activation still need the publisher integration.
+Android background delivery or persist invented background outcomes. See
+[Android background notifications](android-background-notifications.md) for
+background maintenance, push enrollment and receipt alerts.

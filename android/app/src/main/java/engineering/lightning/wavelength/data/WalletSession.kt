@@ -19,6 +19,7 @@ class WalletSession(private val context: Context) {
   val client = WalletClient()
   val diagnostics = DiagnosticRuns()
   val backgroundHistory = BackgroundJournal(File(context.noBackupFilesDir,"background-history.json"))
+  internal val relay = RelayRegistration(context)
   val notices = WalletNotices(context)
   private val root = context.noBackupFilesDir
   private val vault = WalletVault(context)
@@ -232,6 +233,7 @@ class WalletSession(private val context: Context) {
 
   private fun startObservations() {
     if (!foreground || observations?.isActive == true) return
+    relay.schedule(afterCurrent = true)
     val pager = history
     observations = scope.launch {
       launch {
@@ -289,6 +291,13 @@ class WalletSession(private val context: Context) {
         val recoverable = inventory.vtxos.filter { it.status == "expired" ||
           (it.status == "live" && it.batchExpiry.toLong() in 1..height) }.sumOf { it.amountSat }
         mutable.update { it.copy(recoverableSat = recoverable) }
+      }
+      launch {
+        val saved = runCatching { refreshJournal(directory(state.value.network)).read() }.getOrElse { return@launch }
+        val observed = saved?.let { receipt -> activityRead { client.observeRefresh(receipt.outpoints) } }
+        if (activityIsCurrent(pager)) mutable.update { wallet ->
+          wallet.copy(refreshAmountSat = saved?.amountSat, refreshStatus = observed.label)
+        }
       }
       balance.join()
     }
@@ -427,8 +436,27 @@ class WalletSession(private val context: Context) {
   }
 
   fun configureNotifications(enabled: Boolean, amounts: Boolean = false) = preferenceChange {
+    if (!enabled && relay.configured && state.value.network.wire == engineering.lightning.wavelength.BuildConfig.FIREBASE_RELAY_NETWORK) {
+      relay.select(state.value.network.wire,state.value.info?.identityPubKey.orEmpty(),connectionFingerprint(),false)
+    }
     notices.configure(state.value.network,state.value.info?.identityPubKey.orEmpty(),connectionFingerprint(),enabled,amounts)
   }
+
+  internal suspend fun signRelayGrant(target: PushTarget, request: NotificationFeedGrant): NotificationFeedResult =
+    withContext(Dispatchers.Main.immediate) {
+      lifecycle.withLock {
+        val current = state.value
+        val consent = notices.consent(current.network)
+        if (!(foreground && current.phase == WalletPhase.OPEN && current.network.wire == target.network &&
+          current.settings.endpoints == EndpointOverrides() && connectionFingerprint() == target.connection &&
+          current.info?.identityPubKey == target.identity)) throw RelayWalletUnavailable()
+        if (!request.remove && (consent?.identity != target.identity || consent.connection != target.connection ||
+          !relay.stillDesired(target))) throw RelayWalletUnavailable()
+        val native = client.getInfo()
+        check(native.identityPubKey == target.identity)
+        client.setNotificationFeedGrant(request)
+      }
+    }
 
   /** One native owner across cold start, expiry, foreground takeover and cleanup. */
   suspend fun runBackground(trigger: String, expectedNetwork: String? = null, expectedIdentity: String? = null, wake: BackgroundWakeContext? = null): BackgroundOutcome = withContext(Dispatchers.Main.immediate) {
@@ -491,7 +519,31 @@ class WalletSession(private val context: Context) {
           backgroundHistory.stage(lease.id,"Preparation; UI locked",backgroundHistory.duration(preparationStart))
           backgroundHistory.stage(lease.id,"Native maintenance window")
           backgroundHistory.context(lease.id,nativeBudget = BackgroundLease.NATIVE_CEILING_SECONDS.toInt())
-          val result = backgroundHistory.measure(lease.id,"Maintenance window") { client.runMaintenanceWindow(lease.id,BackgroundLease.NATIVE_CEILING_SECONDS) }
+          val enrolled = notices.pending(network, info.identityPubKey, connectionFingerprint())
+          val result = coroutineScope {
+            // The native pump may run until host expiry. Check already-admitted
+            // receipts while it advances the wallet and still owns its lease.
+            val window = async {
+              backgroundHistory.measure(lease.id, "Maintenance window") {
+                if (enrolled.isEmpty()) client.runMaintenanceWindow(lease.id, BackgroundLease.NATIVE_CEILING_SECONDS)
+                else client.runWorkWindow(lease.id, enrolled.map { it.reference }, BackgroundLease.NATIVE_CEILING_SECONDS)
+              }
+            }
+            val remaining = enrolled.toMutableList()
+            while (remaining.isNotEmpty() && permitted()) {
+              val proofs = client.readLightningReceipts(remaining.map { it.reference }, enrolled.first().consent.since)
+              if (!permitted()) break
+              remaining.removeAll { entry ->
+                val proof = proofs.firstOrNull { it.reference == entry.reference } ?: return@removeAll false
+                notices.present(network, entry, proof, visible = foreground)
+                proof.state == "complete"
+              }
+              backgroundHistory.receipts(lease.id, proofs.size, proofs.count { it.state == "complete" })
+              if (window.isCompleted || remaining.isEmpty()) break
+              withTimeoutOrNull(3000L) { window.await() }
+            }
+            window.await()
+          }
           backgroundHistory.nativeResult(lease.id,result)
           if (!permitted()) return@withLock
           outcome = BackgroundOutcome(when {
@@ -500,16 +552,7 @@ class WalletSession(private val context: Context) {
             result.needsForeground -> "Needs foreground"
             else -> "Window completed"
           },result.batches > 0 || result.maintenanceChecked > 0)
-          val enrolled = notices.pending(network,info.identityPubKey,connectionFingerprint())
-          if (enrolled.isNotEmpty()) {
-            val proofs = backgroundHistory.measure(lease.id,"Receipt source reads") {
-              client.readLightningReceipts(enrolled.map { it.reference },enrolled.first().consent.since)
-            }
-            backgroundHistory.receipts(lease.id,proofs.size,proofs.count { it.state == "complete" })
-            if (!permitted()) return@withLock
-            enrolled.forEach { entry -> proofs.firstOrNull { it.reference == entry.reference }?.let { proof -> notices.present(network,entry,proof,visible = foreground) } }
-            backgroundHistory.stage(lease.id,"Local receipts checked")
-          }
+
         }
         if (lease.expired || foreground) outcome = BackgroundOutcome(lease.cancellationReason?.label ?: "Foreground takeover")
         outcome
@@ -585,6 +628,8 @@ data class WalletUiState(
   val info: Info? = null,
   val balance: Balance? = null,
   val recoverableSat: Long = 0,
+  val refreshAmountSat: Long? = null,
+  val refreshStatus: String = "",
   val history: ActivityHistoryState = ActivityHistoryState(),
   val error: String? = null,
   val notificationTarget: String? = null,

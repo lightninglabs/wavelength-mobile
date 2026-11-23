@@ -11,6 +11,7 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
 import engineering.lightning.wavelength.data.WalletNetwork
+import engineering.lightning.wavelength.ui.SendAmounts
 import engineering.lightning.wavelength.ui.SendDraft
 import engineering.lightning.wavelength.ui.scannedInvoice
 import org.junit.Assert.*
@@ -28,9 +29,10 @@ class SendInvoiceScanTest {
     val note = TextFieldState()
     compose.setContent {
       ModalBottomSheet(onDismissRequest = {}, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-        Column { SendDraft(invoice, note, WalletNetwork.SIGNET, false, { _, _ ->
+        Column { SendDraft(invoice, note, WalletNetwork.SIGNET, androidx.compose.runtime.remember { SendAmounts() }, { value, _ ->
+          require(!value.endsWith("typed"))
           engineering.lightning.wavewalletdk.client.InvoiceDetails(amountSat = 125)
-        }) { _, _, _ -> reviews++ } }
+        }, { error("Unexpected maximum") }) { _, _, _ -> reviews++ } }
       }
     }
   }
@@ -54,7 +56,8 @@ class SendInvoiceScanTest {
         .setPrimaryClip(ClipData.newPlainText("invoice", "lntbs1pasted"))
     }
     compose.onNodeWithText("Paste").performClick()
-    field.assertTextEquals("lntbs1pasted")
+    compose.waitUntil(5_000) { compose.onAllNodesWithText("Change").fetchSemanticsNodes().isNotEmpty() }
+    compose.runOnIdle { assertEquals("lntbs1pasted", invoice.text.toString()) }
     compose.runOnIdle { assertEquals(0, reviews) }
     compose.onNodeWithText("Review").performClick()
     compose.runOnIdle { assertEquals(1, reviews) }
@@ -67,7 +70,7 @@ class SendInvoiceScanTest {
     openDraft()
     compose.onNodeWithText("Scan").performClick()
     compose.waitUntil(timeoutMillis = 30_000) { invoice.text.toString() == expected }
-    compose.onNodeWithContentDescription("Invoice or Bitcoin address").assertTextEquals(expected!!)
+    compose.waitUntil(5_000) { compose.onAllNodesWithText("Change").fetchSemanticsNodes().isNotEmpty() }
     compose.onNodeWithText("Cancel").assertDoesNotExist()
     compose.onNodeWithText("Review").assertIsEnabled()
     compose.runOnIdle { assertEquals(0, reviews) }

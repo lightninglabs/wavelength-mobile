@@ -11,6 +11,7 @@ import java.util.concurrent.TimeUnit
 class WalletMaintenanceWorker(context: Context, parameters: WorkerParameters) : CoroutineWorker(context,parameters) {
   override suspend fun doWork(): Result {
     val wallet = (applicationContext as WalletApplication).wallet
+    if (inputData.getString("trigger") == "Scheduled") wallet.relay.schedule()
     val routeId = inputData.getString("route")
     val trigger = inputData.getString("trigger") ?: "Scheduled"
     val wake = BackgroundWakeContext(

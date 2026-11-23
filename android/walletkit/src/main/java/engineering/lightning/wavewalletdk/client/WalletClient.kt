@@ -42,6 +42,10 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
   /** Daemon readiness snapshot. */
   suspend fun getInfo(): Info = decode(io { Mobile.getInfo() })
 
+  /** Sign a feed delegation at a configured producer using the open wallet. */
+  suspend fun setNotificationFeedGrant(request: NotificationFeedGrant): NotificationFeedResult =
+    decode(io { Mobile.setNotificationFeedGrant(encode(NotificationFeedGrant.serializer(), request)) })
+
   /** Wallet readiness, balance, and pending-activity count. */
   suspend fun status(): Status = decode(io { Mobile.status() })
 
@@ -289,6 +293,10 @@ class WalletClient(private val json: Json = DEFAULT_JSON) {
   /** Advance persisted round/refresh work within the native maximum budget. */
   suspend fun runMaintenanceWindow(id: String, timeoutSeconds: Long = 30): MaintenanceResult =
     decode(io { Mobile.runMaintenanceWindow(id, timeoutSeconds) })
+
+  /** Re-arm only the receipt references admitted by this installation. */
+  suspend fun runWorkWindow(id: String, refs: List<ReceiptReference>, seconds: Long): MaintenanceResult =
+    decode(io { Mobile.runWorkWindow(encode(BackgroundWorkRequest.serializer(), BackgroundWorkRequest(id, refs)), seconds) })
 
   /** Signal the exact window, retaining its caller until native cleanup returns. */
   suspend fun cancelMaintenanceWindow(id: String) = io { Mobile.cancelReceiptWindow(id) }
