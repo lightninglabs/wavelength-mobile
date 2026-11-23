@@ -77,7 +77,7 @@ struct UnlockWalletView: View {
                 } label: {
                     if store.isWorking { ProgressView() } else { Text("Unlock with \(WalletAuthentication.name)") }
                 }
-                .buttonStyle(WalletButtonStyle()).disabled(store.isWorking)
+                .buttonStyle(WalletButtonStyle()).disabled(!store.canSubmitUnlock)
                 .accessibilityIdentifier("wallet.unlock.biometric")
                 if store.needsPasswordMigration {
                     Button(showPassword ? "Hide password" : "Use wallet password") { showPassword.toggle() }
@@ -89,7 +89,11 @@ struct UnlockWalletView: View {
                         .accessibilityIdentifier("wallet.unlock.password")
                 }
                 Button("Unlock") { Task { await store.unlockWallet(password: password) } }
-                    .buttonStyle(WalletButtonStyle()).disabled(password.isEmpty || store.isWorking)
+                    .buttonStyle(WalletButtonStyle()).disabled(password.isEmpty || !store.canSubmitUnlock)
+            }
+            if store.unlockWaitingForWalletWork && !store.managedKeyUnavailable {
+                WalletStatus(text: "Finishing background work", pending: true)
+                    .accessibilityAddTraits(.updatesFrequently)
             }
             NetworkSelectionButton()
         }
