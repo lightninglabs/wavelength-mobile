@@ -35,68 +35,6 @@ struct RecoveryOptionsView: View {
     }
 }
 
-struct RecoveryStatusView: View {
-    @EnvironmentObject private var store: WalletStore
-    let outpoint: String
-    let amount: Int64
-    var embedded = false
-    var startError: String? = nil
-    @State private var status: ExitStatusResult?
-    @State private var error: String?
-    var body: some View {
-        Group {
-            if embedded { content } else { WalletPage { content } }
-        }
-        .navigationTitle("Recovery").navigationBarTitleDisplayMode(.inline)
-        .task {
-            while !Task.isCancelled {
-                do { status = try await store.recoveryStatus(outpoint: outpoint); error = nil }
-                catch { self.error = error.walletMessage }
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
-            }
-        }
-    }
-    @ViewBuilder private var content: some View {
-        WalletAmount(amount: status?.status == "completed" ? status?.fees?.netRecoveredSat ?? amount : amount)
-        WalletStatus(text: title, pending: (status?.found == true || startError == nil) && status?.status != "completed" && status?.status != "failed",
-                     complete: status?.status == "completed", failed: status?.status == "failed" || (startError != nil && status?.found != true))
-        if let startError, status?.found != true {
-            Text("Couldn’t confirm recovery started.").font(.headline)
-            Text(startError).font(.footnote).foregroundStyle(WalletTheme.secondary)
-            Text("Check status before trying again.").font(.footnote).foregroundStyle(WalletTheme.secondary)
-        }
-        if let progress = status?.progress {
-            ValueRow(label: "Confirmed", value: "\(progress.confirmedTxs) of \(progress.totalTxs) transactions")
-            ValueRow(label: "In flight", value: "\(progress.inFlightTxs)")
-        }
-        if let csv = status?.csv, !csv.mature {
-            Text("\(csv.blocksRemaining) blocks remaining").font(.title2.weight(.medium))
-        }
-        if let fees = status?.fees {
-            ValueRow(label: "Network cost so far", value: WalletFormatting.sats(fees.spentSoFarSat))
-            ValueRow(label: "Total estimated cost", value: WalletFormatting.sats(fees.totalCostSat))
-            ValueRow(label: fees.sweepFeeActual ? "Final sweep fee" : "Sweep fee estimate", value: WalletFormatting.sats(fees.sweepFeeSat))
-        }
-        if let message = status?.lastError, !message.isEmpty { Text(message).font(.footnote).foregroundStyle(.red) }
-        if let error { Text(error).font(.footnote).foregroundStyle(WalletTheme.secondary) }
-        if status?.status == "completed" {
-            NavigationLink("Send on-chain funds", destination: SweepWalletView())
-        }
-        DisclosureGroup("Details") { ValueRow(label: "Outpoint", value: outpoint, copyable: true) }
-    }
-    private var title: String {
-        if status?.found != true { return startError == nil ? "Checking status" : "Action needed" }
-        switch status?.status {
-        case "materializing": return "Publishing recovery"
-        case "csv_pending": return "Waiting period"
-        case "sweeping": return "Final sweep"
-        case "completed": return "Recovered"
-        case "failed": return "Action needed"
-        default: return "In progress"
-        }
-    }
-}
-
 struct SweepWalletView: View {
     @EnvironmentObject private var store: WalletStore
     @State private var destination = ""
