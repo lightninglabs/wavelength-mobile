@@ -213,12 +213,14 @@ private struct UnilateralExitReviewView: View {
         }
         exitOptions
         if let fee = quotedPlan?.totalEstimatedFeeSat {
-            ExitValueLine(label: "Estimated network fees", value: WalletFormatting.sats(fee))
+            ExitValueLine(label: funds.count > 1 ? "Estimated fees (separate exits)" : "Estimated network fees",
+                          value: WalletFormatting.sats(fee))
         }
         if let funding = quotedPlan?.funding {
-            ExitValueLine(label: "Fee funding needed", value: funding.summary)
+            ExitValueLine(label: funds.count > 1 ? "Fee funding for one exit" : "Fee funding needed",
+                          value: funding.summary)
             if funds.count > 1 {
-                Text("Fund this step first. We’ll recheck the full selection after it confirms.")
+                Text("We’ll recheck the full selection after the deposit confirms.")
                     .font(.footnote).foregroundStyle(WalletTheme.secondary)
             }
         }
@@ -399,7 +401,7 @@ private struct UnilateralExitReviewView: View {
         if !entry.roundCommitment.isEmpty { return "In an active round" }
         switch entry.infeasibilityReason {
         case "sweep_below_dust": return "Too small at the current fee"
-        case "uneconomical": return "Estimated fees are too high"
+        case "uneconomical": return "Fees are at least this amount"
         default: return "Can’t start right now"
         }
     }
@@ -509,8 +511,13 @@ struct UnilateralExitFunding {
 
     init?(_ entry: ExitPlanEntry) {
         let missingInputs = Int64(entry.requiredFeeUTXOCount) - Int64(entry.usableFeeUTXOCount)
-        let needsFunding = entry.fundingShortfallSat > 0 ||
-            (entry.infeasibilityReason == "wallet_too_few_inputs" && missingInputs > 0)
+        // Older SDKs can supply a shortfall even when funding cannot help.
+        let needsFunding: Bool
+        switch entry.infeasibilityReason {
+        case "wallet_underfunded": needsFunding = entry.fundingShortfallSat > 0
+        case "wallet_too_few_inputs": needsFunding = missingInputs > 0
+        default: needsFunding = false
+        }
         guard !entry.canStart, !entry.exitJobFound, entry.error.isEmpty,
               entry.roundCommitment.isEmpty, !entry.fundingAddress.isEmpty, needsFunding else { return nil }
         address = entry.fundingAddress

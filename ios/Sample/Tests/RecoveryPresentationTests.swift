@@ -28,6 +28,13 @@ final class RecoveryPresentationTests: XCTestCase {
         XCTAssertNil(UnilateralExitFunding(try exitPlanEntry(required: 2, usable: 2, shortfall: 0, canStart: true)))
     }
 
+    func testBlockedExitDoesNotOfferMisleadingDepositFromOlderSDK() throws {
+        for reason in ["uneconomical", "sweep_below_dust"] {
+            let entry = try exitPlanEntry(required: 2, usable: 0, shortfall: 24786, reason: reason)
+            XCTAssertNil(UnilateralExitFunding(entry), reason)
+        }
+    }
+
     func testCommittedExitDoesNotOfferFeeFunding() throws {
         let entry = try exitPlanEntry(required: 2, usable: 1, shortfall: 10000, roundCommitment: "active")
         XCTAssertNil(UnilateralExitFunding(entry))
