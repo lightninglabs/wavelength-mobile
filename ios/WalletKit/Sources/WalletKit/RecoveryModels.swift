@@ -38,12 +38,15 @@ public struct RefreshFeeEstimate: Decodable, Sendable {
 
 public struct ExitPlan: Decodable, Sendable {
     public let plans: [ExitPlanEntry]?
+    public let sweepAddress: String?
+    public let totalEstimatedFeeSat: Int64?
     public let feeRateSatPerVByte: Int64?
     public let canStart: Bool
     public let totalFundingShortfallSat: Int64
     public let totalRecommendedFundingSat: Int64
     enum CodingKeys: String, CodingKey {
         case plans = "Plans", canStart = "CanStart"
+        case sweepAddress = "SweepAddress", totalEstimatedFeeSat = "TotalEstimatedFeeSat"
         case feeRateSatPerVByte = "FeeRateSatPerVByte"
         case totalFundingShortfallSat = "TotalFundingShortfallSat"
         case totalRecommendedFundingSat = "TotalRecommendedFundingSat"

@@ -121,7 +121,12 @@ private struct UnilateralExitReviewView: View {
     @State private var plan: UnilateralExitSelectionPlan?
     @State private var fundingOutpoint: String?
     @State private var checkingPlan = false
-    @State private var planFailed = false
+    @State private var planError: String?
+    @State private var customAddress = false
+    @State private var sweepAddress = ""
+    @State private var customFeeRate = false
+    @State private var feeRateText = ""
+    @FocusState private var editingOption: Bool
     @State private var isSubmitting = false
     @State private var attempts: [String: UnilateralExitAdmission] = [:]
     @State private var startError: String?
@@ -134,7 +139,18 @@ private struct UnilateralExitReviewView: View {
 
     private var outpoints: [String] { funds.map(\.outpoint) }
     private var amount: Int64 { funds.reduce(0) { $0 + $1.amountSat } }
-    private var canStart: Bool { !checkingPlan && !planFailed && plan?.canStart == true }
+    private var options: UnilateralExitOptions? {
+        let destination = customAddress ? sweepAddress.trimmingCharacters(in: .whitespacesAndNewlines) : ""
+        guard !customAddress || !destination.isEmpty else { return nil }
+        let rate = customFeeRate ? Int64(feeRateText) : 0
+        guard let rate, !customFeeRate || rate > 0 else { return nil }
+        return UnilateralExitOptions(sweepAddress: destination, feeRateSatPerVByte: rate)
+    }
+    private var quotedPlan: UnilateralExitSelectionPlan? {
+        guard let plan, plan.options == options else { return nil }
+        return plan
+    }
+    private var canStart: Bool { !checkingPlan && planError == nil && quotedPlan?.canStart == true }
     private var showsFunding: Bool { fundingOutpoint != nil }
     private var canPollFunding: Bool { showsFunding && scenePhase == .active && !store.isSessionLocked && !isSubmitting }
 
@@ -146,7 +162,8 @@ private struct UnilateralExitReviewView: View {
     var body: some View {
         ZStack {
             if !isSubmitting, let fund = funds.first, funds.count == 1, let admission = attempts[fund.outpoint] {
-                RecoveryStatusView(outpoint: fund.outpoint, amount: fund.amountSat, startError: admission.error)
+                RecoveryStatusView(outpoint: fund.outpoint, amount: fund.amountSat, startError: admission.error,
+                                   quotedAddress: plan?.sweepAddress)
             } else if !attempts.isEmpty {
                 selectionProgress
             } else {
@@ -160,6 +177,10 @@ private struct UnilateralExitReviewView: View {
                 .safeAreaInset(edge: .bottom, spacing: 0) { footer }
                 .refreshable { await loadPlan() }
             }
+        }
+        .onChange(of: options) { _ in
+            planError = nil
+            startError = nil
         }
         .navigationTitle(title).navigationBarTitleDisplayMode(.inline)
         .task { await loadPlan() }
@@ -190,18 +211,18 @@ private struct UnilateralExitReviewView: View {
                     .font(.footnote).foregroundStyle(WalletTheme.secondary)
             }
         }
-        if let rate = plan?.feeRate, rate > 0 {
-            ExitValueLine(label: "Estimated fee rate", value: "Automatic · \(rate) sat/vB")
+        exitOptions
+        if let fee = quotedPlan?.totalEstimatedFeeSat {
+            ExitValueLine(label: "Estimated network fees", value: WalletFormatting.sats(fee))
         }
-        if let funding = plan?.funding {
+        if let funding = quotedPlan?.funding {
             ExitValueLine(label: "Fee funding needed", value: funding.summary)
             if funds.count > 1 {
                 Text("Fund this step first. We’ll recheck the full selection after it confirms.")
                     .font(.footnote).foregroundStyle(WalletTheme.secondary)
             }
         }
-        ValueRow(label: "To", value: "My on-chain wallet")
-        if let plan {
+        if let plan = quotedPlan {
             ForEach(Array(zip(funds, plan.entries)), id: \.0.outpoint) { fund, entry in
                 if !entry.canStart, UnilateralExitFunding(entry) == nil {
                     ExitValueLine(label: WalletFormatting.sats(fund.amountSat), value: blockedMessage(entry))
@@ -213,11 +234,43 @@ private struct UnilateralExitReviewView: View {
         }
         if checkingPlan || isSubmitting {
             WalletLoadingIndicator(label: isSubmitting ? "Starting exit" : "Checking exit plan")
-        } else if planFailed {
-            Text("Couldn’t check the exit plan.").font(.footnote).foregroundStyle(WalletTheme.secondary)
-            Button("Try again") { Task { await loadPlan() } }
-                .buttonStyle(WalletButtonStyle(secondary: true))
+        } else if let planError {
+            Text(planError).font(.footnote).foregroundStyle(WalletTheme.secondary)
         }
+    }
+
+    private var exitOptions: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if !customAddress {
+                ValueRow(label: "To", value: "My on-chain wallet")
+            }
+            Toggle("Use another Bitcoin address", isOn: $customAddress)
+                .accessibilityIdentifier("unilateral.customAddress")
+            if customAddress {
+                WalletField(title: "To") {
+                    TextField("Bitcoin address", text: $sweepAddress)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled(true)
+                        .focused($editingOption)
+                        .accessibilityIdentifier("unilateral.address")
+                }
+            }
+            WalletDivider()
+            Toggle("Set fee rate", isOn: $customFeeRate)
+                .accessibilityIdentifier("unilateral.customFee")
+            if customFeeRate {
+                WalletField(title: "Fee rate (sat/vB)") {
+                    TextField("sat/vB", text: $feeRateText)
+                        .keyboardType(.numberPad)
+                        .focused($editingOption)
+                        .accessibilityIdentifier("unilateral.feeRate")
+                }
+                Text("The rate applies to new transactions. Package fee bumps can change the total.")
+                    .font(.footnote).foregroundStyle(WalletTheme.secondary)
+            } else if let rate = quotedPlan?.feeRate, rate > 0 {
+                ExitValueLine(label: "Estimated fee rate", value: "Automatic · \(rate) sat/vB")
+            }
+        }
+        .disabled(isSubmitting)
     }
 
     private func fundingInstructions(_ funding: UnilateralExitFunding) -> some View {
@@ -245,8 +298,8 @@ private struct UnilateralExitReviewView: View {
     @ViewBuilder private var footer: some View {
         if showsFunding, let entry = plan?.fundingEntry {
             ExitFooter {
-                WalletStatus(text: planFailed ? "Couldn’t check funding" : "Waiting for confirmation",
-                             pending: !planFailed)
+                WalletStatus(text: planError == nil ? "Waiting for confirmation" : "Couldn’t check funding",
+                             pending: planError == nil)
                 let usable = min(entry.usableFeeUTXOCount, entry.requiredFeeUTXOCount)
                 Text("\(usable) of \(entry.requiredFeeUTXOCount) ready for fees")
                     .font(.footnote).foregroundStyle(WalletTheme.secondary)
@@ -263,10 +316,20 @@ private struct UnilateralExitReviewView: View {
                 .disabled(isSubmitting)
                 .accessibilityIdentifier("recovery.confirm")
             }
-        } else if plan?.funding != nil, !checkingPlan, !planFailed {
+        } else if quotedPlan?.funding != nil, !checkingPlan, planError == nil {
             ExitFooter {
-                Button("Continue to funding") { fundingOutpoint = plan?.fundingEntry?.outpoint }
+                Button("Continue to funding") { fundingOutpoint = quotedPlan?.fundingEntry?.outpoint }
                     .buttonStyle(WalletButtonStyle())
+            }
+        } else if quotedPlan == nil || planError != nil {
+            ExitFooter {
+                Button("Update estimate") {
+                    editingOption = false
+                    Task { await loadPlan() }
+                }
+                .buttonStyle(WalletButtonStyle())
+                .disabled(options == nil || checkingPlan || isSubmitting)
+                .accessibilityIdentifier("unilateral.updateEstimate")
             }
         }
     }
@@ -287,7 +350,8 @@ private struct UnilateralExitReviewView: View {
                 let job = store.recoveryJobs.first { $0.outpoint == fund.outpoint }
                 if let admission = attempts[fund.outpoint] {
                     NavigationLink(destination: RecoveryStatusView(outpoint: fund.outpoint, amount: fund.amountSat,
-                                                                   startError: admission.error)) {
+                                                                   startError: admission.error,
+                                                                   quotedAddress: plan?.sweepAddress)) {
                         UnilateralExitJobRow(amount: fund.amountSat,
                                              status: job.map { UnilateralExitStage(status: $0.status).title } ?? admission.title)
                     }
@@ -307,18 +371,26 @@ private struct UnilateralExitReviewView: View {
     }
 
     private func loadPlan(recheckingAfterStart: Bool = false) async {
-        guard !outpoints.isEmpty, !checkingPlan, attempts.isEmpty,
+        guard let options, !outpoints.isEmpty, !checkingPlan, attempts.isEmpty,
               !isSubmitting || recheckingAfterStart else { return }
         checkingPlan = true
         defer { checkingPlan = false }
         do {
-            let result = try await store.exitPlan(outpoints: outpoints)
+            let result = try await store.exitPlan(outpoints: outpoints, options: options)
             try Task.checkCancellation()
+            guard options == self.options else { return }
             plan = result
-            planFailed = false
+            planError = nil
             if result.fundingEntry?.outpoint != fundingOutpoint { fundingOutpoint = nil }
         } catch {
-            if !Task.isCancelled { planFailed = true }
+            guard !Task.isCancelled, options == self.options else { return }
+            let message = error.walletMessage
+            if let validation = ["Enter a valid Bitcoin address", "Use a standard Bitcoin address", "fee rate must be"]
+                .first(where: { message.contains($0) }), let range = message.range(of: validation) {
+                planError = String(message[range.lowerBound...])
+            } else {
+                planError = "Couldn’t check the exit plan. Try again."
+            }
         }
     }
 
@@ -334,9 +406,10 @@ private struct UnilateralExitReviewView: View {
 
     private func submit() async {
         defer { isSubmitting = false }
-        guard let plan else { return }
+        guard let plan = quotedPlan else { return }
         do {
-            try await store.startUnilateralExits(outpoints: outpoints, reviewedFeeRate: plan.feeRate) { outpoint, admission in
+            try await store.startUnilateralExits(outpoints: outpoints, options: plan.options,
+                                                 reviewedFeeRate: plan.feeRate) { outpoint, admission in
                 attempts[outpoint] = admission
             }
         } catch {
@@ -367,17 +440,38 @@ private struct UnilateralExitJobRow: View {
     }
 }
 
+struct UnilateralExitOptions: Equatable, Sendable {
+    var sweepAddress = ""
+    var feeRateSatPerVByte: Int64 = 0
+}
+
 struct UnilateralExitSelectionPlan {
     let entries: [ExitPlanEntry]
+    let options: UnilateralExitOptions
+    let sweepAddress: String?
     let feeRate: Int64?
+    let totalEstimatedFeeSat: Int64?
     let canStart: Bool
 
-    init(plan: ExitPlan, outpoints: [String]) throws {
+    init(plan: ExitPlan, outpoints: [String], options: UnilateralExitOptions) throws {
         guard !outpoints.isEmpty, let entries = plan.plans,
               entries.map(\.outpoint) == outpoints else {
             throw WalletActionError(message: "Couldn’t verify the selected funds.")
         }
+        let address = plan.sweepAddress ?? ""
+        let isBech32 = ["bc1", "tb1", "bcrt1", "sb1"].contains { options.sweepAddress.lowercased().hasPrefix($0) }
+        let addressMatches = isBech32
+            ? address.lowercased() == options.sweepAddress.lowercased()
+            : address == options.sweepAddress
+        guard addressMatches,
+              options.feeRateSatPerVByte == 0 ||
+                (plan.feeRateSatPerVByte == options.feeRateSatPerVByte && plan.totalEstimatedFeeSat != nil) else {
+            throw WalletActionError(message: "The wallet did not confirm the custom exit options.")
+        }
         self.entries = entries
+        self.options = options
+        sweepAddress = address.isEmpty ? nil : address
+        totalEstimatedFeeSat = plan.totalEstimatedFeeSat
         feeRate = plan.feeRateSatPerVByte
         canStart = plan.canStart && entries.allSatisfy { $0.canStart && !$0.exitJobFound && $0.error.isEmpty }
     }

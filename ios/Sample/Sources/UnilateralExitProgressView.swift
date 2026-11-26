@@ -5,6 +5,7 @@ struct RecoveryStatusView: View {
     let outpoint: String
     let amount: Int64
     var startError: String?
+    var quotedAddress: String?
     @EnvironmentObject private var store: WalletStore
     @Environment(\.scenePhase) private var scenePhase
     @State private var status: ExitStatusResult?
@@ -14,11 +15,16 @@ struct RecoveryStatusView: View {
     private var stage: UnilateralExitStage { UnilateralExitStage(status: status?.status) }
     private var canCheck: Bool { scenePhase == .active && !store.isSessionLocked }
 
+    private var destination: String? {
+        if status?.found != true { return quotedAddress }
+        return status?.sweepAddress.flatMap { $0.isEmpty ? nil : $0 }
+    }
+
     var body: some View {
         WalletPage {
             VStack(alignment: .leading, spacing: 12) {
                 if stage == .complete, let fees = status?.fees, fees.sweepFeeActual {
-                    Text("Received on-chain").foregroundStyle(WalletTheme.secondary)
+                    Text(destination == nil ? "Received on-chain" : "Sent on-chain").foregroundStyle(WalletTheme.secondary)
                     WalletAmount(amount: fees.netRecoveredSat)
                 } else {
                     Text("Selected to exit").foregroundStyle(WalletTheme.secondary)
@@ -35,7 +41,7 @@ struct RecoveryStatusView: View {
                         .font(.subheadline).foregroundStyle(WalletTheme.secondary)
                 }
             }
-            ValueRow(label: "To", value: "My on-chain wallet")
+            ValueRow(label: "To", value: destination ?? "My on-chain wallet", copyable: destination != nil)
             if let fees = status?.fees {
                 VStack(alignment: .leading, spacing: 14) {
                     Text("Network fees").font(.headline)
@@ -55,7 +61,7 @@ struct RecoveryStatusView: View {
                     WalletNavigationRow(title: "View sweep transaction", icon: "arrow.up.right.square")
                 }.buttonStyle(.plain)
             }
-            if stage == .complete {
+            if stage == .complete, destination == nil {
                 NavigationLink("Send on-chain funds", destination: SweepWalletView())
             }
             if stage == .failed, let error = status?.lastError, !error.isEmpty {
@@ -193,7 +199,7 @@ private struct UnilateralExitProgressView: View {
             switch self {
             case .publish: return "Publish exit transactions"
             case .wait: return "Wait for block delay"
-            case .sweep: return "Sweep to on-chain wallet"
+            case .sweep: return "Publish final sweep"
             }
         }
 

@@ -82,8 +82,8 @@ final class WalletStore: ObservableObject {
     private let startClient: (WalletConfig) async throws -> Void
     private let stopClient: () async throws -> Void
     private let submitExitBatch: ([String], String) async throws -> ExitBatchResult
-    private let readUnilateralPlan: ([String]) async throws -> ExitPlan
-    private let submitUnilateralExit: (String) async throws -> ExitResult
+    private let readUnilateralPlan: ([String], UnilateralExitOptions) async throws -> ExitPlan
+    private let submitUnilateralExit: (String, UnilateralExitOptions) async throws -> ExitResult
     private let activityEvidence: () async throws -> [Entry]
     private let observeRefresh: ([String]) async throws -> RefreshObservation
     private let dataRoot: URL?
@@ -111,16 +111,20 @@ final class WalletStore: ObservableObject {
          submitExitBatch: (([String], String) async throws -> ExitBatchResult)? = nil,
          activityEvidence: (() async throws -> [Entry])? = nil,
          observeRefresh: (([String]) async throws -> RefreshObservation)? = nil,
-         readUnilateralPlan: (([String]) async throws -> ExitPlan)? = nil,
-         submitUnilateralExit: ((String) async throws -> ExitResult)? = nil) {
+         readUnilateralPlan: (([String], UnilateralExitOptions) async throws -> ExitPlan)? = nil,
+         submitUnilateralExit: ((String, UnilateralExitOptions) async throws -> ExitResult)? = nil) {
         self.defaults = defaults
         self.client = client
         self.startClient = startClient ?? { try await client.start($0) }
         self.stopClient = stopClient ?? { try await client.stop() }
         self.submitExitBatch = submitExitBatch ?? { try await client.exitBatch(outpoints: $0, destination: $1) }
-        self.readUnilateralPlan = readUnilateralPlan ?? { try await client.getExitPlan(outpoints: $0) }
-        self.submitUnilateralExit = submitUnilateralExit ?? {
-            try await client.exit(outpoint: $0, destination: "", forceUnrollAck: "I_KNOW_WHAT_I_AM_DOING")
+        self.readUnilateralPlan = readUnilateralPlan ?? { outpoints, options in
+            try await client.getExitPlan(outpoints: outpoints, sweepAddress: options.sweepAddress,
+                                         feeRateSatPerVByte: options.feeRateSatPerVByte)
+        }
+        self.submitUnilateralExit = submitUnilateralExit ?? { outpoint, options in
+            try await client.exit(outpoint: outpoint, forceUnrollAck: "I_KNOW_WHAT_I_AM_DOING",
+                                  sweepAddress: options.sweepAddress, feeRateSatPerVByte: options.feeRateSatPerVByte)
         }
         self.activityEvidence = activityEvidence ?? {
             guard let entries = try await client.list(limit: 100).activity?.entries else {
@@ -1107,13 +1111,13 @@ final class WalletStore: ObservableObject {
         return try await client.recoveryInventory().vtxos
     }
 
-    func exitPlan(outpoints: [String]) async throws -> UnilateralExitSelectionPlan {
+    func exitPlan(outpoints: [String], options: UnilateralExitOptions) async throws -> UnilateralExitSelectionPlan {
         try requireForegroundInteraction()
         let currentGeneration = generation
-        let plan = try await readUnilateralPlan(outpoints)
+        let plan = try await readUnilateralPlan(outpoints, options)
         guard currentGeneration == generation else { throw CancellationError() }
         try requireForegroundInteraction()
-        return try UnilateralExitSelectionPlan(plan: plan, outpoints: outpoints)
+        return try UnilateralExitSelectionPlan(plan: plan, outpoints: outpoints, options: options)
     }
 
     func estimateExitFee(outpoint: String) async throws -> ExitFeeEstimate {
@@ -1146,7 +1150,8 @@ final class WalletStore: ObservableObject {
         return result
     }
 
-    func startUnilateralExits(outpoints: [String], reviewedFeeRate: Int64?,
+    func startUnilateralExits(outpoints: [String], options: UnilateralExitOptions = .init(),
+                              reviewedFeeRate: Int64?,
                               update: (String, UnilateralExitAdmission) -> Void) async throws {
         guard stateCreatingCallCount == 0 else {
             throw WalletActionError(message: "The wallet is busy. Try again in a moment.")
@@ -1156,7 +1161,7 @@ final class WalletStore: ObservableObject {
         defer { endStateCreatingCall() }
         guard generation == currentGeneration, stateCreatingCallCount == 1 else { throw CancellationError() }
 
-        let currentPlan = try await exitPlan(outpoints: outpoints)
+        let currentPlan = try await exitPlan(outpoints: outpoints, options: options)
         guard currentPlan.canStart, currentPlan.feeRate == reviewedFeeRate else {
             throw WalletActionError(message: "The exit plan changed. Review it again.")
         }
@@ -1171,7 +1176,7 @@ final class WalletStore: ObservableObject {
             try requireForegroundInteraction()
             update(outpoint, .starting)
             do {
-                let result = try await submitUnilateralExit(outpoint)
+                let result = try await submitUnilateralExit(outpoint, options)
                 guard !result.cooperative, result.created else {
                     update(outpoint, .unconfirmed("The wallet didn’t confirm a new exit."))
                     return
