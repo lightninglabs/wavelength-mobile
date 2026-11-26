@@ -27,7 +27,8 @@ final class BatchExitUITests: XCTestCase {
         app.buttons["settings.recovery"].tap()
         app.buttons["recovery.unilateral"].tap()
         XCTAssertTrue(app.navigationBars["Unilateral exit"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.buttons["Check recovery plan"].exists)
+        XCTAssertTrue(app.staticTexts["No available funds"].waitForExistence(timeout: 30))
+        XCTAssertFalse(app.buttons["unilateral.review"].exists)
         XCTAssertFalse(app.buttons["exit.continue"].exists)
     }
 }

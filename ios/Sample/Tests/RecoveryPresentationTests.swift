@@ -1,7 +1,38 @@
 import XCTest
 import WalletKit
+@testable import Wavelength
 
 final class RecoveryPresentationTests: XCTestCase {
+    func testExitFundingCoversBothOutputCountAndValueShortfall() throws {
+        let entry = try exitPlanEntry(required: 3, usable: 1, shortfall: 25001)
+        let funding = try XCTUnwrap(UnilateralExitFunding(entry))
+        XCTAssertEqual(funding.paymentCount, 2)
+        XCTAssertEqual(funding.satsPerPayment, 12501)
+    }
+
+    func testExitFundingWithMissingOutputsAndZeroValueShortfall() throws {
+        let entry = try exitPlanEntry(required: 3, usable: 1, shortfall: 0,
+                                      reason: "wallet_too_few_inputs")
+        let funding = try XCTUnwrap(UnilateralExitFunding(entry))
+        XCTAssertEqual(funding.paymentCount, 2)
+        XCTAssertEqual(funding.satsPerPayment, 10000)
+        XCTAssertNil(UnilateralExitFunding(try exitPlanEntry(required: 3, usable: 3, shortfall: 0,
+                                                            reason: "wallet_too_few_inputs")))
+    }
+
+    func testExitFundingUsesOnePaymentForBalanceOnlyShortfall() throws {
+        let entry = try exitPlanEntry(required: 2, usable: 2, shortfall: 4500)
+        let funding = try XCTUnwrap(UnilateralExitFunding(entry))
+        XCTAssertEqual(funding.paymentCount, 1)
+        XCTAssertEqual(funding.satsPerPayment, 10000)
+        XCTAssertNil(UnilateralExitFunding(try exitPlanEntry(required: 2, usable: 2, shortfall: 0, canStart: true)))
+    }
+
+    func testCommittedExitDoesNotOfferFeeFunding() throws {
+        let entry = try exitPlanEntry(required: 2, usable: 1, shortfall: 10000, roundCommitment: "active")
+        XCTAssertNil(UnilateralExitFunding(entry))
+    }
+
     func testRequestIsNotShownAsReceivedBeforeFundsArrive() throws {
         let detected = try entry(kind: "deposit", status: "pending", phase: "waiting_for_confirmation")
         XCTAssertEqual(detected.displayStatus, "Receiving")
@@ -71,6 +102,17 @@ final class RecoveryPresentationTests: XCTestCase {
         XCTAssertNil(missing.feeEstimate?.totalFeeSat)
         let free = try JSONDecoder().decode(RefreshResult.self, from: Data(#"{"QueuedOutpoints":["a:0"],"DryRun":true,"FeeEstimate":{"TotalFeeSat":0,"FreeRefreshEligible":true,"EstimateError":""}}"#.utf8))
         XCTAssertEqual(free.feeEstimate?.totalFeeSat, 0)
+    }
+
+    private func exitPlanEntry(required: Int, usable: Int, shortfall: Int,
+                               canStart: Bool = false, roundCommitment: String = "",
+                               reason: String = "wallet_underfunded") throws -> ExitPlanEntry {
+        let data: [String: Any] = ["Outpoint": "fund:0", "FundingAddress": "fixture",
+            "RequiredConfirmations": 1, "RequiredFeeUTXOCount": required, "UsableFeeUTXOCount": usable,
+            "RecommendedUTXOAmountSat": 10000, "FundingShortfallSat": shortfall, "CanStart": canStart,
+            "InfeasibilityReason": reason, "ExitJobFound": false, "ExitStatus": "",
+            "LastError": "", "RoundCommitment": roundCommitment, "Err": ""]
+        return try JSONDecoder().decode(ExitPlanEntry.self, from: JSONSerialization.data(withJSONObject: data))
     }
 
     private func entry(kind: String, status: String, phase: String,
