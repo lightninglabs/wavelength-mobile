@@ -5,11 +5,6 @@ struct RecoveryOptionsView: View {
     @EnvironmentObject private var store: WalletStore
     var body: some View {
         WalletPage {
-            NavigationLink(destination: UnilateralExitView()) {
-                WalletNavigationRow(title: "Unilateral exit", icon: "arrow.up.right.square")
-            }
-                .accessibilityIdentifier("recovery.unilateral")
-            WalletDivider()
             NavigationLink(destination: SweepWalletView()) {
                 WalletNavigationRow(title: "Send on-chain funds", icon: "arrow.up.right")
             }
@@ -17,18 +12,11 @@ struct RecoveryOptionsView: View {
             NavigationLink(destination: RecoveryExportView()) {
                 WalletNavigationRow(title: "Export recovery data", icon: "square.and.arrow.up")
             }
-            if !store.unresolvedDispatches.isEmpty || !store.unresolvedSweeps.isEmpty {
+            if !store.unresolvedDispatches.isEmpty || !store.unresolvedSweeps.isEmpty ||
+                store.exitBatches.contains(where: \.isPending) || store.exitBatchJournalError != nil {
                 WalletDivider()
                 NavigationLink(destination: PaymentChecksView()) {
                     WalletNavigationRow(title: "Payment checks", icon: "questionmark.circle")
-                }
-            }
-            if !store.recoveryJobs.isEmpty {
-                Text("In progress").font(.headline)
-                ForEach(store.recoveryJobs) { job in
-                    NavigationLink(destination: RecoveryStatusView(outpoint: job.outpoint, amount: job.vtxoAmountSat)) {
-                        WalletNavigationRow(title: WalletFormatting.sats(job.vtxoAmountSat))
-                    }
                 }
             }
         }.buttonStyle(.plain).navigationTitle("Recovery").navigationBarTitleDisplayMode(.inline)

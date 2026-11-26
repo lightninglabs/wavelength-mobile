@@ -82,6 +82,8 @@ final class WalletStore: ObservableObject {
     private let startClient: (WalletConfig) async throws -> Void
     private let stopClient: () async throws -> Void
     private let submitExitBatch: ([String], String) async throws -> ExitBatchResult
+    private let readUnilateralPlan: ([String]) async throws -> ExitPlan
+    private let submitUnilateralExit: (String) async throws -> ExitResult
     private let activityEvidence: () async throws -> [Entry]
     private let observeRefresh: ([String]) async throws -> RefreshObservation
     private let dataRoot: URL?
@@ -108,12 +110,18 @@ final class WalletStore: ObservableObject {
          stopClient: (() async throws -> Void)? = nil,
          submitExitBatch: (([String], String) async throws -> ExitBatchResult)? = nil,
          activityEvidence: (() async throws -> [Entry])? = nil,
-         observeRefresh: (([String]) async throws -> RefreshObservation)? = nil) {
+         observeRefresh: (([String]) async throws -> RefreshObservation)? = nil,
+         readUnilateralPlan: (([String]) async throws -> ExitPlan)? = nil,
+         submitUnilateralExit: ((String) async throws -> ExitResult)? = nil) {
         self.defaults = defaults
         self.client = client
         self.startClient = startClient ?? { try await client.start($0) }
         self.stopClient = stopClient ?? { try await client.stop() }
         self.submitExitBatch = submitExitBatch ?? { try await client.exitBatch(outpoints: $0, destination: $1) }
+        self.readUnilateralPlan = readUnilateralPlan ?? { try await client.getExitPlan(outpoints: $0) }
+        self.submitUnilateralExit = submitUnilateralExit ?? {
+            try await client.exit(outpoint: $0, destination: "", forceUnrollAck: "I_KNOW_WHAT_I_AM_DOING")
+        }
         self.activityEvidence = activityEvidence ?? {
             guard let entries = try await client.list(limit: 100).activity?.entries else {
                 throw WalletActionError(message: "Activity unavailable")
@@ -1099,9 +1107,13 @@ final class WalletStore: ObservableObject {
         return try await client.recoveryInventory().vtxos
     }
 
-    func exitPlan(outpoint: String) async throws -> ExitPlan {
+    func exitPlan(outpoints: [String]) async throws -> UnilateralExitSelectionPlan {
         try requireForegroundInteraction()
-        return try await client.getExitPlan(outpoints: [outpoint])
+        let currentGeneration = generation
+        let plan = try await readUnilateralPlan(outpoints)
+        guard currentGeneration == generation else { throw CancellationError() }
+        try requireForegroundInteraction()
+        return try UnilateralExitSelectionPlan(plan: plan, outpoints: outpoints)
     }
 
     func estimateExitFee(outpoint: String) async throws -> ExitFeeEstimate {
@@ -1134,13 +1146,42 @@ final class WalletStore: ObservableObject {
         return result
     }
 
-    func exitFunds(outpoint: String, destination: String, unilateral: Bool) async throws -> ExitResult {
+    func startUnilateralExits(outpoints: [String], reviewedFeeRate: Int64?,
+                              update: (String, UnilateralExitAdmission) -> Void) async throws {
+        guard stateCreatingCallCount == 0 else {
+            throw WalletActionError(message: "The wallet is busy. Try again in a moment.")
+        }
+        let currentGeneration = generation
         try await beginStateCreatingCall()
         defer { endStateCreatingCall() }
-        let result = try await client.exit(outpoint: outpoint, destination: unilateral ? "" : destination,
-            forceUnrollAck: unilateral ? "I_KNOW_WHAT_I_AM_DOING" : "")
-        await refresh()
-        return result
+        guard generation == currentGeneration, stateCreatingCallCount == 1 else { throw CancellationError() }
+
+        let currentPlan = try await exitPlan(outpoints: outpoints)
+        guard currentPlan.canStart, currentPlan.feeRate == reviewedFeeRate else {
+            throw WalletActionError(message: "The exit plan changed. Review it again.")
+        }
+        guard pendingExitOutpoints.isDisjoint(with: outpoints) else {
+            throw WalletActionError(message: "Check the earlier exit before starting another.")
+        }
+
+        // The SDK starts one VTXO at a time and checks its fee inputs at
+        // admission. An unconfirmed response stops the rest of the selection.
+        for outpoint in outpoints {
+            try Task.checkCancellation()
+            try requireForegroundInteraction()
+            update(outpoint, .starting)
+            do {
+                let result = try await submitUnilateralExit(outpoint)
+                guard !result.cooperative, result.created else {
+                    update(outpoint, .unconfirmed("The wallet didn’t confirm a new exit."))
+                    return
+                }
+                update(outpoint, .started)
+            } catch {
+                update(outpoint, .unconfirmed(error.walletMessage))
+                return
+            }
+        }
     }
 
     func recoveryStatus(outpoint: String) async throws -> ExitStatusResult {
