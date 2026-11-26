@@ -52,20 +52,18 @@ struct ActivityDetailView: View {
                         ValueRow(label: "Destination", value: currentEntry.counterparty, copyable: true)
                     }
                     if let progress = currentEntry.progress {
-                        ValueRow(label: "Phase", value: progress.phaseLabel.isEmpty ? progress.phase : progress.phaseLabel)
+                        ValueRow(label: "Phase", value: currentEntry.displayStatus)
                         if !progress.txid.isEmpty {
                             ValueRow(label: "Transaction", value: progress.txid, copyable: true)
                             if let url = store.transactionExplorerURL(txid: progress.txid) { Link("View transaction", destination: url) }
                         }
                         if !progress.paymentHash.isEmpty { ValueRow(label: "Payment hash", value: progress.paymentHash, copyable: true) }
-                        if !progress.vtxoOutpoint.isEmpty { ValueRow(label: "Outpoint", value: progress.vtxoOutpoint, copyable: true) }
                         if !progress.preimage.isEmpty { ValueRow(label: "Payment proof", value: progress.preimage, copyable: true) }
                     }
                     if let request = currentEntry.request {
                         if !request.lightningInvoice.isEmpty { ValueRow(label: "Invoice", value: request.lightningInvoice, copyable: true) }
                         if !request.onchainAddress.isEmpty { ValueRow(label: "Bitcoin address", value: request.onchainAddress, copyable: true) }
                     }
-                    ValueRow(label: "Reference", value: currentEntry.id, copyable: true)
                 }.padding(.top, 20)
             }
         }
