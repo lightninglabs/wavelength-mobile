@@ -16,10 +16,7 @@ struct RefreshOperation: Codable {
     var remainingOutpoints: [String]? = nil
     var remainingAmountSat: Int64? = nil
 
-    var unresolvedInputCount: Int? {
-        guard let confirmedCount, let remainingOutpoints else { return nil }
-        return max(0, outpoints.count - confirmedCount - remainingOutpoints.count)
-    }
+    var isResolved: Bool { status == "Complete" || canRetry == true }
 }
 
 @MainActor
@@ -167,7 +164,7 @@ final class WalletStore: ObservableObject {
 
     /// This guards known local refresh ownership, not every native obligation.
     var networkSwitchBlockedReason: String? {
-        guard let operation = refreshOperation, operation.status != "Complete", operation.canRetry != true else { return nil }
+        guard let operation = refreshOperation, !operation.isResolved else { return nil }
         return "A refresh is still in progress on \(network.title)."
     }
 
@@ -1293,12 +1290,16 @@ final class WalletStore: ObservableObject {
     }
 
     func startRefresh(outpoints: [String], amountSat: Int64) async throws {
-        guard refreshOperation == nil || refreshOperation?.status == "Complete" else {
-            throw WalletActionError(message: "Check the existing refresh before starting another.")
-        }
+        let currentGeneration = generation
         try await beginStateCreatingCall()
         defer { endStateCreatingCall() }
+        guard currentGeneration == generation, !outpoints.isEmpty,
+              refreshOperation?.isResolved != false else {
+            throw WalletActionError(message: "Check the existing refresh before starting another.")
+        }
+        // Keep the previous receipt until the user confirms the next submission.
         refreshOperation = RefreshOperation(outpoints: outpoints, amountSat: amountSat, status: "Checking status")
+        refreshCheckError = nil
         persistRefresh()
         do {
             let result = try await client.refreshFunds(outpoints: outpoints, dryRun: false)
@@ -1314,14 +1315,6 @@ final class WalletStore: ObservableObject {
             persistRefresh()
             throw error
         }
-    }
-
-    func clearCompletedRefresh() {
-        guard !isSessionLocked, applicationIsActive() else { return }
-        guard refreshOperation?.status == "Complete" || refreshOperation?.canRetry == true else { return }
-        refreshOperation = nil
-        refreshCheckError = nil
-        defaults.removeObject(forKey: preferenceKey("refresh"))
     }
 
     var recoverableAmountSat: Int64 {
@@ -1355,7 +1348,9 @@ final class WalletStore: ObservableObject {
     /// Reconcile only the selected refresh. Read failures preserve its evidence
     /// and stay visible instead of disappearing behind optional recovery reads.
     func checkRefreshStatus() async {
-        guard let operation = refreshOperation, operation.status != "Complete", !isCheckingRefresh,
+        // A released attempt is final. Later spends or expiry of its old
+        // inputs cannot put that attempt back into a round.
+        guard let operation = refreshOperation, !operation.isResolved, !isCheckingRefresh,
               stateCreatingCallCount == 0 else { return }
         let checkedGeneration = generation
         let checkedNetwork = network

@@ -16,6 +16,7 @@ private struct WalletDashboardView: View {
     @EnvironmentObject private var store: WalletStore
     @State private var sheet: WalletSheet?
     @State private var showsRefresh = false
+    @State private var showsRefreshActivity = false
 
     var body: some View {
         WalletPage(onBottomPull: store.pullForOlderActivity,
@@ -87,7 +88,7 @@ private struct WalletDashboardView: View {
                 Text("Activity").font(.title2.weight(.medium)).padding(.bottom, 8)
                     .accessibilityAddTraits(.isHeader)
                 if let refresh = store.refreshOperation {
-                    Button { showsRefresh = true } label: {
+                    Button { showsRefreshActivity = true } label: {
                         HStack(alignment: .top, spacing: 14) {
                             Image(systemName: "arrow.triangle.2.circlepath").frame(width: 24).padding(.top, 3)
                             VStack(alignment: .leading, spacing: 6) {
@@ -108,10 +109,11 @@ private struct WalletDashboardView: View {
             }
         }
         .background {
-            // Keep the destination mounted when clearing a completed or
-            // released operation removes its conditional Activity row.
-            NavigationLink(destination: RefreshWalletView(), isActive: $showsRefresh) { EmptyView() }
-                .hidden()
+            Group {
+                NavigationLink(destination: RefreshWalletView(), isActive: $showsRefresh) { EmptyView() }
+                NavigationLink(destination: RefreshWalletView(showsRefreshReceipt: true),
+                               isActive: $showsRefreshActivity) { EmptyView() }
+            }.hidden()
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
