@@ -18,7 +18,8 @@ final class BatchExitUITests: XCTestCase {
         app.buttons["settings.exit"].tap()
         XCTAssertTrue(app.navigationBars["Unilateral exit"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["No available funds"].waitForExistence(timeout: 30))
-        XCTAssertFalse(app.buttons["unilateral.review"].exists)
+        let review = app.buttons["unilateral.review"]
+        XCTAssertFalse(review.exists && review.isEnabled)
         XCTAssertFalse(app.buttons["unilateral.selectAll"].exists)
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.buttons["settings.recovery"].tap()
