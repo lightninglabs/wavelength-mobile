@@ -351,11 +351,14 @@ public actor WalletClient {
     public func exit(
         outpoint: String,
         destination: String = "",
-        forceUnrollAck: String = ""
+        forceUnrollAck: String = "",
+        sweepAddress: String = "",
+        feeRateSatPerVByte: Int64 = 0
     ) async throws -> ExitResult {
         let req = ExitReq(
             outpoint: outpoint, destination: destination,
-            forceUnrollAck: forceUnrollAck
+            forceUnrollAck: forceUnrollAck, sweepAddress: sweepAddress,
+            feeRateSatPerVByte: feeRateSatPerVByte
         )
         let body = try encoder.encode(req)
         return try decode(await bg { try Bindings.exit(body) })
@@ -416,9 +419,23 @@ public actor WalletClient {
     }
 
     /// Preview confirmed fee-input funding before an explicit unilateral exit.
-    public func getExitPlan(outpoints: [String]) async throws -> ExitPlan {
-        let body = try JSONSerialization.data(withJSONObject: ["Outpoints": outpoints])
+    public func getExitPlan(outpoints: [String], sweepAddress: String = "",
+                            feeRateSatPerVByte: Int64 = 0) async throws -> ExitPlan {
+        let body = try JSONSerialization.data(withJSONObject: [
+            "Outpoints": outpoints, "SweepAddress": sweepAddress,
+            "FeeRateSatPerVByte": feeRateSatPerVByte
+        ])
         return try decode(await bg { try Bindings.getExitPlan(body) })
+    }
+
+    /// Estimate the selected exits without allocating addresses or starting jobs.
+    public func previewUnilateralExit(outpoints: [String], sweepAddress: String = "",
+                                      feeRateSatPerVByte: Int64 = 0) async throws -> UnilateralExitPreview {
+        let body = try JSONSerialization.data(withJSONObject: [
+            "Outpoints": outpoints, "SweepAddress": sweepAddress,
+            "FeeRateSatPerVByte": feeRateSatPerVByte
+        ])
+        return try decode(await bg { try Bindings.previewUnilateralExit(body) })
     }
 
     /// List live recovery jobs so the host can resume them after relaunch.
@@ -646,10 +663,14 @@ private struct ExitReq: Encodable {
     let outpoint: String
     let destination: String
     let forceUnrollAck: String
+    let sweepAddress: String
+    let feeRateSatPerVByte: Int64
     enum CodingKeys: String, CodingKey {
         case outpoint = "Outpoint"
         case destination = "Destination"
         case forceUnrollAck = "ForceUnrollAck"
+        case sweepAddress = "SweepAddress"
+        case feeRateSatPerVByte = "FeeRateSatPerVByte"
     }
 }
 

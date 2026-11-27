@@ -36,13 +36,53 @@ public struct RefreshFeeEstimate: Decodable, Sendable {
     }
 }
 
+/// A read-only estimate for the entire selection, with shared transactions counted once.
+public struct UnilateralExitPreview: Decodable, Sendable {
+    public let selectedAmountSat: Int64
+    public let feeRateSatPerVByte: Int64
+    public let estimatedTransactions: UInt32
+    public let estimatedNetworkFeeSat: Int64
+    public let walletFeeSat: Int64
+    public let additionalFundingSat: Int64
+    public let fundingAction: String
+    public let sweepAddress: String
+    public let entries: [UnilateralExitTarget]
+
+    enum CodingKeys: String, CodingKey {
+        case selectedAmountSat = "SelectedAmountSat", feeRateSatPerVByte = "FeeRateSatPerVByte"
+        case estimatedTransactions = "EstimatedTransactions", estimatedNetworkFeeSat = "EstimatedNetworkFeeSat"
+        case walletFeeSat = "WalletFeeSat", additionalFundingSat = "AdditionalFundingSat"
+        case fundingAction = "FundingAction", sweepAddress = "SweepAddress", entries = "Entries"
+    }
+}
+
+public struct UnilateralExitTarget: Decodable, Sendable {
+    public let outpoint: String
+    public let amountSat: Int64
+    public let exitStatus: String
+    public let admissionError: String
+    public let infeasibilityReason: String
+    public let roundCommitment: String
+
+    enum CodingKeys: String, CodingKey {
+        case outpoint = "Outpoint", amountSat = "AmountSat", exitStatus = "ExitStatus"
+        case admissionError = "AdmissionError", infeasibilityReason = "InfeasibilityReason"
+        case roundCommitment = "RoundCommitment"
+    }
+}
+
 public struct ExitPlan: Decodable, Sendable {
     public let plans: [ExitPlanEntry]?
+    public let sweepAddress: String?
+    public let totalEstimatedFeeSat: Int64?
+    public let feeRateSatPerVByte: Int64?
     public let canStart: Bool
     public let totalFundingShortfallSat: Int64
     public let totalRecommendedFundingSat: Int64
     enum CodingKeys: String, CodingKey {
         case plans = "Plans", canStart = "CanStart"
+        case sweepAddress = "SweepAddress", totalEstimatedFeeSat = "TotalEstimatedFeeSat"
+        case feeRateSatPerVByte = "FeeRateSatPerVByte"
         case totalFundingShortfallSat = "TotalFundingShortfallSat"
         case totalRecommendedFundingSat = "TotalRecommendedFundingSat"
     }

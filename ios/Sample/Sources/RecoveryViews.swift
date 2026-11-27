@@ -5,11 +5,6 @@ struct RecoveryOptionsView: View {
     @EnvironmentObject private var store: WalletStore
     var body: some View {
         WalletPage {
-            NavigationLink(destination: UnilateralExitView()) {
-                WalletNavigationRow(title: "Unilateral exit", icon: "arrow.up.right.square")
-            }
-                .accessibilityIdentifier("recovery.unilateral")
-            WalletDivider()
             NavigationLink(destination: SweepWalletView()) {
                 WalletNavigationRow(title: "Send on-chain funds", icon: "arrow.up.right")
             }
@@ -17,204 +12,14 @@ struct RecoveryOptionsView: View {
             NavigationLink(destination: RecoveryExportView()) {
                 WalletNavigationRow(title: "Export recovery data", icon: "square.and.arrow.up")
             }
-            if !store.unresolvedDispatches.isEmpty || !store.unresolvedSweeps.isEmpty {
+            if !store.unresolvedDispatches.isEmpty || !store.unresolvedSweeps.isEmpty ||
+                store.exitBatches.contains(where: \.isPending) || store.exitBatchJournalError != nil {
                 WalletDivider()
                 NavigationLink(destination: PaymentChecksView()) {
                     WalletNavigationRow(title: "Payment checks", icon: "questionmark.circle")
                 }
             }
-            if !store.recoveryJobs.isEmpty {
-                Text("In progress").font(.headline)
-                ForEach(store.recoveryJobs) { job in
-                    NavigationLink(destination: RecoveryStatusView(outpoint: job.outpoint, amount: job.vtxoAmountSat)) {
-                        WalletNavigationRow(title: WalletFormatting.sats(job.vtxoAmountSat))
-                    }
-                }
-            }
         }.buttonStyle(.plain).navigationTitle("Recovery").navigationBarTitleDisplayMode(.inline)
-    }
-}
-
-struct UnilateralExitView: View {
-    @EnvironmentObject private var store: WalletStore
-    @State private var funds: [WalletVTXO] = []
-    @State private var selected: String?
-    @State private var plan: ExitPlan?
-    @State private var reviewed = false
-    @State private var acknowledged = false
-    @State private var submitted = false
-    @State private var loading = false
-    @State private var error: String?
-    private var fund: WalletVTXO? { funds.first { $0.outpoint == selected } }
-    private var planEntry: ExitPlanEntry? { plan?.plans?.first }
-
-    var body: some View {
-        WalletPage {
-            if submitted, let selected {
-                RecoveryStatusView(outpoint: selected, amount: fund?.amountSat ?? 0, embedded: true,
-                                   startError: error)
-            } else if reviewed, let fund {
-                WalletAmount(amount: fund.amountSat)
-                unilateralReview
-                if let error { Text(error).foregroundStyle(.red) }
-            } else {
-                Text("Choose funds").font(.title2.weight(.medium))
-                if loading { ProgressView() }
-                if funds.isEmpty && !loading { Text("No available funds").foregroundStyle(WalletTheme.secondary) }
-                ForEach(funds, id: \.outpoint) { item in
-                    Button {
-                        selected = item.outpoint
-                        plan = nil
-                    } label: {
-                        HStack {
-                            Text(WalletFormatting.sats(item.amountSat))
-                            Spacer()
-                            Image(systemName: selected == item.outpoint ? "checkmark.circle.fill" : "circle")
-                        }.padding(.vertical, 12).contentShape(Rectangle())
-                    }.buttonStyle(.plain)
-                    WalletDivider()
-                }
-                if let error { Text(error).font(.footnote).foregroundStyle(.red) }
-                Button("Check recovery plan") { review() }
-                    .buttonStyle(WalletButtonStyle()).disabled(fund == nil || loading)
-            }
-        }
-        .navigationTitle("Unilateral exit").navigationBarTitleDisplayMode(.inline)
-        .task { await loadFunds() }
-    }
-
-    @ViewBuilder private var unilateralReview: some View {
-        if let item = planEntry {
-            if item.exitJobFound {
-                NavigationLink("View existing recovery", destination: RecoveryStatusView(outpoint: item.outpoint, amount: fund?.amountSat ?? 0))
-            } else if !item.canStart {
-                if item.fundingShortfallSat > 0 || item.infeasibilityReason == "wallet_too_few_inputs" {
-                    Text("Fund network fees").font(.headline)
-                    ValueRow(label: "Additional funding", value: WalletFormatting.sats(item.fundingShortfallSat))
-                    ValueRow(label: "Fee inputs needed", value: "\(item.requiredFeeUTXOCount)")
-                    ValueRow(label: "Each input", value: WalletFormatting.sats(item.recommendedUTXOAmountSat))
-                    ValueRow(label: "Confirmed inputs ready", value: "\(item.usableFeeUTXOCount) of \(item.requiredFeeUTXOCount)")
-                    ValueRow(label: "Confirmations required", value: "\(item.requiredConfirmations)")
-                    Text("Fund each required input with a separate payment.").font(.footnote).foregroundStyle(WalletTheme.secondary)
-                    if !item.fundingAddress.isEmpty {
-                        QRCodeView(value: item.fundingAddress).frame(width: 210, height: 210)
-                            .padding(16).background(Color.white, in: RoundedRectangle(cornerRadius: 14))
-                        ValueRow(label: "Fee funding address", value: item.fundingAddress, copyable: true)
-                    }
-                    Button("Check funding") { review() }.buttonStyle(WalletButtonStyle()).disabled(loading)
-                } else {
-                    Text(item.error.isEmpty ? item.infeasibilityReason.replacingOccurrences(of: "_", with: " ").capitalized : item.error)
-                        .foregroundStyle(.red)
-                    Button("Check plan") { review() }.buttonStyle(WalletButtonStyle(secondary: true)).disabled(loading)
-                }
-            } else {
-                ValueRow(label: "Destination", value: "My on-chain wallet")
-                ValueRow(label: "Fee funding", value: "Ready")
-                if !item.roundCommitment.isEmpty {
-                    Text("These funds already belong to an active round. Starting recovery may interrupt it.")
-                        .font(.footnote).foregroundStyle(WalletTheme.secondary)
-                }
-                Text("Includes a block waiting period. Cannot be undone once started.")
-                    .font(.footnote).foregroundStyle(WalletTheme.secondary)
-                Toggle("I understand", isOn: $acknowledged)
-                Button("Start unilateral exit", action: submit).buttonStyle(WalletButtonStyle())
-                    .disabled(!acknowledged || loading)
-                    .accessibilityIdentifier("recovery.confirm")
-            }
-        }
-    }
-
-    private func loadFunds() async {
-        loading = true
-        defer { loading = false }
-        do {
-            funds = try await store.recoveryFunds()
-        } catch { self.error = error.walletMessage }
-    }
-    private func review() {
-        guard let selected, !loading else { return }
-        error = nil
-        loading = true
-        Task {
-            defer { loading = false }
-            do { plan = try await store.exitPlan(outpoint: selected); reviewed = true }
-            catch { self.error = error.walletMessage }
-        }
-    }
-    private func submit() {
-        guard let selected, !loading else { return }
-        loading = true
-        submitted = true
-        // Consuming this screen before the call prevents an ambiguous failure
-        // from offering the same funds-moving action a second time.
-        Task {
-            defer { loading = false }
-            do {
-                _ = try await store.exitFunds(outpoint: selected, destination: "", unilateral: true)
-            } catch { self.error = error.walletMessage }
-        }
-    }
-}
-
-struct RecoveryStatusView: View {
-    @EnvironmentObject private var store: WalletStore
-    let outpoint: String
-    let amount: Int64
-    var embedded = false
-    var startError: String? = nil
-    @State private var status: ExitStatusResult?
-    @State private var error: String?
-    var body: some View {
-        Group {
-            if embedded { content } else { WalletPage { content } }
-        }
-        .navigationTitle("Recovery").navigationBarTitleDisplayMode(.inline)
-        .task {
-            while !Task.isCancelled {
-                do { status = try await store.recoveryStatus(outpoint: outpoint); error = nil }
-                catch { self.error = error.walletMessage }
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
-            }
-        }
-    }
-    @ViewBuilder private var content: some View {
-        WalletAmount(amount: status?.status == "completed" ? status?.fees?.netRecoveredSat ?? amount : amount)
-        WalletStatus(text: title, pending: (status?.found == true || startError == nil) && status?.status != "completed" && status?.status != "failed",
-                     complete: status?.status == "completed", failed: status?.status == "failed" || (startError != nil && status?.found != true))
-        if let startError, status?.found != true {
-            Text("Couldn’t confirm recovery started.").font(.headline)
-            Text(startError).font(.footnote).foregroundStyle(WalletTheme.secondary)
-            Text("Check status before trying again.").font(.footnote).foregroundStyle(WalletTheme.secondary)
-        }
-        if let progress = status?.progress {
-            ValueRow(label: "Confirmed", value: "\(progress.confirmedTxs) of \(progress.totalTxs) transactions")
-            ValueRow(label: "In flight", value: "\(progress.inFlightTxs)")
-        }
-        if let csv = status?.csv, !csv.mature {
-            Text("\(csv.blocksRemaining) blocks remaining").font(.title2.weight(.medium))
-        }
-        if let fees = status?.fees {
-            ValueRow(label: "Network cost so far", value: WalletFormatting.sats(fees.spentSoFarSat))
-            ValueRow(label: "Total estimated cost", value: WalletFormatting.sats(fees.totalCostSat))
-            ValueRow(label: fees.sweepFeeActual ? "Final sweep fee" : "Sweep fee estimate", value: WalletFormatting.sats(fees.sweepFeeSat))
-        }
-        if let message = status?.lastError, !message.isEmpty { Text(message).font(.footnote).foregroundStyle(.red) }
-        if let error { Text(error).font(.footnote).foregroundStyle(WalletTheme.secondary) }
-        if status?.status == "completed" {
-            NavigationLink("Send on-chain funds", destination: SweepWalletView())
-        }
-        DisclosureGroup("Details") { ValueRow(label: "Outpoint", value: outpoint, copyable: true) }
-    }
-    private var title: String {
-        if status?.found != true { return startError == nil ? "Checking status" : "Action needed" }
-        switch status?.status {
-        case "materializing": return "Publishing recovery"
-        case "csv_pending": return "Waiting period"
-        case "sweeping": return "Final sweep"
-        case "completed": return "Recovered"
-        case "failed": return "Action needed"
-        default: return "In progress"
-        }
     }
 }
 

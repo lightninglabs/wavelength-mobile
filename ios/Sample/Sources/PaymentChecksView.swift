@@ -19,6 +19,15 @@ struct PaymentChecksView: View {
                 }
                 WalletDivider()
             }
+            ForEach(store.exitBatches.filter(\.isPending)) { operation in
+                NavigationLink(destination: BatchExitStatusView(operationID: operation.id)) {
+                    WalletNavigationRow(title: "Cooperative exit · \(WalletFormatting.sats(operation.amountSat))")
+                }
+                WalletDivider()
+            }
+            if let error = store.exitBatchJournalError {
+                Text(error).font(.footnote).foregroundStyle(WalletTheme.secondary)
+            }
             ForEach(store.unresolvedSweeps) { attempt in
                 WalletAmount(amount: attempt.amountSat)
                 WalletStatus(text: "Unconfirmed")

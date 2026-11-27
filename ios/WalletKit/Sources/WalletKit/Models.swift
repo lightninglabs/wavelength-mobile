@@ -414,6 +414,7 @@ public struct ExitStatusResult: Decodable, Sendable {
     public let found: Bool
     public let status: String
     public let sweepTxid: String
+    public let sweepAddress: String?
     public let lastError: String
     public let progress: ExitProgress?
     public let csv: ExitCSV?
@@ -422,7 +423,7 @@ public struct ExitStatusResult: Decodable, Sendable {
     enum CodingKeys: String, CodingKey {
         case found = "Found"
         case status = "Status"
-        case sweepTxid = "SweepTxid"
+        case sweepTxid = "SweepTxid", sweepAddress = "SweepAddress"
         case lastError = "LastError"
         case progress = "Progress", csv = "CSV", fees = "Fees"
     }
