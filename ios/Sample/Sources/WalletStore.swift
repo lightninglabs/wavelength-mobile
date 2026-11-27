@@ -1111,6 +1111,16 @@ final class WalletStore: ObservableObject {
         return try await client.recoveryInventory().vtxos
     }
 
+    func previewUnilateralExit(outpoints: [String], options: UnilateralExitOptions) async throws -> UnilateralExitQuote {
+        try requireForegroundInteraction()
+        let currentGeneration = generation
+        let preview = try await client.previewUnilateralExit(outpoints: outpoints, sweepAddress: options.sweepAddress,
+                                                              feeRateSatPerVByte: options.feeRateSatPerVByte)
+        guard currentGeneration == generation else { throw CancellationError() }
+        try requireForegroundInteraction()
+        return try UnilateralExitQuote(preview: preview, outpoints: outpoints, options: options)
+    }
+
     func exitPlan(outpoints: [String], options: UnilateralExitOptions) async throws -> UnilateralExitSelectionPlan {
         try requireForegroundInteraction()
         let currentGeneration = generation

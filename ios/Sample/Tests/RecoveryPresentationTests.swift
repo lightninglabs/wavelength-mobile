@@ -35,6 +35,46 @@ final class RecoveryPresentationTests: XCTestCase {
         }
     }
 
+    func testSelectionQuoteRequiresExactTargetsAndCustomTerms() throws {
+        let preview = try exitPreview()
+        let options = UnilateralExitOptions(sweepAddress: "TB1QEXAMPLE", feeRateSatPerVByte: 7)
+        let quote = try UnilateralExitQuote(preview: preview, outpoints: ["a:0", "b:0"], options: options)
+        XCTAssertEqual(quote.preview.estimatedNetworkFeeSat, 8400)
+        XCTAssertEqual(quote.preview.walletFeeSat, 6700)
+        XCTAssertTrue(quote.needsFunding)
+        XCTAssertThrowsError(try UnilateralExitQuote(preview: preview, outpoints: ["b:0", "a:0"], options: options))
+        for wrongOption in [UnilateralExitOptions(sweepAddress: "tb1qother", feeRateSatPerVByte: 7),
+                            UnilateralExitOptions(sweepAddress: "tb1qexample", feeRateSatPerVByte: 8)] {
+            XCTAssertThrowsError(try UnilateralExitQuote(preview: preview, outpoints: ["a:0", "b:0"],
+                                                        options: wrongOption))
+        }
+    }
+
+    func testSelectionQuoteRetainsRefusedTargetWithFundingEstimateForRemainingFunds() throws {
+        let preview = try exitPreview(blocked: true)
+        let options = UnilateralExitOptions(sweepAddress: "tb1qexample", feeRateSatPerVByte: 7)
+        let quote = try UnilateralExitQuote(preview: preview, outpoints: ["a:0", "b:0"], options: options)
+        XCTAssertEqual(quote.blocked.map(\.outpoint), ["a:0"])
+        XCTAssertTrue(quote.economicBlock)
+        XCTAssertFalse(quote.allUneconomical)
+        XCTAssertEqual(quote.blockedMessage(try XCTUnwrap(quote.blocked.first)), "Fees would use up this amount")
+    }
+
+    private func exitPreview(blocked: Bool = false) throws -> UnilateralExitPreview {
+        let targets = ["a:0", "b:0"].map { outpoint in
+            let refused = blocked && outpoint == "a:0"
+            return ["Outpoint": outpoint, "AmountSat": 50_000, "ExitStatus": "unspecified",
+                    "RoundCommitment": "", "AdmissionError": refused ? "fee exceeds value" : "",
+                    "InfeasibilityReason": refused ? "uneconomical" : "feasible"] as [String: Any]
+        }
+        let json: [String: Any] = [
+            "SelectedAmountSat": 100_000, "FeeRateSatPerVByte": 7, "EstimatedTransactions": 9,
+            "EstimatedNetworkFeeSat": 8400, "WalletFeeSat": 6700, "AdditionalFundingSat": 7500,
+            "FundingAction": "deposit", "SweepAddress": "tb1qexample", "Entries": targets
+        ]
+        return try JSONDecoder().decode(UnilateralExitPreview.self, from: JSONSerialization.data(withJSONObject: json))
+    }
+
     func testCommittedExitDoesNotOfferFeeFunding() throws {
         let entry = try exitPlanEntry(required: 2, usable: 1, shortfall: 10000, roundCommitment: "active")
         XCTAssertNil(UnilateralExitFunding(entry))
