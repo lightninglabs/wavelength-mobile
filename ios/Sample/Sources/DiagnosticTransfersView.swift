@@ -327,5 +327,6 @@ struct DiagnosticTransferSummary {
 
 func diagnosticFieldLabel(_ key: String) -> String {
     if key == "failed_before_ponr" { return "Failed before funds were committed" }
+    if key == "vhtlc_outpoint" { return "vHTLC outpoint" }
     return key.replacingOccurrences(of: "_", with: " ").capitalized
 }
