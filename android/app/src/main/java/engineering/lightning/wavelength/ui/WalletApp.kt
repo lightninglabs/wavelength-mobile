@@ -108,7 +108,11 @@ import kotlin.math.abs
 ) {
   var stack by remember { mutableStateOf(listOf(WalletScreen.HOME)) }
   val screen = stack.last()
-  val navigate: (WalletScreen) -> Unit = { stack = stack + it }
+  var showsRefreshReceipt by remember { mutableStateOf(false) }
+  val navigate: (WalletScreen) -> Unit = {
+    if (it == WalletScreen.REFRESH) showsRefreshReceipt = false
+    stack = stack + it
+  }
   val back: () -> Unit = { if (stack.size > 1) stack = stack.dropLast(1) }
   var selected by remember { mutableStateOf<String?>(null) }
   val scope = rememberCoroutineScope()
@@ -138,7 +142,7 @@ import kotlin.math.abs
       WalletScreen.UNILATERAL -> { UnilateralScreen(session, state.network, page); return@Scaffold }
       WalletScreen.EXPORT -> { RecoveryExportScreen(session, page); return@Scaffold }
       WalletScreen.SWEEP -> { SweepScreen(session, state.network, page); return@Scaffold }
-      WalletScreen.REFRESH -> { RefreshScreen(session, state.network, page); return@Scaffold }
+      WalletScreen.REFRESH -> { key(state.network) { RefreshScreen(session, state.network, page, showsRefreshReceipt) }; return@Scaffold }
       WalletScreen.EXIT -> { CooperativeExitScreen(session, state.network, page); return@Scaffold }
       WalletScreen.SECURITY -> { SecurityScreen(session, state, page, authenticate); return@Scaffold }
       WalletScreen.CREDIT -> { CreditScreen(session, state, page, back); return@Scaffold }
@@ -191,7 +195,10 @@ import kotlin.math.abs
       }
       state.refreshAmountSat?.let { amount ->
         item(key = "wallet.refresh-operation") {
-          SettingsNavigation("Refresh", Icons.Outlined.Refresh, if (amount > 0) sats(amount) else "") { navigate(WalletScreen.REFRESH) }
+          SettingsNavigation("Refresh", Icons.Outlined.Refresh, if (amount > 0) sats(amount) else "") {
+            showsRefreshReceipt = true
+            stack = stack + WalletScreen.REFRESH
+          }
           Text(state.refreshStatus, Modifier.padding(start = 36.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
           HorizontalDivider()
         }
@@ -262,15 +269,12 @@ import kotlin.math.abs
         entry.paymentHash.isNotEmpty() && it.paymentHash == entry.paymentHash }.forEach { topup ->
         DetailSection("Credit top-up · ${sats(abs(topup.amountSat))}") {
           Text(topup.statusLabel, color = MaterialTheme.colorScheme.onSurfaceVariant)
-          CopyRow("Reference", topup.id)
-          topup.progress?.vtxoOutpoint?.takeIf { it.isNotEmpty() }?.let { CopyRow("Outpoint", it) }
         }
       }
       SettingsValue("Network", entry.rail)
       if (entry.counterparty.isNotBlank()) CopyRow("Destination", entry.counterparty)
       entry.progress?.let { detail ->
-        val phase = detail.phaseLabel.ifEmpty { detail.phase }
-        if (phase.isNotEmpty()) SettingsValue("Phase", diagnosticLabel(phase))
+        SettingsValue("Phase", entry.statusLabel)
         if (detail.txid.isNotEmpty()) {
           CopyRow("Transaction", detail.txid)
           val base = explorer.trimEnd('/').removeSuffix("/api").ifBlank { when (network) {
@@ -281,13 +285,11 @@ import kotlin.math.abs
           } }
           if (base.isNotEmpty()) TextButton({ uriHandler.openUri("$base/tx/${android.net.Uri.encode(detail.txid)}") }) { Text("View transaction") }
         }
-        if (detail.vtxoOutpoint.isNotEmpty()) CopyRow("Outpoint", detail.vtxoOutpoint)
         if (detail.preimage.isNotEmpty()) CopyRow("Payment proof", detail.preimage)
       }
-      CopyRow("Reference", entry.id)
       entry.progress?.paymentHash?.takeIf { it.isNotEmpty() }?.let { CopyRow("Payment hash", it) }
       entry.request?.lightningInvoice?.takeIf { it.isNotEmpty() }?.let { CopyRow("Invoice", it) }
-      entry.request?.onchainAddress?.takeIf { it.isNotEmpty() }?.let { CopyRow("On-chain", it) }
+      entry.request?.onchainAddress?.takeIf { it.isNotEmpty() }?.let { CopyRow("Bitcoin address", it) }
       if (entry.failureReason.isNotEmpty()) CopyRow("Status details", entry.failureReason)
     }
   }

@@ -6,11 +6,14 @@ import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
 import engineering.lightning.wavewalletdk.client.*
+import engineering.lightning.wavelength.data.PaymentUiState
 import engineering.lightning.wavelength.data.WalletNetwork
 import engineering.lightning.wavelength.ui.*
 import org.junit.Assert.*
@@ -78,5 +81,53 @@ class WalletDesignParityTest {
     assertEquals(quote, reviewed)
     compose.onNodeWithText("Use available balance").performClick()
     compose.onNodeWithContentDescription("Amount (sats)").assertTextEquals("3000")
+  }
+
+  @Test fun refreshActionStaysVisibleWhenTheFundsListScrolls() {
+    compose.setContent {
+      WalletTheme(dark.value) {
+        FundPage(Modifier, footer = { WalletButton("Start refresh") {} }) {
+          repeat(20) { index -> Text("Expiry group $index", Modifier.height(60.dp)) }
+        }
+      }
+    }
+    compose.onNodeWithText("Start refresh").assertIsDisplayed()
+    compose.onNodeWithText("Expiry group 19").performScrollTo().assertIsDisplayed()
+    compose.onNodeWithText("Start refresh").assertIsDisplayed()
+  }
+
+  @Test fun onChainRequestShowsTheFullAddressWithCopyAndShare() {
+    val address = "tb1q" + "x".repeat(58)
+    compose.setContent {
+      Page("Receive") { RequestCard(address, showAddress = true) }
+    }
+    compose.onNodeWithText(address).performScrollTo().assertIsDisplayed()
+    compose.onNodeWithText("Copy").performScrollTo().assertIsDisplayed()
+    compose.onNodeWithText("Share").assertIsDisplayed()
+  }
+
+  @OptIn(ExperimentalMaterial3Api::class)
+  @Test fun receiveOpensFocusedAndKeepsCreateVisibleWhileEditingNote() {
+    var request: Pair<Long, String>? = null
+    val keyboardVisible = mutableStateOf(false)
+    compose.setContent {
+      WalletTheme(dark.value) {
+        ModalBottomSheet(onDismissRequest = {}, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+          val hasKeyboard = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+          SideEffect { keyboardVisible.value = hasKeyboard }
+          Column(Modifier.fillMaxWidth().fillMaxHeight(.95f).imePadding()) {
+            ReceiveScreen(PaymentUiState(), emptyList(), { amount, note -> request = amount to note }, {})
+          }
+        }
+      }
+    }
+    compose.onNodeWithContentDescription("Amount (sats)").assertIsFocused()
+    compose.waitUntil(5_000) { keyboardVisible.value }
+    compose.onNodeWithContentDescription("Amount (sats)").performTextInput("1700")
+    compose.onNodeWithText("Create request").assertIsDisplayed()
+    compose.onNodeWithText("Note").performScrollTo().performClick()
+    compose.onNodeWithContentDescription("Note").performTextInput("Parity")
+    compose.onNodeWithText("Create request").assertIsDisplayed().performClick()
+    assertEquals(1700L to "Parity", request)
   }
 }
