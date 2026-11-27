@@ -39,14 +39,13 @@ final class WavelengthUITests: XCTestCase {
         let create = app.buttons["receive.create"]
         XCTAssertTrue(create.waitForExistence(timeout: 5))
         create.tap()
-        XCTAssertTrue(app.buttons["Details"].waitForExistence(timeout: 45))
-        app.buttons["Details"].tap()
 
-        let request = app.staticTexts["receive.request"]
+        let request = app.textViews["receive.request"]
         XCTAssertTrue(request.waitForExistence(timeout: 20))
-        XCTAssertTrue(request.label.hasPrefix("bcrt1"), request.label)
+        let address = try XCTUnwrap(request.value as? String)
+        XCTAssertTrue(address.hasPrefix("bcrt1"), address)
         app.buttons["receive.copy"].tap()
-        print("WAVELENGTH_ONCHAIN_REQUEST=\(request.label)")
+        print("WAVELENGTH_ONCHAIN_REQUEST=\(address)")
     }
 
     func testCreateLightningRequest() throws {
@@ -55,22 +54,20 @@ final class WavelengthUITests: XCTestCase {
 
         let amount = app.textFields["receive.amount"]
         XCTAssertTrue(amount.waitForExistence(timeout: 5))
-        amount.tap()
-        amount.typeText("50000")
+        app.typeText("50000")
 
         let create = app.buttons["receive.create"]
         XCTAssertTrue(create.waitForExistence(timeout: 5))
-        if !create.isHittable {
-            app.swipeUp()
-        }
+        XCTAssertTrue(create.isHittable)
         create.tap()
         XCTAssertTrue(app.buttons["Details"].waitForExistence(timeout: 45))
+        XCTAssertFalse(app.staticTexts["receive.request"].exists)
+        app.buttons["receive.copy"].tap()
         app.buttons["Details"].tap()
 
         let request = app.staticTexts["receive.request"]
         XCTAssertTrue(request.waitForExistence(timeout: 20))
         XCTAssertTrue(request.label.lowercased().hasPrefix("lnbcrt"), request.label)
-        app.buttons["receive.copy"].tap()
         print("WAVELENGTH_LIGHTNING_REQUEST=\(request.label)")
     }
 
@@ -85,11 +82,10 @@ final class WavelengthUITests: XCTestCase {
         XCTAssertTrue(onchain.waitForExistence(timeout: 5))
         onchain.tap()
         app.buttons["receive.create"].tap()
-        XCTAssertTrue(app.buttons["Details"].waitForExistence(timeout: 45))
-        app.buttons["Details"].tap()
-        let request = app.staticTexts["receive.request"]
+        let request = app.textViews["receive.request"]
         XCTAssertTrue(request.waitForExistence(timeout: 20))
-        print("WAVELENGTH_FUND_THIS_ADDRESS=\(request.label)")
+        let address = try XCTUnwrap(request.value as? String)
+        print("WAVELENGTH_FUND_THIS_ADDRESS=\(address)")
         app.buttons["Close"].tap()
 
         let entryPredicate = NSPredicate(format: "label CONTAINS %@", "Receiving")
