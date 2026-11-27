@@ -212,6 +212,11 @@ enum Bindings {
         return try unwrap(MobileGetExitPlan(req, &err), err)
     }
 
+    static func previewUnilateralExit(_ req: Data) throws -> Data {
+        var err: NSError?
+        return try unwrap(MobilePreviewUnilateralExit(req, &err), err)
+    }
+
     static func exitSummary(_ req: Data) throws -> Data {
         var err: NSError?
         return try unwrap(MobileExitSummary(req, &err), err)
@@ -289,6 +294,7 @@ enum Bindings {
     static func observeRefresh(_ req: Data) throws -> Data { throw missing() }
     static func refresh(_ req: Data) throws -> Data { throw missing() }
     static func getExitPlan(_ req: Data) throws -> Data { throw missing() }
+    static func previewUnilateralExit(_ req: Data) throws -> Data { throw missing() }
     static func exitSummary(_ req: Data) throws -> Data { throw missing() }
     static func sweepWallet(_ req: Data) throws -> Data { throw missing() }
     static func exportExits(_ req: Data) throws -> Data { throw missing() }

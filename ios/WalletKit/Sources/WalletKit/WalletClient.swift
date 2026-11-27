@@ -428,6 +428,16 @@ public actor WalletClient {
         return try decode(await bg { try Bindings.getExitPlan(body) })
     }
 
+    /// Estimate the selected exits without allocating addresses or starting jobs.
+    public func previewUnilateralExit(outpoints: [String], sweepAddress: String = "",
+                                      feeRateSatPerVByte: Int64 = 0) async throws -> UnilateralExitPreview {
+        let body = try JSONSerialization.data(withJSONObject: [
+            "Outpoints": outpoints, "SweepAddress": sweepAddress,
+            "FeeRateSatPerVByte": feeRateSatPerVByte
+        ])
+        return try decode(await bg { try Bindings.previewUnilateralExit(body) })
+    }
+
     /// List live recovery jobs so the host can resume them after relaunch.
     public func exitSummary() async throws -> ExitSummary {
         let body = Data("{}".utf8)
