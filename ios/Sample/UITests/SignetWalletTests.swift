@@ -44,48 +44,38 @@ final class SignetWalletTests: XCTestCase {
         XCTAssertTrue(app.buttons["On-chain"].waitForExistence(timeout: 10))
         app.buttons["On-chain"].tap()
         app.buttons["receive.create"].tap()
-        XCTAssertTrue(app.buttons["Details"].waitForExistence(timeout: 45))
-        app.buttons["Details"].tap()
-        let request = app.staticTexts["receive.request"]
-        XCTAssertTrue(request.waitForExistence(timeout: 30))
-        XCTAssertTrue(request.label.hasPrefix("tb1"))
+        let address = app.textViews["receive.request"]
+        XCTAssertTrue(address.waitForExistence(timeout: 30))
+        XCTAssertTrue((address.value as? String)?.hasPrefix("tb1") == true)
         app.buttons["Close"].tap()
 
         app.buttons["wallet.receive"].tap()
         let amount = app.textFields["receive.amount"]
         XCTAssertTrue(amount.waitForExistence(timeout: 5))
-        amount.tap()
-        amount.typeText("50000")
+        app.typeText("50000")
         let memo = "Signet smoke \(UUID().uuidString)"
         app.buttons["Note"].tap()
         app.textFields["receive.memo"].tap()
         app.textFields["receive.memo"].typeText(memo)
         let create = app.buttons["receive.create"]
-        if !create.isHittable { app.swipeUp() }
+        XCTAssertTrue(create.isHittable)
         create.tap()
         XCTAssertTrue(app.buttons["Details"].waitForExistence(timeout: 45))
+        let request = app.staticTexts["receive.request"]
+        XCTAssertFalse(request.exists)
+        app.buttons["receive.copy"].tap()
         app.buttons["Details"].tap()
         XCTAssertTrue(request.waitForExistence(timeout: 45))
         XCTAssertTrue(request.label.lowercased().hasPrefix("lntb"))
         let invoice = request.label
-        let copy = app.buttons["receive.copy"]
-        for _ in 0..<5 where !copy.exists || !copy.isHittable { app.swipeUp() }
-        XCTAssertTrue(copy.waitForExistence(timeout: 5))
-        copy.tap()
         app.buttons["Close"].tap()
 
-        // Pasting must not also trigger the scanner in the same Form row.
-        // A long invoice stays inside the editor so review remains visible.
+        // Send replaces the destination editor with the decoded invoice.
+        // The unique memo identifies the request copied above.
         app.buttons["wallet.send"].tap()
         app.buttons["send.paste"].tap()
-        let destination = app.textFields["send.destination"]
-        XCTAssertTrue(destination.waitForExistence(timeout: 5))
-        let pasted = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value == %@", invoice),
-            object: destination
-        )
-        XCTAssertEqual(XCTWaiter.wait(for: [pasted], timeout: 5), .completed,
-                       "The pasted request did not match the copied invoice")
+        XCTAssertTrue(app.buttons["send.changeInvoice"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts[memo].exists)
         XCTAssertTrue(app.buttons["send.review"].isHittable)
         app.buttons["Close"].tap()
 

@@ -16,6 +16,7 @@ struct ReceiveView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var rail: ReceiveRail = .lightning
     @State private var amount = ""
+    @FocusState private var amountFocused: Bool
     @State private var memo = ""
     @State private var request = ""
     @State private var initialEntry: Entry?
@@ -43,7 +44,15 @@ struct ReceiveView: View {
     var body: some View {
         NavigationView {
             WalletPage {
-                if request.isEmpty { requestForm } else { paymentRequest }
+                if request.isEmpty { requestForm.disabled(isLoading) } else { paymentRequest }
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if request.isEmpty {
+                    createButton
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 8)
+                        .background(WalletTheme.background)
+                }
             }
             .navigationTitle("Receive")
             .navigationBarTitleDisplayMode(.inline)
@@ -77,13 +86,7 @@ struct ReceiveView: View {
         .pickerStyle(.segmented)
         .accessibilityIdentifier("receive.rail")
         if rail == .lightning {
-            WalletField(title: "Amount") {
-                HStack {
-                    TextField("0", text: $amount).keyboardType(.numberPad)
-                        .accessibilityIdentifier("receive.amount")
-                    Text("sats").foregroundStyle(WalletTheme.secondary)
-                }
-            }
+            amountEntry
             DisclosureGroup("Note") {
                 TextField("Optional", text: $memo).accessibilityIdentifier("receive.memo").padding(.top, 12)
             }
@@ -91,6 +94,39 @@ struct ReceiveView: View {
         if !store.operatorAvailable {
             Text("Configure a connection in Settings.").foregroundStyle(WalletTheme.secondary)
         }
+    }
+
+    /// Size the editor to its digits so the caret and unit stay together.
+    private var amountEntry: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(amount.isEmpty ? "0" : amount)
+                .lineLimit(1)
+                .hidden()
+                .padding(.horizontal, 2)
+                .overlay {
+                    TextField("0", text: $amount)
+                        .textFieldStyle(.plain)
+                        .multilineTextAlignment(.trailing)
+                        .keyboardType(.numberPad)
+                        .focused($amountFocused)
+                        .accessibilityLabel("Amount in satoshis")
+                        .accessibilityIdentifier("receive.amount")
+                }
+                .font(.system(size: 54, weight: .regular))
+                .privacySensitive()
+            Text("sats")
+                .font(.title2)
+                .foregroundStyle(WalletTheme.secondary)
+                .fixedSize()
+        }
+        .frame(maxWidth: .infinity, minHeight: 100)
+        .contentShape(Rectangle())
+        .onTapGesture { amountFocused = true }
+        .onAppear { amountFocused = store.offchainAvailable }
+    }
+
+    /// Keep the primary action reachable above the active keyboard.
+    private var createButton: some View {
         Button(action: createRequest) {
             if isLoading { ProgressView() }
             else { Text(rail == .lightning ? "Create request" : "Create address") }
@@ -114,21 +150,41 @@ struct ReceiveView: View {
                 Text(PaymentFailure.message(reason)).font(.footnote).foregroundStyle(WalletTheme.secondary)
             }
         } else {
-            if rail == .lightning, (Int64(amount) ?? 0) > 0 {
-                WalletAmount(amount: Int64(amount) ?? 0)
-            }
-            WalletStatus(text: "Waiting for payment")
-                .foregroundStyle(WalletTheme.secondary)
-            RequestQRCodeCard(value: request)
-        }
-        DisclosureGroup("Details", isExpanded: $details) {
-            requestContent
-            if !showsRequest, let entry = currentEntry {
-                if let reason = entry.failureReason,
-                   let detail = PaymentFailure.technicalDetails(reason) {
-                    ValueRow(label: "Error", value: detail, copyable: true)
+            VStack(spacing: 12) {
+                if rail == .lightning, let sats = Int64(amount), sats > 0 {
+                    WalletAmount(amount: sats)
                 }
-                NavigationLink(destination: ActivityDetailView(entry: entry)) { Text("Activity") }
+                WalletStatus(text: "Waiting for payment")
+                    .foregroundStyle(WalletTheme.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            RequestQRCodeCard(value: request)
+            if rail == .onchain {
+                // Give the selectable view the wrapped height even on iOS 15,
+                // where UIViewRepresentable has no sizeThatFits proposal.
+                Text(verbatim: request)
+                    .font(.system(.body, design: .monospaced))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .hidden()
+                    .frame(maxWidth: .infinity)
+                    .overlay { BitcoinAddressText(address: request) }
+                    .privacySensitive()
+            }
+            requestActions
+        }
+        if rail == .lightning || !showsRequest {
+            DisclosureGroup("Details", isExpanded: $details) {
+                VStack(alignment: .leading, spacing: 20) {
+                    if !showsRequest { requestActions }
+                    requestValue.font(.system(.caption, design: .monospaced))
+                    if !showsRequest, let entry = currentEntry {
+                        if let reason = entry.failureReason,
+                           let detail = PaymentFailure.technicalDetails(reason) {
+                            ValueRow(label: "Error", value: detail, copyable: true)
+                        }
+                        NavigationLink(destination: ActivityDetailView(entry: entry)) { Text("Activity") }
+                    }
+                }.padding(.vertical, 12)
             }
         }
         if !showsRequest {
@@ -137,26 +193,30 @@ struct ReceiveView: View {
         }
     }
 
-    private var requestContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            HStack(spacing: 20) {
-                Button { UIPasteboard.general.string = request } label: { Label("Copy", systemImage: "doc.on.doc") }
-                    .accessibilityIdentifier("receive.copy")
-                Button { showingShare = true } label: { Label("Share", systemImage: "square.and.arrow.up") }
+    /// Copy and share the same complete payload encoded in the QR code.
+    private var requestActions: some View {
+        HStack(spacing: 12) {
+            Button { UIPasteboard.general.string = request } label: {
+                Label("Copy", systemImage: "doc.on.doc")
             }
-            requestValue
-        }.padding(.vertical, 12)
+            .accessibilityIdentifier("receive.copy")
+            Button { showingShare = true } label: {
+                Label("Share", systemImage: "square.and.arrow.up")
+            }
+        }
+        .buttonStyle(WalletButtonStyle(secondary: true))
     }
 
     private var requestValue: some View {
         Text(request)
-            .font(.system(.caption, design: .monospaced))
+            .fixedSize(horizontal: false, vertical: true)
             .textSelection(.enabled).privacySensitive()
             .accessibilityIdentifier("receive.request")
     }
 
     private func createRequest() {
         guard !isLoading else { return }
+        amountFocused = false
         isLoading = true
         Task {
             defer { isLoading = false }
@@ -171,6 +231,38 @@ struct ReceiveView: View {
                 }
             } catch { errorMessage = error.walletMessage }
         }
+    }
+}
+
+/// Wrap addresses between characters. Prose hyphenation can display a dash
+/// that is absent from both the QR code and the selected text.
+private struct BitcoinAddressText: UIViewRepresentable {
+    /// The complete address copied, shared and encoded in the QR.
+    let address: String
+
+    /// Use native selection and wrap without adding characters to the address.
+    func makeUIView(context: Context) -> UITextView {
+        let view = UITextView()
+        view.isEditable = false
+        view.isScrollEnabled = false
+        view.backgroundColor = .clear
+        view.textContainerInset = .zero
+        view.textContainer.lineFragmentPadding = 0
+        view.textContainer.lineBreakMode = .byCharWrapping
+        view.textAlignment = .center
+        view.font = UIFontMetrics(forTextStyle: .body).scaledFont(
+            for: .monospacedSystemFont(ofSize: 17, weight: .regular)
+        )
+        view.adjustsFontForContentSizeCategory = true
+        view.textColor = UIColor(WalletTheme.foreground)
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        view.accessibilityIdentifier = "receive.request"
+        return view
+    }
+
+    /// Preserve the selection across unrelated SwiftUI updates.
+    func updateUIView(_ view: UITextView, context: Context) {
+        if view.text != address { view.text = address }
     }
 }
 
