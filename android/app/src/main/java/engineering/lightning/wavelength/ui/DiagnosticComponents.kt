@@ -72,7 +72,7 @@ internal data class DiagnosticResult(val value: JsonElement = JsonNull, val erro
 }
 @Composable internal fun DiagnosticFields(value: JsonElement) {
   value.fields.toSortedMap().forEach { (key, field) ->
-    val label = diagnosticLabel(key)
+    val label = if (key == "vhtlc_outpoint") "vHTLC outpoint" else diagnosticLabel(key)
     if (field is JsonObject || field is JsonArray) DetailSection(label) {
       DiagnosticCopy(field.pretty)
       SelectionContainer { Text(field.pretty, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) }

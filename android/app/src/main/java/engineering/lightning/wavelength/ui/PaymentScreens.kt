@@ -6,6 +6,13 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -45,6 +52,7 @@ import engineering.lightning.wavewalletdk.client.InvoiceDetails
 import engineering.lightning.wavewalletdk.client.Entry
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 private const val PaymentBodyFraction = .95f
@@ -111,7 +119,10 @@ internal fun paymentHandleTopPadding(bodySpace: Int, safeTop: Int): Int {
         Box(Modifier.fillMaxWidth().height(64.dp)) {
           Text(screen!!, Modifier.align(Alignment.Center), style = MaterialTheme.typography.titleMedium)
         }
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+        if (screen == "Receive" && payment.pending == null && !payment.blocked) {
+          ReceiveScreen(payment, state.activity, { amount, note -> session.payments.receive(amount, note) },
+            { session.payments.deposit() })
+        } else Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
           when {
             payment.pending != null || payment.blocked -> {
               payment.pending?.let {
@@ -126,8 +137,7 @@ internal fun paymentHandleTopPadding(bodySpace: Int, safeTop: Int): Int {
               }
               WalletButton("Check status", !payment.busy) { session.scope.launchRefresh(session) }
             }
-            screen == "Send" -> SendScreen(session, payment, state)
-            else -> ReceiveScreen(session, payment, state)
+            else -> SendScreen(session, payment, state)
           }
         }
       }
@@ -271,48 +281,89 @@ internal class SendAmounts {
   }
 }
 
-@Composable private fun AmountInput(amount: TextFieldState) {
+@Composable private fun AmountInput(amount: TextFieldState, focus: FocusRequester? = null) {
+  val centered = focus != null
   Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-    Text("Amount", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-      BasicTextField(state = amount, modifier = Modifier.weight(1f).semantics { contentDescription = "Amount (sats)" },
+    if (!centered) {
+      Text("Amount", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    val amountStyle = MaterialTheme.typography.displayLarge.copy(fontSize = 54.sp,
+      letterSpacing = (-2).sp, color = MaterialTheme.colorScheme.onSurface,
+      textAlign = if (centered) TextAlign.Center else TextAlign.Start)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (centered) Arrangement.Center else Arrangement.Start,
+      verticalAlignment = Alignment.CenterVertically) {
+      val fieldWidth = if (focus == null) Modifier.weight(1f) else
+        Modifier.weight(1f, fill = false).width(IntrinsicSize.Min).focusRequester(focus)
+      BasicTextField(state = amount, modifier = fieldWidth.semantics { contentDescription = "Amount (sats)" },
         lineLimits = TextFieldLineLimits.SingleLine, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-        textStyle = MaterialTheme.typography.displayLarge.copy(fontSize = 54.sp, letterSpacing = (-2).sp, color = MaterialTheme.colorScheme.onSurface),
-        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary), decorator = { field ->
-          Box { if (amount.text.isEmpty()) Text("0", fontSize = 54.sp, color = MaterialTheme.colorScheme.onSurfaceVariant); field() }
+        textStyle = amountStyle, cursorBrush = SolidColor(MaterialTheme.colorScheme.primary), decorator = { field ->
+          Box {
+            if (amount.text.isEmpty()) Text("0", style = amountStyle, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            field()
+          }
         })
-      Text("sats", fontSize = 22.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+      Text("sats", Modifier.padding(start = if (centered) 8.dp else 0.dp), fontSize = 22.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
   }
 }
 
-@Composable private fun ReceiveScreen(session: WalletSession, payment: PaymentUiState, wallet: WalletUiState) {
+@Composable internal fun ColumnScope.ReceiveScreen(
+  payment: PaymentUiState,
+  activity: List<Entry>,
+  receive: (Long, String) -> Unit,
+  deposit: () -> Unit,
+) {
   val amount = rememberTextFieldState()
   val note = rememberTextFieldState()
+  val focus = remember { FocusRequester() }
+  val focusManager = LocalFocusManager.current
   var onchain by remember { mutableStateOf(false) }
-  val currentEntry = wallet.activity.firstOrNull { it.id == payment.result?.id } ?: payment.result
-  if (payment.request.isNotEmpty()) {
-    if (!onchain && currentEntry != null && currentEntry.amountSat > 0) Amount(currentEntry.amountSat)
-    currentEntry?.let { StatusLine(it.statusLabel, it.showsProgress) }
-    RequestCard(payment.request)
-    DetailSection { CopyRow(if (onchain) "On-chain" else "Invoice", payment.request) }
-  } else {
-    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-      listOf("Lightning", "On-chain").forEachIndexed { index, label ->
-        SegmentedButton(selected = onchain == (index == 1), onClick = { onchain = index == 1 },
-          enabled = !payment.busy, shape = SegmentedButtonDefaults.itemShape(index, 2)) { Text(label) }
+  val currentEntry = activity.firstOrNull {
+    it.id == payment.result?.id || (payment.request.isNotEmpty() && it.request?.onchainAddress == payment.request)
+  } ?: payment.result
+  val hasRequest = payment.request.isNotEmpty()
+  val amountSat = amount.text.toString().toLongOrNull() ?: 0
+
+  Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(24.dp),
+    verticalArrangement = Arrangement.spacedBy(24.dp)) {
+    if (hasRequest) {
+      if (!onchain && currentEntry != null && currentEntry.amountSat > 0) Amount(currentEntry.amountSat)
+      StatusLine(currentEntry?.statusLabel ?: "Waiting for payment", currentEntry?.showsProgress == true)
+      if (currentEntry?.awaitingPayment != false) {
+        RequestCard(payment.request, showAddress = onchain)
+        if (!onchain) DetailSection { CopyRow("Invoice", payment.request) }
+      }
+    } else {
+      SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+        listOf("Lightning", "On-chain").forEachIndexed { index, label ->
+          SegmentedButton(selected = onchain == (index == 1), onClick = {
+            onchain = index == 1
+            if (onchain) focusManager.clearFocus()
+          }, enabled = !payment.busy, shape = SegmentedButtonDefaults.itemShape(index, 2)) { Text(label) }
+        }
+      }
+      if (!onchain) {
+        AmountInput(amount, focus)
+        val window = LocalWindowInfo.current
+        LaunchedEffect(Unit) {
+          snapshotFlow { window.isWindowFocused }.first { it }
+          focus.requestFocus()
+        }
+        DetailSection("Note") { WalletField("Note", note, placeholder = "Optional") }
       }
     }
-    if (!onchain) {
-      AmountInput(amount)
-      DetailSection("Options") { WalletField("Note", note, placeholder = "Optional") }
-    }
-    WalletButton(if (payment.busy) "Creating…" else if (onchain) "Show address" else "Create request",
-      !payment.busy && (onchain || (amount.text.toString().toLongOrNull() ?: 0) > 0)) {
-      if (onchain) session.payments.deposit() else session.payments.receive(amount.text.toString().toLong(), note.text.toString())
+    payment.error?.let { PaymentError(it) }
+  }
+  if (!hasRequest) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp)) {
+      WalletButton(if (payment.busy) "Creating…" else if (onchain) "Create address" else "Create request",
+        !payment.busy && (onchain || amountSat > 0)) {
+        focusManager.clearFocus()
+        if (onchain) deposit() else receive(amountSat, note.text.toString())
+      }
     }
   }
-  payment.error?.let { PaymentError(it) }
 }
 
 @Composable private fun PaymentError(raw: String) {
@@ -321,7 +372,7 @@ internal class SendAmounts {
   if (message != raw) DetailSection("Technical details") { CopyRow("Error", raw) }
 }
 
-@Composable fun RequestCard(value: String) {
+@Composable fun RequestCard(value: String, showAddress: Boolean = false) {
   val bitmap = remember(value) {
     val matrix = QRCodeWriter().encode(value, BarcodeFormat.QR_CODE, 1000, 1000,
       mapOf(EncodeHintType.MARGIN to 4, EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.M))
@@ -331,6 +382,11 @@ internal class SendAmounts {
     }.asImageBitmap()
   }
   Image(bitmap, "Payment request QR code", Modifier.fillMaxWidth().widthIn(max = 420.dp).aspectRatio(1f).background(Color.White).padding(4.dp), filterQuality = androidx.compose.ui.graphics.FilterQuality.None)
+  if (showAddress) {
+    SelectionContainer {
+      Text(value, Modifier.fillMaxWidth(), fontFamily = FontFamily.Monospace, textAlign = TextAlign.Center)
+    }
+  }
   val clipboard = LocalClipboardManager.current
   val context = LocalContext.current
   Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -344,7 +400,7 @@ internal class SendAmounts {
 @Composable internal fun PendingRequest(entry: Entry) {
   if (!entry.awaitingPayment) return
   val request = entry.request?.lightningInvoice?.ifEmpty { null } ?: entry.request?.onchainAddress.orEmpty()
-  if (request.isNotEmpty()) RequestCard(request)
+  if (request.isNotEmpty()) RequestCard(request, showAddress = entry.request?.lightningInvoice.isNullOrEmpty())
 }
 
 @Composable private fun ReceiptRow(label: String, value: String) {

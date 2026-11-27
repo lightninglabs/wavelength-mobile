@@ -16,12 +16,24 @@ import engineering.lightning.wavewalletdk.client.WalletVTXO
 import engineering.lightning.wavelength.data.sats
 import engineering.lightning.wavelength.data.shortId
 
-/** The wallet page uses the same reading width and spacing as the iOS funds screens. */
 @Composable internal fun FundPage(modifier: Modifier, content: @Composable ColumnScope.() -> Unit) {
-  Box(modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-    Column(Modifier.widthIn(max = 620.dp).fillMaxWidth().verticalScroll(rememberScrollState())
+  FundPage(modifier, footer = null, content = content)
+}
+
+/** The wallet page uses the same reading width and spacing as the iOS funds screens. */
+@Composable internal fun FundPage(
+  modifier: Modifier,
+  footer: (@Composable ColumnScope.() -> Unit)?,
+  content: @Composable ColumnScope.() -> Unit,
+) {
+  Column(modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(Modifier.weight(1f).widthIn(max = 620.dp).fillMaxWidth().verticalScroll(rememberScrollState())
       .padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 32.dp),
       verticalArrangement = Arrangement.spacedBy(28.dp), content = content)
+    if (footer != null) {
+      Column(Modifier.widthIn(max = 620.dp).fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp), content = footer)
+    }
   }
 }
 
